@@ -1,0 +1,45 @@
+# config ----------------------------------------------
+- entries:
+    - interface: fivcglue.interfaces.configs.IConfig
+
+  class: fivcglue.implements.configs_jsonfile.ConfigImpl
+
+# cache -----------------------------------------------
+- entries:
+    - interface: fivcglue.interfaces.caches.ICache
+
+  class: fivcglue.implements.caches_mem.CacheImpl
+
+# database --------------------------------------------
+- entries:
+    - interface: fivccliche.services.interfaces.db.IDatabase
+
+  class: fivccliche.services.implements.db.DatabaseImpl
+
+# auth ------------------------------------------------
+- entries:
+    - interface: fivccliche.services.interfaces.auth.IUserAuthenticator
+
+  class: fivccliche.modules.users.UserAuthenticatorImpl
+
+# modules ---------------------------------------------
+- entries:
+    - interface: fivccliche.services.interfaces.modules.IModule
+      name: users
+
+  class: fivccliche.modules.users.ModuleImpl
+
+- entries:
+    - interface: fivccliche.services.interfaces.modules.IModule
+      name: chats
+
+  class: fivccliche.modules.chats.ModuleImpl
+
+- entries:
+    - interface: fivccliche.services.interfaces.modules.IModuleSite
+
+  modules:
+    - 'chats'
+    - 'users'
+
+  class: fivccliche.services.implements.modules.ModuleSiteImpl

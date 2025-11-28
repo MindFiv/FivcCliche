@@ -1,0 +1,53 @@
+# Normalize line endings to LF for all text files
+* text=auto eol=lf
+
+# Explicit text file types
+*.py    text eol=lf
+*.sh    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.json  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.toml  text eol=lf
+Makefile text eol=lf
+
+# Treat Jupyter notebooks as text so diffs work
+*.ipynb text
+
+# Binary files (no diffs)
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.bz2   binary
+*.7z    binary
+*.tar   binary
+*.rar   binary
+*.mp3   binary
+*.mp4   binary
+*.mov   binary
+*.avi   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary
+*.otf   binary
+*.so    binary
+*.dylib binary
+*.exe   binary
+
+# GitHub Linguist hints
+uv.lock              linguist-generated=true
+poetry.lock          linguist-generated=true
+Pipfile.lock         linguist-generated=true
+package-lock.json    linguist-generated=true
+yarn.lock            linguist-generated=true
+pnpm-lock.yaml       linguist-generated=true
+
+docs/** linguist-documentation=true
