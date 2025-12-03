@@ -1,8 +1,6 @@
 from sqlmodel import SQLModel, Field
 
-from fivcplayground.embeddings.types import EmbeddingConfig
-from fivcplayground.models.types import ModelConfig
-from fivcplayground.agents.types import AgentConfig
+from . import schemas
 
 
 class UserEmbedding(SQLModel, table=True):
@@ -41,12 +39,12 @@ class UserEmbedding(SQLModel, table=True):
         description="Embedding dimension.",
     )
     user_id: str = Field(
-        foreign_key="users.id",
+        foreign_key="user.id",
         description="User ID.",
     )
 
-    def to_config(self) -> EmbeddingConfig:
-        return EmbeddingConfig(
+    def to_config(self) -> schemas.UserEmbeddingSchema:
+        return schemas.UserEmbeddingSchema(
             id=self.id,
             description=self.description,
             provider=self.provider,
@@ -95,12 +93,12 @@ class UserLLM(SQLModel, table=True):
         description="LLM max tokens.",
     )
     user_id: str = Field(
-        foreign_key="users.id",
+        foreign_key="user.id",
         description="User ID.",
     )
 
-    def to_config(self) -> ModelConfig:
-        return ModelConfig(
+    def to_config(self) -> schemas.UserLLMSchema:
+        return schemas.UserLLMSchema(
             id=self.id,
             description=self.description,
             provider=self.provider,
@@ -124,7 +122,7 @@ class UserAgent(SQLModel, table=True):
     )
     description: str | None = Field(default=None, max_length=1024, description="Agent description.")
     model_id: str = Field(
-        foreign_key="agent_models.id",
+        foreign_key="user_llm.id",
         description="LLM config ID.",
     )
     system_prompt: str | None = Field(
@@ -133,12 +131,12 @@ class UserAgent(SQLModel, table=True):
         description="Agent system prompt.",
     )
     user_id: str = Field(
-        foreign_key="users.id",
+        foreign_key="user.id",
         description="User ID.",
     )
 
-    def to_config(self) -> AgentConfig:
-        return AgentConfig(
+    def to_config(self) -> schemas.UserAgentSchema:
+        return schemas.UserAgentSchema(
             id=self.id,
             description=self.description,
             model_id=self.model_id,

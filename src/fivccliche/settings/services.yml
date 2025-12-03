@@ -31,6 +31,12 @@
 
 - entries:
     - interface: fivccliche.services.interfaces.modules.IModule
+      name: configs
+
+  class: fivccliche.modules.configs.ModuleImpl
+
+- entries:
+    - interface: fivccliche.services.interfaces.modules.IModule
       name: chats
 
   class: fivccliche.modules.chats.ModuleImpl
@@ -39,7 +45,8 @@
     - interface: fivccliche.services.interfaces.modules.IModuleSite
 
   modules:
-    - 'chats'
     - 'users'
+    - 'configs'
+    - 'chats'
 
   class: fivccliche.services.implements.modules.ModuleSiteImpl
