@@ -68,6 +68,7 @@ async def session():
                 text(
                     """
                 CREATE TABLE user_embedding (
+                    uuid VARCHAR NOT NULL,
                     id VARCHAR NOT NULL,
                     description VARCHAR,
                     provider VARCHAR NOT NULL DEFAULT 'openai',
@@ -76,7 +77,8 @@ async def session():
                     base_url VARCHAR,
                     dimension INTEGER NOT NULL DEFAULT 1024,
                     user_uuid VARCHAR NOT NULL,
-                    PRIMARY KEY (id),
+                    PRIMARY KEY (uuid),
+                    UNIQUE (id, user_uuid),
                     FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
                 )
             """
@@ -88,6 +90,7 @@ async def session():
                 text(
                     """
                 CREATE TABLE user_llm (
+                    uuid VARCHAR NOT NULL,
                     id VARCHAR NOT NULL,
                     description VARCHAR,
                     provider VARCHAR NOT NULL DEFAULT 'openai',
@@ -97,7 +100,8 @@ async def session():
                     temperature FLOAT NOT NULL DEFAULT 0.5,
                     max_tokens INTEGER NOT NULL DEFAULT 4096,
                     user_uuid VARCHAR NOT NULL,
-                    PRIMARY KEY (id),
+                    PRIMARY KEY (uuid),
+                    UNIQUE (id, user_uuid),
                     FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
                 )
             """
@@ -121,12 +125,14 @@ async def session():
                 text(
                     """
                 CREATE TABLE user_agent (
+                    uuid VARCHAR NOT NULL,
                     id VARCHAR NOT NULL,
                     description VARCHAR,
                     model_id VARCHAR NOT NULL,
                     system_prompt VARCHAR,
                     user_uuid VARCHAR NOT NULL,
-                    PRIMARY KEY (id),
+                    PRIMARY KEY (uuid),
+                    UNIQUE (id, user_uuid),
                     FOREIGN KEY(user_uuid) REFERENCES "user" (uuid),
                     FOREIGN KEY(model_id) REFERENCES agent_models (id)
                 )

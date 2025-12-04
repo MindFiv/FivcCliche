@@ -19,6 +19,7 @@ router_embeddings = APIRouter(prefix="/embeddings", tags=["embedding_configs"])
 
 @router_embeddings.post(
     "/",
+    summary="Create a new embedding config for the authenticated user.",
     response_model=schemas.UserEmbeddingSchema,
     status_code=status.HTTP_201_CREATED,
 )
@@ -43,6 +44,7 @@ async def create_embedding_config_async(
 
 @router_embeddings.get(
     "/",
+    summary="List all embedding configs for the authenticated user.",
     response_model=PaginatedResponse[schemas.UserEmbeddingSchema],
 )
 async def list_embedding_configs_async(
@@ -67,6 +69,7 @@ async def list_embedding_configs_async(
 
 @router_embeddings.get(
     "/{config_id}",
+    summary="Get an embedding config by ID for the authenticated user.",
     response_model=schemas.UserEmbeddingSchema,
 )
 async def get_embedding_config_async(
@@ -89,7 +92,11 @@ async def get_embedding_config_async(
     return config.to_config()
 
 
-@router_embeddings.patch("/{config_id}", response_model=schemas.UserEmbeddingSchema)
+@router_embeddings.patch(
+    "/{config_id}",
+    summary="Update an embedding config by ID for the authenticated user.",
+    response_model=schemas.UserEmbeddingSchema,
+)
 async def update_embedding_config_async(
     config_id: str,
     config_update: schemas.UserEmbeddingSchema,
@@ -112,7 +119,11 @@ async def update_embedding_config_async(
     return config.to_config()
 
 
-@router_embeddings.delete("/{config_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router_embeddings.delete(
+    "/{config_id}",
+    summary="Delete an embedding config by ID for the authenticated user.",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 async def delete_embedding_config_async(
     config_id: str,
     user: IUser = Depends(get_authenticated_user_async),
@@ -140,7 +151,12 @@ async def delete_embedding_config_async(
 router_models = APIRouter(prefix="/models", tags=["model_configs"])
 
 
-@router_models.post("/", response_model=schemas.UserLLMSchema, status_code=status.HTTP_201_CREATED)
+@router_models.post(
+    "/",
+    summary="Create a new LLM config for the authenticated user.",
+    response_model=schemas.UserLLMSchema,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_llm_config_async(
     config_create: schemas.UserLLMSchema,
     user: IUser = Depends(get_authenticated_user_async),
@@ -156,7 +172,11 @@ async def create_llm_config_async(
     return config.to_config()
 
 
-@router_models.get("/", response_model=PaginatedResponse[schemas.UserLLMSchema])
+@router_models.get(
+    "/",
+    summary="List all LLM configs for the authenticated user.",
+    response_model=PaginatedResponse[schemas.UserLLMSchema],
+)
 async def list_llm_configs_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
@@ -179,6 +199,7 @@ async def list_llm_configs_async(
 
 @router_models.get(
     "/{config_id}",
+    summary="Get an LLM config by ID for the authenticated user.",
     response_model=schemas.UserLLMSchema,
 )
 async def get_llm_config_async(
@@ -204,6 +225,7 @@ async def get_llm_config_async(
 
 @router_models.patch(
     "/{config_id}",
+    summary="Update an LLM config by ID for the authenticated user.",
     response_model=schemas.UserLLMSchema,
 )
 async def update_llm_config_async(
@@ -230,6 +252,7 @@ async def update_llm_config_async(
 
 @router_models.delete(
     "/{config_id}",
+    summary="Delete an LLM config by ID for the authenticated user.",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_llm_config_async(
@@ -261,6 +284,7 @@ router_agents = APIRouter(prefix="/agents", tags=["agent_configs"])
 
 @router_agents.post(
     "/",
+    summary="Create a new agent config for the authenticated user.",
     response_model=schemas.UserAgentSchema,
     status_code=status.HTTP_201_CREATED,
 )
@@ -279,7 +303,11 @@ async def create_agent_config_async(
     return config.to_config()
 
 
-@router_agents.get("/", response_model=PaginatedResponse[schemas.UserAgentSchema])
+@router_agents.get(
+    "/",
+    summary="List all agent configs for the authenticated user.",
+    response_model=PaginatedResponse[schemas.UserAgentSchema],
+)
 async def list_agent_configs_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
@@ -300,7 +328,11 @@ async def list_agent_configs_async(
     )
 
 
-@router_agents.get("/{config_id}", response_model=schemas.UserAgentSchema)
+@router_agents.get(
+    "/{config_id}",
+    summary="Get an agent config by ID for the authenticated user.",
+    response_model=schemas.UserAgentSchema,
+)
 async def get_agent_config_async(
     config_id: str,
     user: IUser = Depends(get_authenticated_user_async),
@@ -321,7 +353,11 @@ async def get_agent_config_async(
     return config.to_config()
 
 
-@router_agents.patch("/{config_id}", response_model=schemas.UserAgentSchema)
+@router_agents.patch(
+    "/{config_id}",
+    summary="Update an agent config by ID for the authenticated user.",
+    response_model=schemas.UserAgentSchema,
+)
 async def update_agent_config_async(
     config_id: str,
     config_update: schemas.UserAgentSchema,

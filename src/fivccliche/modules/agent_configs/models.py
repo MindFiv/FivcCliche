@@ -1,3 +1,6 @@
+from uuid import uuid4
+
+from sqlalchemy import Index
 from sqlmodel import SQLModel, Field
 
 from . import schemas
@@ -7,11 +10,18 @@ class UserEmbedding(SQLModel, table=True):
     """Embedding configuration model."""
 
     __tablename__ = "user_embedding"
+    __table_args__ = (Index("ix_user_embedding_id_user_uuid", "id", "user_uuid", unique=True),)
 
-    id: str = Field(
+    uuid: str = Field(
+        default_factory=lambda: str(uuid4()),
         primary_key=True,
         max_length=32,
-        description="Embedding config ID.",
+        description="Embedding config UUID.",
+    )
+    id: str = Field(
+        max_length=32,
+        description="Embedding config ID (unique within user scope).",
+        index=True,
     )
     description: str | None = Field(
         default=None, max_length=1024, description="Embedding description."
@@ -38,13 +48,15 @@ class UserEmbedding(SQLModel, table=True):
         default=1024,
         description="Embedding dimension.",
     )
-    user_uuid: str = Field(
+    user_uuid: str | None = Field(
+        default=None,
         foreign_key="user.uuid",
         description="User ID.",
     )
 
     def to_config(self) -> schemas.UserEmbeddingSchema:
         return schemas.UserEmbeddingSchema(
+            uuid=self.uuid,
             id=self.id,
             description=self.description,
             provider=self.provider,
@@ -59,11 +71,18 @@ class UserLLM(SQLModel, table=True):
     """LLM configuration model."""
 
     __tablename__ = "user_llm"
+    __table_args__ = (Index("ix_user_llm_id_user_uuid", "id", "user_uuid", unique=True),)
 
-    id: str = Field(
+    uuid: str = Field(
+        default_factory=lambda: str(uuid4()),
         primary_key=True,
         max_length=32,
-        description="LLM config ID.",
+        description="LLM config UUID.",
+    )
+    id: str = Field(
+        max_length=32,
+        description="LLM config ID (unique within user scope).",
+        index=True,
     )
     description: str | None = Field(default=None, max_length=1024, description="LLM description.")
     provider: str = Field(
@@ -92,13 +111,15 @@ class UserLLM(SQLModel, table=True):
         default=4096,
         description="LLM max tokens.",
     )
-    user_uuid: str = Field(
+    user_uuid: str | None = Field(
+        default=None,
         foreign_key="user.uuid",
         description="User ID.",
     )
 
     def to_config(self) -> schemas.UserLLMSchema:
         return schemas.UserLLMSchema(
+            uuid=self.uuid,
             id=self.id,
             description=self.description,
             provider=self.provider,
@@ -114,11 +135,18 @@ class UserAgent(SQLModel, table=True):
     """Agent configuration model."""
 
     __tablename__ = "user_agent"
+    __table_args__ = (Index("ix_user_agent_id_user_uuid", "id", "user_uuid", unique=True),)
 
-    id: str = Field(
+    uuid: str = Field(
+        default_factory=lambda: str(uuid4()),
         primary_key=True,
         max_length=32,
-        description="Agent config ID.",
+        description="Agent config UUID.",
+    )
+    id: str = Field(
+        max_length=32,
+        description="Agent config ID (unique within user scope).",
+        index=True,
     )
     description: str | None = Field(default=None, max_length=1024, description="Agent description.")
     model_id: str = Field(
@@ -130,13 +158,15 @@ class UserAgent(SQLModel, table=True):
         max_length=1024,
         description="Agent system prompt.",
     )
-    user_uuid: str = Field(
+    user_uuid: str | None = Field(
+        default=None,
         foreign_key="user.uuid",
         description="User ID.",
     )
 
     def to_config(self) -> schemas.UserAgentSchema:
         return schemas.UserAgentSchema(
+            uuid=self.uuid,
             id=self.id,
             description=self.description,
             model_id=self.model_id,

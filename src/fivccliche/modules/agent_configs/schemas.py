@@ -4,6 +4,38 @@ __all__ = [
     "UserLLMSchema",
 ]
 
-from fivcplayground.embeddings.types import EmbeddingConfig as UserEmbeddingSchema
-from fivcplayground.models.types import ModelConfig as UserLLMSchema
-from fivcplayground.agents.types import AgentConfig as UserAgentSchema
+
+from pydantic import ConfigDict, Field
+
+from fivcplayground.embeddings.types import EmbeddingConfig
+from fivcplayground.models.types import ModelConfig
+from fivcplayground.agents.types import AgentConfig
+
+
+# ============================================================================
+# Read/Response Schemas (with uuid field)
+# ============================================================================
+
+
+class UserEmbeddingSchema(EmbeddingConfig):
+    """Schema for reading embedding config data (response)."""
+
+    uuid: str = Field(default=None, description="Embedding config UUID (globally unique)")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserLLMSchema(ModelConfig):
+    """Schema for reading LLM config data (response)."""
+
+    uuid: str = Field(default=None, description="LLM config UUID (globally unique)")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserAgentSchema(AgentConfig):
+    """Schema for reading agent config data (response)."""
+
+    uuid: str = Field(default=None, description="Agent config UUID (globally unique)")
+
+    model_config = ConfigDict(from_attributes=True)

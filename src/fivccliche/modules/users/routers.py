@@ -15,7 +15,12 @@ from . import methods, models, schemas
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.post("/", response_model=schemas.UserRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    summary="Create a new user (admin only).",
+    response_model=schemas.UserRead,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_user_async(
     user_create: schemas.UserCreate,
     admin_user: IUser = Depends(get_admin_user_async),
@@ -52,25 +57,38 @@ async def create_user_async(
     return user
 
 
-@router.get("/", response_model=PaginatedResponse[schemas.UserRead])
-async def list_users_async(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=1000),
-    admin_user: IUser = Depends(get_admin_user_async),
+@router.post(
+    "/login",
+    summary="Authenticate a user and return JWT token.",
+    response_model=schemas.UserLoginResponse,
+)
+async def login_user_async(
+    user_login: schemas.UserLogin,
     session: AsyncSession = Depends(get_db_session_async),
-) -> PaginatedResponse[schemas.UserRead]:
-    """List all users with pagination."""
-    if not admin_user:
+) -> schemas.UserLoginResponse:
+    """Authenticate a user and return user data with JWT token."""
+    access_token = await default_auth.create_access_token_async(
+        user_login.username,
+        user_login.password,
+        session=session,
+    )
+    if not access_token:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a admin",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
         )
-    users = await methods.list_users_async(session, skip=skip, limit=limit)
-    total = await methods.count_users_async(session)
-    return PaginatedResponse[schemas.UserRead](total=total, results=users)
+
+    return schemas.UserLoginResponse(
+        access_token=access_token,
+        token_type="bearer",
+    )
 
 
-@router.get("/self", response_model=schemas.UserRead)
+@router.get(
+    "/self",
+    summary="Get the authenticated user's profile.",
+    response_model=schemas.UserRead,
+)
 async def get_self_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
@@ -89,7 +107,29 @@ async def get_self_async(
     return user
 
 
-@router.get("/{user_uuid}", response_model=schemas.UserRead)
+@router.get(
+    "/", summary="List all users (admin only).", response_model=PaginatedResponse[schemas.UserRead]
+)
+async def list_users_async(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    admin_user: IUser = Depends(get_admin_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> PaginatedResponse[schemas.UserRead]:
+    """List all users with pagination."""
+    if not admin_user:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a admin",
+        )
+    users = await methods.list_users_async(session, skip=skip, limit=limit)
+    total = await methods.count_users_async(session)
+    return PaginatedResponse[schemas.UserRead](total=total, results=users)
+
+
+@router.get(
+    "/{user_uuid}", summary="Get a user by ID (admin only).", response_model=schemas.UserRead
+)
 async def get_user_async(
     user_uuid: str,
     admin_user: IUser = Depends(get_admin_user_async),
@@ -111,7 +151,11 @@ async def get_user_async(
     return user
 
 
-@router.delete("/{user_uuid}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{user_uuid}",
+    summary="Delete a user by ID (admin only).",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 async def delete_user_async(
     user_uuid: str,
     admin_user: IUser = Depends(get_admin_user_async),
@@ -130,26 +174,3 @@ async def delete_user_async(
             detail="User not found",
         )
     await methods.delete_user_async(session, user)
-
-
-@router.post("/login", response_model=schemas.UserLoginResponse)
-async def login_user_async(
-    user_login: schemas.UserLogin,
-    session: AsyncSession = Depends(get_db_session_async),
-) -> schemas.UserLoginResponse:
-    """Authenticate a user and return user data with JWT token."""
-    access_token = await default_auth.create_access_token_async(
-        user_login.username,
-        user_login.password,
-        session=session,
-    )
-    if not access_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password",
-        )
-
-    return schemas.UserLoginResponse(
-        access_token=access_token,
-        token_type="bearer",
-    )

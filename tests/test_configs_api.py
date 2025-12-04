@@ -23,6 +23,11 @@ def client():
 
     # Import models to ensure they're registered with SQLModel
     from fivccliche.modules.users.models import User  # noqa: F401
+    from fivccliche.modules.agent_configs.models import (  # noqa: F401
+        UserEmbedding,
+        UserLLM,
+        UserAgent,
+    )
 
     # Create a temporary file for the database
     temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
