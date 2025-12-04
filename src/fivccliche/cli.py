@@ -6,6 +6,7 @@ Command-line interface for FivcCliche - a production-ready, multi-user backend
 framework for AI agents built with FastAPI and SQLModel.
 """
 
+import asyncio
 import os
 import shutil
 from pathlib import Path
@@ -20,6 +21,8 @@ from fivcglue import query_component, IComponentSite
 from fivccliche import __version__
 from fivccliche.services.implements import service_site
 from fivccliche.services.interfaces.modules import IModuleSite
+from fivccliche.services.interfaces.db import IDatabase
+from fivccliche.services.interfaces.auth import IUserAuthenticator
 
 cli = typer.Typer(
     name="FivcCliche",
@@ -102,6 +105,8 @@ def info():
     • Modular architecture with component system
 
     [bold]Usage Examples:[/bold]
+    fivccliche migrate                                # Initialize database tables
+    fivccliche createsuperuser                        # Create admin account
     fivccliche run                                    # Start server
     fivccliche run --port 9000                        # Custom port
     fivccliche run --host 127.0.0.1 --no-reload      # Production mode
@@ -163,6 +168,175 @@ def clean():
 
     except Exception as e:
         console.print(f"[red]❌ Error during cleanup: {e}[/red]")
+        raise typer.Exit(1) from e
+
+
+@cli.command()
+def migrate():
+    """
+    Initialize and create database tables.
+
+    This command creates all database tables defined in SQLModel models.
+    Run this command before using other commands that require database access.
+    """
+    console.print(
+        Panel.fit(
+            Text("Database Migration", style="bold blue"),
+            subtitle="Initialize database tables",
+        )
+    )
+
+    try:
+        asyncio.run(_migrate_async())
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[red]❌ Unexpected error: {e}[/red]")
+        raise typer.Exit(1) from e
+
+
+async def _migrate_async() -> None:
+    """
+    Async helper function to initialize database tables.
+    """
+    try:
+        console.print("[cyan]Initializing database tables...[/cyan]")
+
+        # Get database service
+        db_service = query_component(cast(IComponentSite, service_site), IDatabase)
+
+        # Create all database tables
+        await db_service.setup_async()
+
+        console.print("\n" + "=" * 60)
+        console.print("[bold green]✅ Database tables created successfully![/bold green]")
+        console.print("=" * 60)
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[red]❌ Database error: {e}[/red]")
+        raise typer.Exit(1) from e
+
+
+@cli.command()
+def createsuperuser():
+    """
+    Create a superuser (admin) account interactively.
+
+    This command prompts for username, email, and password to create
+    a new superuser account with admin privileges.
+    """
+    console.print(
+        Panel.fit(
+            Text("Create Superuser", style="bold blue"),
+            subtitle="Create a new admin account",
+        )
+    )
+
+    try:
+        # Prompt for username
+        username = typer.prompt("Username")
+        if not username or not username.strip():
+            console.print("[red]❌ Username cannot be empty[/red]")
+            raise typer.Exit(1)
+
+        # Prompt for email
+        email = typer.prompt("Email address")
+        if not email or not email.strip():
+            console.print("[red]❌ Email cannot be empty[/red]")
+            raise typer.Exit(1)
+
+        # Prompt for password with confirmation
+        password = typer.prompt("Password", hide_input=True)
+        if not password or not password.strip():
+            console.print("[red]❌ Password cannot be empty[/red]")
+            raise typer.Exit(1)
+
+        password_confirm = typer.prompt("Confirm password", hide_input=True)
+        if password != password_confirm:
+            console.print("[red]❌ Passwords do not match[/red]")
+            raise typer.Exit(1)
+
+        # Run the async creation
+        asyncio.run(_create_superuser_async(username, email, password))
+
+    except typer.Abort as e:
+        console.print("[yellow]Superuser creation cancelled[/yellow]")
+        raise typer.Exit(0) from e
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[red]❌ Unexpected error: {e}[/red]")
+        raise typer.Exit(1) from e
+
+
+async def _create_superuser_async(username: str, email: str, password: str) -> None:
+    """
+    Async helper function to create a superuser.
+
+    Args:
+        username: Username for the superuser
+        email: Email address for the superuser
+        password: Password for the superuser
+    """
+    try:
+        # Get database and authenticator services
+        db_service = query_component(cast(IComponentSite, service_site), IDatabase)
+        auth_service = query_component(cast(IComponentSite, service_site), IUserAuthenticator)
+
+        # Initialize database tables if they don't exist
+        console.print("[cyan]Initializing database...[/cyan]")
+        await db_service.setup_async()
+
+        # Get a database session
+        session = await db_service.get_session_async()
+
+        try:
+            # Check if user already exists
+            from fivccliche.modules.users.methods import get_user_async
+
+            existing_user = await get_user_async(session, username=username)
+            if existing_user:
+                console.print(f"[red]❌ User '{username}' already exists[/red]")
+                raise typer.Exit(1)
+
+            existing_email = await get_user_async(session, email=email)
+            if existing_email:
+                console.print(f"[red]❌ Email '{email}' is already in use[/red]")
+                raise typer.Exit(1)
+
+            # Create the superuser
+            user = await auth_service.create_user_async(
+                username=username,
+                email=email,
+                password=password,
+                is_admin=True,
+                session=session,
+            )
+
+            if user:
+                console.print("\n" + "=" * 60)
+                console.print("[bold green]✅ Superuser created successfully![/bold green]")
+                console.print("=" * 60)
+                console.print(f"[cyan]Username:[/cyan] {user.username}")
+                console.print(f"[cyan]Email:[/cyan] {user.email}")
+                console.print("[cyan]Admin:[/cyan] Yes")
+                console.print("=" * 60)
+            else:
+                console.print("[red]❌ Failed to create superuser[/red]")
+                raise typer.Exit(1)
+
+        finally:
+            await session.close()
+
+    except typer.Exit:
+        raise
+    except ValueError as e:
+        console.print(f"[red]❌ Validation error: {e}[/red]")
+        raise typer.Exit(1) from e
+    except Exception as e:
+        console.print(f"[red]❌ Database error: {e}[/red]")
         raise typer.Exit(1) from e
 
 

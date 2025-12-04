@@ -13,6 +13,11 @@ from fivcplayground.models.types import ModelConfig
 from fivcplayground.agents.types import AgentConfig
 
 from fivccliche.modules.configs import methods
+from fivccliche.modules.configs.services import (
+    UserEmbeddingRepositoryImpl,
+    UserLLMRepositoryImpl,
+    UserAgentRepositoryImpl,
+)
 
 # Import models to ensure they're registered with SQLModel
 from fivccliche.modules.users.models import User  # noqa: F401
@@ -453,3 +458,417 @@ class TestAgentConfigService:
 
         count = await methods.count_agent_configs_async(session, "user123")
         assert count == 3
+
+
+class TestEmbeddingRepositoryImpl:
+    """Test cases for UserEmbeddingRepositoryImpl abstract methods."""
+
+    async def test_update_embedding_config_create_new(self, session: AsyncSession):
+        """Test creating a new embedding config via update_embedding_config."""
+        repo = UserEmbeddingRepositoryImpl(user_id="user123", session=session)
+
+        config = EmbeddingConfig(
+            id="repo-embedding-1",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            dimension=1536,
+        )
+
+        await repo.update_embedding_config_async(config)
+
+        # Verify it was created
+        retrieved = await methods.get_embedding_config_async(session, "repo-embedding-1", "user123")
+        assert retrieved is not None
+        assert retrieved.dimension == 1536
+
+    async def test_update_embedding_config_update_existing(self, session: AsyncSession):
+        """Test updating an existing embedding config via update_embedding_config."""
+        repo = UserEmbeddingRepositoryImpl(user_id="user123", session=session)
+
+        # Create initial config
+        config_create = EmbeddingConfig(
+            id="repo-embedding-2",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            dimension=1536,
+        )
+        await methods.create_embedding_config_async(session, "user123", config_create)
+
+        # Update via repository
+        config_update = EmbeddingConfig(
+            id="repo-embedding-2",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            dimension=3072,
+        )
+        await repo.update_embedding_config_async(config_update)
+
+        # Verify it was updated
+        retrieved = await methods.get_embedding_config_async(session, "repo-embedding-2", "user123")
+        assert retrieved.dimension == 3072
+
+    async def test_get_embedding_config_returns_config_type(self, session: AsyncSession):
+        """Test that get_embedding_config returns EmbeddingConfig type."""
+        repo = UserEmbeddingRepositoryImpl(user_id="user123", session=session)
+
+        config_create = EmbeddingConfig(
+            id="repo-embedding-3",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+        )
+        await methods.create_embedding_config_async(session, "user123", config_create)
+
+        result = await repo.get_embedding_config_async("repo-embedding-3")
+
+        assert result is not None
+        assert isinstance(result, EmbeddingConfig)
+        assert result.id == "repo-embedding-3"
+        assert result.provider == "openai"
+
+    async def test_get_embedding_config_returns_none_when_not_found(self, session: AsyncSession):
+        """Test that get_embedding_config returns None when config not found."""
+        repo = UserEmbeddingRepositoryImpl(user_id="user123", session=session)
+
+        result = await repo.get_embedding_config_async("nonexistent")
+
+        assert result is None
+
+    async def test_list_embedding_configs_returns_config_types(self, session: AsyncSession):
+        """Test that list_embedding_configs returns list of EmbeddingConfig types."""
+        repo = UserEmbeddingRepositoryImpl(user_id="user123", session=session)
+
+        for i in range(3):
+            config = EmbeddingConfig(
+                id=f"repo-embedding-list-{i}",
+                provider="openai",
+                model=f"model-{i}",
+                api_key=f"key-{i}",
+            )
+            await methods.create_embedding_config_async(session, "user123", config)
+
+        results = await repo.list_embedding_configs_async()
+
+        assert len(results) == 3
+        assert all(isinstance(c, EmbeddingConfig) for c in results)
+
+    async def test_delete_embedding_config(self, session: AsyncSession):
+        """Test deleting an embedding config."""
+        repo = UserEmbeddingRepositoryImpl(user_id="user123", session=session)
+
+        config = EmbeddingConfig(
+            id="repo-embedding-delete",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+        )
+        await methods.create_embedding_config_async(session, "user123", config)
+
+        await repo.delete_embedding_config_async("repo-embedding-delete")
+
+        # Verify it was deleted
+        retrieved = await methods.get_embedding_config_async(
+            session, "repo-embedding-delete", "user123"
+        )
+        assert retrieved is None
+
+    async def test_embedding_repo_raises_error_without_session(self, session: AsyncSession):
+        """Test that repository raises error when session is None."""
+        repo = UserEmbeddingRepositoryImpl(user_id="user123", session=None)
+
+        config = EmbeddingConfig(
+            id="test",
+            provider="openai",
+            model="test",
+            api_key="test",
+        )
+
+        with pytest.raises(ValueError, match="Session and user_id are required"):
+            await repo.update_embedding_config_async(config)
+
+    async def test_embedding_repo_raises_error_without_user_id(self, session: AsyncSession):
+        """Test that repository raises error when user_id is None."""
+        repo = UserEmbeddingRepositoryImpl(user_id=None, session=session)
+
+        config = EmbeddingConfig(
+            id="test",
+            provider="openai",
+            model="test",
+            api_key="test",
+        )
+
+        with pytest.raises(ValueError, match="Session and user_id are required"):
+            await repo.update_embedding_config_async(config)
+
+
+class TestLLMRepositoryImpl:
+    """Test cases for UserLLMRepositoryImpl abstract methods."""
+
+    async def test_update_model_config_create_new(self, session: AsyncSession):
+        """Test creating a new model config via update_model_config."""
+        repo = UserLLMRepositoryImpl(user_id="user123", session=session)
+
+        config = ModelConfig(
+            id="repo-llm-1",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            temperature=0.7,
+            max_tokens=2048,
+        )
+
+        await repo.update_model_config_async(config)
+
+        # Verify it was created
+        retrieved = await methods.get_llm_config_async(session, "repo-llm-1", "user123")
+        assert retrieved is not None
+        assert retrieved.temperature == 0.7
+
+    async def test_update_model_config_update_existing(self, session: AsyncSession):
+        """Test updating an existing model config via update_model_config."""
+        repo = UserLLMRepositoryImpl(user_id="user123", session=session)
+
+        # Create initial config
+        config_create = ModelConfig(
+            id="repo-llm-2",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            temperature=0.5,
+        )
+        await methods.create_llm_config_async(session, "user123", config_create)
+
+        # Update via repository
+        config_update = ModelConfig(
+            id="repo-llm-2",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            temperature=0.9,
+        )
+        await repo.update_model_config_async(config_update)
+
+        # Verify it was updated
+        retrieved = await methods.get_llm_config_async(session, "repo-llm-2", "user123")
+        assert retrieved.temperature == 0.9
+
+    async def test_get_model_config_returns_config_type(self, session: AsyncSession):
+        """Test that get_model_config returns ModelConfig type."""
+        repo = UserLLMRepositoryImpl(user_id="user123", session=session)
+
+        config_create = ModelConfig(
+            id="repo-llm-3",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+        )
+        await methods.create_llm_config_async(session, "user123", config_create)
+
+        result = await repo.get_model_config_async("repo-llm-3")
+
+        assert result is not None
+        assert isinstance(result, ModelConfig)
+        assert result.id == "repo-llm-3"
+        assert result.provider == "openai"
+
+    async def test_get_model_config_returns_none_when_not_found(self, session: AsyncSession):
+        """Test that get_model_config returns None when config not found."""
+        repo = UserLLMRepositoryImpl(user_id="user123", session=session)
+
+        result = await repo.get_model_config_async("nonexistent")
+
+        assert result is None
+
+    async def test_list_model_configs_returns_config_types(self, session: AsyncSession):
+        """Test that list_model_configs returns list of ModelConfig types."""
+        repo = UserLLMRepositoryImpl(user_id="user123", session=session)
+
+        for i in range(3):
+            config = ModelConfig(
+                id=f"repo-llm-list-{i}",
+                provider="openai",
+                model=f"model-{i}",
+                api_key=f"key-{i}",
+            )
+            await methods.create_llm_config_async(session, "user123", config)
+
+        results = await repo.list_model_configs_async()
+
+        assert len(results) == 3
+        assert all(isinstance(c, ModelConfig) for c in results)
+
+    async def test_delete_model_config(self, session: AsyncSession):
+        """Test deleting a model config."""
+        repo = UserLLMRepositoryImpl(user_id="user123", session=session)
+
+        config = ModelConfig(
+            id="repo-llm-delete",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+        )
+        await methods.create_llm_config_async(session, "user123", config)
+
+        await repo.delete_model_config_async("repo-llm-delete")
+
+        # Verify it was deleted
+        retrieved = await methods.get_llm_config_async(session, "repo-llm-delete", "user123")
+        assert retrieved is None
+
+    async def test_llm_repo_raises_error_without_session(self, session: AsyncSession):
+        """Test that repository raises error when session is None."""
+        repo = UserLLMRepositoryImpl(user_id="user123", session=None)
+
+        config = ModelConfig(
+            id="test",
+            provider="openai",
+            model="test",
+            api_key="test",
+        )
+
+        with pytest.raises(ValueError, match="Session and user_id are required"):
+            await repo.update_model_config_async(config)
+
+    async def test_llm_repo_raises_error_without_user_id(self, session: AsyncSession):
+        """Test that repository raises error when user_id is None."""
+        repo = UserLLMRepositoryImpl(user_id=None, session=session)
+
+        config = ModelConfig(
+            id="test",
+            provider="openai",
+            model="test",
+            api_key="test",
+        )
+
+        with pytest.raises(ValueError, match="Session and user_id are required"):
+            await repo.update_model_config_async(config)
+
+
+class TestAgentRepositoryImpl:
+    """Test cases for UserAgentRepositoryImpl abstract methods."""
+
+    async def test_update_agent_config_create_new(self, session: AsyncSession):
+        """Test creating a new agent config via update_agent_config."""
+        repo = UserAgentRepositoryImpl(user_id="user123", session=session)
+
+        config = AgentConfig(
+            id="repo-agent-1",
+            model_id="model123",
+            description="Test agent",
+            system_prompt="You are helpful",
+        )
+
+        await repo.update_agent_config_async(config)
+
+        # Verify it was created
+        retrieved = await methods.get_agent_config_async(session, "repo-agent-1", "user123")
+        assert retrieved is not None
+        assert retrieved.system_prompt == "You are helpful"
+
+    async def test_update_agent_config_update_existing(self, session: AsyncSession):
+        """Test updating an existing agent config via update_agent_config."""
+        repo = UserAgentRepositoryImpl(user_id="user123", session=session)
+
+        # Create initial config
+        config_create = AgentConfig(
+            id="repo-agent-2",
+            model_id="model123",
+            system_prompt="Old prompt",
+        )
+        await methods.create_agent_config_async(session, "user123", config_create)
+
+        # Update via repository
+        config_update = AgentConfig(
+            id="repo-agent-2",
+            model_id="model123",
+            system_prompt="New prompt",
+        )
+        await repo.update_agent_config_async(config_update)
+
+        # Verify it was updated
+        retrieved = await methods.get_agent_config_async(session, "repo-agent-2", "user123")
+        assert retrieved.system_prompt == "New prompt"
+
+    async def test_get_agent_config_returns_config_type(self, session: AsyncSession):
+        """Test that get_agent_config returns AgentConfig type."""
+        repo = UserAgentRepositoryImpl(user_id="user123", session=session)
+
+        config_create = AgentConfig(
+            id="repo-agent-3",
+            model_id="model123",
+        )
+        await methods.create_agent_config_async(session, "user123", config_create)
+
+        result = await repo.get_agent_config_async("repo-agent-3")
+
+        assert result is not None
+        assert isinstance(result, AgentConfig)
+        assert result.id == "repo-agent-3"
+        assert result.model_id == "model123"
+
+    async def test_get_agent_config_returns_none_when_not_found(self, session: AsyncSession):
+        """Test that get_agent_config returns None when config not found."""
+        repo = UserAgentRepositoryImpl(user_id="user123", session=session)
+
+        result = await repo.get_agent_config_async("nonexistent")
+
+        assert result is None
+
+    async def test_list_agent_configs_returns_config_types(self, session: AsyncSession):
+        """Test that list_agent_configs returns list of AgentConfig types."""
+        repo = UserAgentRepositoryImpl(user_id="user123", session=session)
+
+        for i in range(3):
+            config = AgentConfig(
+                id=f"repo-agent-list-{i}",
+                model_id=f"model-{i}",
+            )
+            await methods.create_agent_config_async(session, "user123", config)
+
+        results = await repo.list_agent_configs_async()
+
+        assert len(results) == 3
+        assert all(isinstance(c, AgentConfig) for c in results)
+
+    async def test_delete_agent_config(self, session: AsyncSession):
+        """Test deleting an agent config."""
+        repo = UserAgentRepositoryImpl(user_id="user123", session=session)
+
+        config = AgentConfig(
+            id="repo-agent-delete",
+            model_id="model123",
+        )
+        await methods.create_agent_config_async(session, "user123", config)
+
+        await repo.delete_agent_config_async("repo-agent-delete")
+
+        # Verify it was deleted
+        retrieved = await methods.get_agent_config_async(session, "repo-agent-delete", "user123")
+        assert retrieved is None
+
+    async def test_agent_repo_raises_error_without_session(self, session: AsyncSession):
+        """Test that repository raises error when session is None."""
+        repo = UserAgentRepositoryImpl(user_id="user123", session=None)
+
+        config = AgentConfig(
+            id="test",
+            model_id="test",
+        )
+
+        with pytest.raises(ValueError, match="Session and user_id are required"):
+            await repo.update_agent_config_async(config)
+
+    async def test_agent_repo_raises_error_without_user_id(self, session: AsyncSession):
+        """Test that repository raises error when user_id is None."""
+        repo = UserAgentRepositoryImpl(user_id=None, session=session)
+
+        config = AgentConfig(
+            id="test",
+            model_id="test",
+        )
+
+        with pytest.raises(ValueError, match="Session and user_id are required"):
+            await repo.update_agent_config_async(config)

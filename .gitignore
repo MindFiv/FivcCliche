@@ -113,6 +113,7 @@ nohup.out
 # sqllite
 *.sqlite3
 *.sqllite
+*.db
 
 # generated data
 .data/

@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 from sqlmodel import SQLModel
 
-from fivccliche.modules.users.schemas import UserCreate, UserUpdate
 from fivccliche.modules.users import methods
 from fivccliche.modules.users.services import UserAuthenticatorImpl, UserImpl
 
@@ -69,12 +68,12 @@ class TestUserService:
 
     async def test_create_user(self, session: AsyncSession):
         """Test creating a new user."""
-        user_create = UserCreate(
+        user = await methods.create_user_async(
+            session,
             username="testuser",
             email="test@example.com",
             password="password123",
         )
-        user = await methods.create_user_async(session, user_create)
 
         assert user.id is not None
         assert user.username == "testuser"
@@ -85,12 +84,12 @@ class TestUserService:
 
     async def test_get_user_by_uuid(self, session: AsyncSession):
         """Test getting a user by ID."""
-        user_create = UserCreate(
+        created_user = await methods.create_user_async(
+            session,
             username="testuser",
             email="test@example.com",
             password="password123",
         )
-        created_user = await methods.create_user_async(session, user_create)
         retrieved_user = await methods.get_user_async(session, user_id=created_user.id)
 
         assert retrieved_user is not None
@@ -99,12 +98,12 @@ class TestUserService:
 
     async def test_get_user_by_username(self, session: AsyncSession):
         """Test getting a user by username."""
-        user_create = UserCreate(
+        await methods.create_user_async(
+            session,
             username="testuser",
             email="test@example.com",
             password="password123",
         )
-        await methods.create_user_async(session, user_create)
         user = await methods.get_user_async(session, username="testuser")
 
         assert user is not None
@@ -112,12 +111,12 @@ class TestUserService:
 
     async def test_get_user_by_email(self, session: AsyncSession):
         """Test getting a user by email."""
-        user_create = UserCreate(
+        await methods.create_user_async(
+            session,
             username="testuser",
             email="test@example.com",
             password="password123",
         )
-        await methods.create_user_async(session, user_create)
         user = await methods.get_user_async(session, email="test@example.com")
 
         assert user is not None
@@ -126,12 +125,12 @@ class TestUserService:
     async def test_get_all_users(self, session: AsyncSession):
         """Test getting all users."""
         for i in range(3):
-            user_create = UserCreate(
+            await methods.create_user_async(
+                session,
                 username=f"user{i}",
                 email=f"user{i}@example.com",
                 password="password123",
             )
-            await methods.create_user_async(session, user_create)
 
         users = await methods.list_users_async(session)
         assert len(users) == 3
@@ -139,38 +138,37 @@ class TestUserService:
     async def test_get_all_users_pagination(self, session: AsyncSession):
         """Test getting users with pagination."""
         for i in range(5):
-            user_create = UserCreate(
+            await methods.create_user_async(
+                session,
                 username=f"user{i}",
                 email=f"user{i}@example.com",
                 password="password123",
             )
-            await methods.create_user_async(session, user_create)
 
         users = await methods.list_users_async(session, skip=0, limit=2)
         assert len(users) == 2
 
     async def test_update_user(self, session: AsyncSession):
         """Test updating a user."""
-        user_create = UserCreate(
+        user = await methods.create_user_async(
+            session,
             username="testuser",
             email="test@example.com",
             password="password123",
         )
-        user = await methods.create_user_async(session, user_create)
 
-        user_update = UserUpdate(username="newusername")
-        updated_user = await methods.update_user_async(session, user, user_update)
+        updated_user = await methods.update_user_async(session, user, username="newusername")
 
         assert updated_user.username == "newusername"
 
     async def test_delete_user(self, session: AsyncSession):
         """Test deleting a user."""
-        user_create = UserCreate(
+        user = await methods.create_user_async(
+            session,
             username="testuser",
             email="test@example.com",
             password="password123",
         )
-        user = await methods.create_user_async(session, user_create)
         await methods.delete_user_async(session, user)
 
         retrieved_user = await methods.get_user_async(session, user_id=user.id)
@@ -178,12 +176,12 @@ class TestUserService:
 
     async def test_authenticate_user_success(self, session: AsyncSession):
         """Test successful user authentication."""
-        user_create = UserCreate(
+        await methods.create_user_async(
+            session,
             username="testuser",
             email="test@example.com",
             password="password123",
         )
-        await methods.create_user_async(session, user_create)
 
         user = await methods.authenticate_user_async(session, "testuser", "password123")
         assert user is not None
@@ -191,12 +189,12 @@ class TestUserService:
 
     async def test_authenticate_user_wrong_password(self, session: AsyncSession):
         """Test authentication with wrong password."""
-        user_create = UserCreate(
+        await methods.create_user_async(
+            session,
             username="testuser",
             email="test@example.com",
             password="password123",
         )
-        await methods.create_user_async(session, user_create)
 
         user = await methods.authenticate_user_async(session, "testuser", "wrongpassword")
         assert user is None
@@ -272,12 +270,12 @@ class TestUserAuthenticatorCaching:
     async def test_cache_hit_verification(self, authenticator, mock_cache, session: AsyncSession):
         """Test that cache hits are verified and used correctly."""
         # Create a test user
-        user_create = UserCreate(
+        user = await methods.create_user_async(
+            session,
             username="cacheuser",
             email="cache@example.com",
             password="password123",
         )
-        user = await methods.create_user_async(session, user_create)
 
         # Create a token for the user
         token = authenticator._create_access_token(user.id)
@@ -305,12 +303,12 @@ class TestUserAuthenticatorCaching:
     ):
         """Test that cache miss triggers database query."""
         # Create a test user
-        user_create = UserCreate(
+        user = await methods.create_user_async(
+            session,
             username="dbuser",
             email="db@example.com",
             password="password123",
         )
-        user = await methods.create_user_async(session, user_create)
 
         # Create a token for the user
         token = authenticator._create_access_token(user.id)
@@ -333,12 +331,12 @@ class TestUserAuthenticatorCaching:
     ):
         """Test that cache is set after successful database query."""
         # Create a test user
-        user_create = UserCreate(
+        user = await methods.create_user_async(
+            session,
             username="setcacheuser",
             email="setcache@example.com",
             password="password123",
         )
-        user = await methods.create_user_async(session, user_create)
 
         # Create a token for the user
         token = authenticator._create_access_token(user.id)
@@ -368,12 +366,12 @@ class TestUserAuthenticatorCaching:
     ):
         """Test that cache expiration is set to token expiration hours."""
         # Create a test user
-        user_create = UserCreate(
+        user = await methods.create_user_async(
+            session,
             username="expireuser",
             email="expire@example.com",
             password="password123",
         )
-        user = await methods.create_user_async(session, user_create)
 
         # Create a token for the user
         token = authenticator._create_access_token(user.id)
@@ -444,19 +442,19 @@ class TestUserAuthenticatorCaching:
     ):
         """Test that different users' tokens are cached separately."""
         # Create two test users
-        user1_create = UserCreate(
+        user1 = await methods.create_user_async(
+            session,
             username="user1cache",
             email="user1cache@example.com",
             password="password123",
         )
-        user1 = await methods.create_user_async(session, user1_create)
 
-        user2_create = UserCreate(
+        user2 = await methods.create_user_async(
+            session,
             username="user2cache",
             email="user2cache@example.com",
             password="password123",
         )
-        user2 = await methods.create_user_async(session, user2_create)
 
         # Create tokens for both users
         token1 = authenticator._create_access_token(user1.id)
@@ -482,12 +480,12 @@ class TestUserAuthenticatorCaching:
     async def test_user_impl_wrapping(self, authenticator, mock_cache, session: AsyncSession):
         """Test that verified users are wrapped in UserImpl."""
         # Create a test user
-        user_create = UserCreate(
+        user = await methods.create_user_async(
+            session,
             username="impluser",
             email="impl@example.com",
             password="password123",
         )
-        user = await methods.create_user_async(session, user_create)
 
         # Create a token for the user
         token = authenticator._create_access_token(user.id)
@@ -508,12 +506,12 @@ class TestUserAuthenticatorCaching:
     async def test_cache_with_none_session(self, authenticator, mock_cache, session: AsyncSession):
         """Test that caching works when session is None (creates its own session)."""
         # Create a test user
-        user_create = UserCreate(
+        user = await methods.create_user_async(
+            session,
             username="nosessionuser",
             email="nosession@example.com",
             password="password123",
         )
-        user = await methods.create_user_async(session, user_create)
 
         # Create a token for the user
         token = authenticator._create_access_token(user.id)

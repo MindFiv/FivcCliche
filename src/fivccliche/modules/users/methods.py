@@ -9,8 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from fivccliche.modules.users.models import User
-from fivccliche.modules.users.schemas import UserCreate, UserUpdate
+from . import models
 
 # Password hashing context - using argon2 for better security and no length limits
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
@@ -26,16 +25,33 @@ def verify_user_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 
-async def create_user_async(session: AsyncSession, user_create: UserCreate) -> User:
-    """Create a new user."""
-    user = User(
+async def create_user_async(
+    session: AsyncSession,
+    username: str,
+    email: str | None = None,
+    password: str | None = None,
+    is_superuser: bool = False,
+) -> models.User:
+    """Create a new user.
+
+    Args:
+        session: Database session
+        username: Username for the new user
+        email: Email address for the new user (optional)
+        password: Password for the new user (optional)
+        is_superuser: Whether the user is a superuser (default: False)
+
+    Returns:
+        The created User object
+    """
+    user = models.User(
         id=str(uuid.uuid4()),
-        username=user_create.username,
-        email=user_create.email,
-        hashed_password=hash_user_password(user_create.password),
+        username=username,
+        email=email,
+        hashed_password=hash_user_password(password) if password else None,
         created_at=datetime.now(),
         is_active=True,
-        is_superuser=False,
+        is_superuser=is_superuser,
     )
     session.add(user)
     await session.commit()
@@ -48,7 +64,7 @@ async def get_user_async(
     user_id: str | None = None,
     username: str | None = None,
     email: str | None = None,
-) -> User | None:
+) -> models.User | None:
     """Get a user by ID, username, or email.
 
     Args:
@@ -68,18 +84,20 @@ async def get_user_async(
             "At least one search criterion (user_id, username, or email) must be provided"
         )
 
-    statement = select(User)
+    statement = select(models.User)
     if user_id:
-        statement = statement.where(User.id == user_id)
+        statement = statement.where(models.User.id == user_id)
     if username:
-        statement = statement.where(User.username == username)
+        statement = statement.where(models.User.username == username)
     if email:
-        statement = statement.where(User.email == email)
+        statement = statement.where(models.User.email == email)
     result = await session.execute(statement)
     return result.scalars().first()
 
 
-async def list_users_async(session: AsyncSession, skip: int = 0, limit: int = 100) -> list[User]:
+async def list_users_async(
+    session: AsyncSession, skip: int = 0, limit: int = 100
+) -> list[models.User]:
     """List all users with pagination.
 
     Args:
@@ -90,7 +108,7 @@ async def list_users_async(session: AsyncSession, skip: int = 0, limit: int = 10
     Returns:
         List of users
     """
-    statement = select(User).offset(skip).limit(limit)
+    statement = select(models.User).offset(skip).limit(limit)
     result = await session.execute(statement)
     return list(result.scalars().all())
 
@@ -105,28 +123,51 @@ async def count_users_async(session: AsyncSession) -> int:
         Number of users
     """
 
-    statement = select(func.count(User.id))
+    statement = select(func.count(models.User.id))
     result = await session.execute(statement)
     return result.scalar() or 0
 
 
-async def update_user_async(session: AsyncSession, user: User, user_update: UserUpdate) -> User:
-    """Update a user."""
-    if user_update.username is not None:
-        user.username = user_update.username
-    if user_update.email is not None:
-        user.email = user_update.email
-    if user_update.password is not None:
-        user.hashed_password = hash_user_password(user_update.password)
-    if user_update.is_active is not None:
-        user.is_active = user_update.is_active
+async def update_user_async(
+    session: AsyncSession,
+    user: models.User,
+    username: str | None = None,
+    email: str | None = None,
+    password: str | None = None,
+    is_active: bool | None = None,
+    is_superuser: bool | None = None,
+) -> models.User:
+    """Update a user.
+
+    Args:
+        session: Database session
+        user: User object to update
+        username: New username (optional)
+        email: New email address (optional)
+        password: New password (optional)
+        is_active: New active status (optional)
+        is_superuser: New superuser status (optional)
+
+    Returns:
+        The updated User object
+    """
+    if username is not None:
+        user.username = username
+    if email is not None:
+        user.email = email
+    if password is not None:
+        user.hashed_password = hash_user_password(password)
+    if is_active is not None:
+        user.is_active = is_active
+    if is_superuser is not None:
+        user.is_superuser = is_superuser
     session.add(user)
     await session.commit()
     await session.refresh(user)
     return user
 
 
-async def delete_user_async(session: AsyncSession, user: User) -> None:
+async def delete_user_async(session: AsyncSession, user: models.User) -> None:
     """Delete a user."""
     await session.delete(user)
     await session.commit()
@@ -134,7 +175,7 @@ async def delete_user_async(session: AsyncSession, user: User) -> None:
 
 async def authenticate_user_async(
     session: AsyncSession, username: str, password: str
-) -> User | None:
+) -> models.User | None:
     """Authenticate a user by username and password.
 
     Args:

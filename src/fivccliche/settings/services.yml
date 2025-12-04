@@ -22,6 +22,12 @@
 
   class: fivccliche.modules.users.UserAuthenticatorImpl
 
+# configs provider ------------------------------------
+- entries:
+    - interface: fivccliche.services.interfaces.configs.IUserConfigProvider
+
+  class: fivccliche.modules.configs.ConfigProviderImpl
+
 # modules ---------------------------------------------
 - entries:
     - interface: fivccliche.services.interfaces.modules.IModule

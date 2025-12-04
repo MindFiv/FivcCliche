@@ -16,34 +16,106 @@ from fivcglue.implements.utils import load_component_site
 
 
 @pytest.fixture
-async def test_db():
-    """Create a temporary SQLite database for testing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test.db"
-        database_url = f"sqlite+aiosqlite:///{db_path}"
+def client():
+    """Create a test client with temporary database and admin user."""
+    import asyncio
+    from fivccliche.modules.users import methods
 
+    # Import models to ensure they're registered with SQLModel
+    from fivccliche.modules.users.models import User  # noqa: F401
+    from fivccliche.modules.configs.models import UserEmbedding, UserLLM, UserAgent  # noqa: F401
+
+    # Create a temporary file for the database
+    temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+    temp_db.close()
+    database_url = f"sqlite+aiosqlite:///{temp_db.name}"
+
+    # Create engine and tables
+    async def create_tables():
         engine = create_async_engine(
             database_url,
             connect_args={"check_same_thread": False},
             poolclass=NullPool,
         )
-
-        # Create all tables
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
+        return engine
 
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        engine = loop.run_until_complete(create_tables())
         async_session = AsyncSession(engine, expire_on_commit=False)
-        try:
+
+        # Load components
+        components_path = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "src",
+            "fivccliche",
+            "settings",
+            "services.yml",
+        )
+        component_site = load_component_site(filename=components_path, fmt="yaml")
+        module_site = ModuleSiteImpl(component_site, modules=["users", "configs"])
+        app = module_site.create_application()
+
+        # Override the database dependency
+        async def override_get_db_session_async():
             yield async_session
-        finally:
+
+        app.dependency_overrides[get_db_session_async] = override_get_db_session_async
+
+        # Create an admin user for testing
+        async def create_admin_user():
+            admin_user = await methods.create_user_async(
+                async_session,
+                username="admin",
+                email="admin@example.com",
+                password="admin123",
+                is_superuser=True,
+            )
+            return admin_user
+
+        admin_user = loop.run_until_complete(create_admin_user())
+
+        with TestClient(app) as test_client:
+            # Store admin user and session in test_client for test access
+            test_client.admin_user = admin_user
+            test_client.async_session = async_session
+            test_client.loop = loop
+            yield test_client
+
+        # Cleanup
+        async def cleanup():
             await async_session.close()
             await engine.dispose()
 
+        loop.run_until_complete(cleanup())
+    finally:
+        loop.close()
+        # Clean up the temporary database file
+        try:
+            Path(temp_db.name).unlink()
+        except Exception:
+            pass
+
 
 @pytest.fixture
-async def auth_token(client: TestClient):
+def auth_token(client: TestClient):
     """Generate a JWT token for a test user."""
-    # Create a user via the API
+    # Create a user via the API with admin headers
+    admin_token = client.post(
+        "/users/login",
+        json={
+            "username": "admin",
+            "password": "admin123",
+        },
+    ).json()["access_token"]
+
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # Create a test user
     client.post(
         "/users/",
         json={
@@ -51,6 +123,7 @@ async def auth_token(client: TestClient):
             "email": "test@example.com",
             "password": "password123",
         },
+        headers=admin_headers,
     )
     # Login to get token
     response = client.post(
@@ -61,32 +134,6 @@ async def auth_token(client: TestClient):
         },
     )
     return response.json()["access_token"]
-
-
-@pytest.fixture
-async def client(test_db):
-    """Create a test client with temporary database."""
-    # Load components
-    components_path = os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "src",
-        "fivccliche",
-        "settings",
-        "services.yml",
-    )
-    component_site = load_component_site(filename=components_path, fmt="yaml")
-    module_site = ModuleSiteImpl(component_site, modules=["users", "configs"])
-    app = module_site.create_application()
-
-    # Override the database dependency with async generator
-    async def override_get_db_session_async():
-        yield test_db
-
-    app.dependency_overrides[get_db_session_async] = override_get_db_session_async
-
-    with TestClient(app) as client:
-        yield client
 
 
 class TestEmbeddingConfigAPI:

@@ -16,61 +16,110 @@ from fivcglue.implements.utils import load_component_site
 
 
 @pytest.fixture
-async def test_db():
-    """Create a temporary SQLite database for testing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test.db"
-        database_url = f"sqlite+aiosqlite:///{db_path}"
+def client():
+    """Create a test client with temporary database and admin user."""
+    import asyncio
+    from fivccliche.modules.users import methods
 
+    # Create a temporary file for the database
+    temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+    temp_db.close()
+    database_url = f"sqlite+aiosqlite:///{temp_db.name}"
+
+    # Create engine and tables
+    async def create_tables():
         engine = create_async_engine(
             database_url,
             connect_args={"check_same_thread": False},
             poolclass=NullPool,
         )
-
-        # Create all tables
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
+        return engine
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        engine = loop.run_until_complete(create_tables())
 
         async_session = AsyncSession(engine, expire_on_commit=False)
-        try:
+
+        # Load components
+        components_path = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "src",
+            "fivccliche",
+            "settings",
+            "services.yml",
+        )
+        component_site = load_component_site(filename=components_path, fmt="yaml")
+        module_site = ModuleSiteImpl(component_site, modules=["users"])
+        app = module_site.create_application()
+
+        # Override the database dependency with async generator
+        async def override_get_db_session_async():
             yield async_session
-        finally:
+
+        app.dependency_overrides[get_db_session_async] = override_get_db_session_async
+
+        # Create an admin user for testing
+        async def create_admin_user():
+            admin_user = await methods.create_user_async(
+                async_session,
+                username="admin",
+                email="admin@example.com",
+                password="admin123",
+                is_superuser=True,
+            )
+            return admin_user
+
+        admin_user = loop.run_until_complete(create_admin_user())
+
+        with TestClient(app) as test_client:
+            # Store admin user and session in test_client for test access
+            test_client.admin_user = admin_user
+            test_client.async_session = async_session
+            test_client.loop = loop
+            yield test_client
+
+        # Cleanup
+        async def cleanup():
             await async_session.close()
             await engine.dispose()
 
-
-@pytest.fixture
-async def client(test_db):
-    """Create a test client with temporary database."""
-    # Load components
-    components_path = os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "src",
-        "fivccliche",
-        "settings",
-        "services.yml",
-    )
-    component_site = load_component_site(filename=components_path, fmt="yaml")
-    module_site = ModuleSiteImpl(component_site, modules=["users"])
-    app = module_site.create_application()
-
-    # Override the database dependency with async generator
-    async def override_get_db_session_async():
-        yield test_db
-
-    app.dependency_overrides[get_db_session_async] = override_get_db_session_async
-
-    with TestClient(app) as client:
-        yield client
+        loop.run_until_complete(cleanup())
+    finally:
+        loop.close()
+        # Clean up the temporary database file
+        try:
+            Path(temp_db.name).unlink()
+        except Exception:
+            pass
 
 
 class TestUsersAPI:
     """Test cases for Users API endpoints."""
 
+    def _get_admin_token(self, client: TestClient) -> str:
+        """Get admin JWT token for testing."""
+        response = client.post(
+            "/users/login",
+            json={
+                "username": "admin",
+                "password": "admin123",
+            },
+        )
+        return response.json()["access_token"]
+
+    def _get_admin_headers(self, client: TestClient) -> dict:
+        """Get headers with admin JWT token."""
+        token = self._get_admin_token(client)
+        return {"Authorization": f"Bearer {token}"}
+
     def test_create_user(self, client: TestClient):
         """Test creating a new user."""
+        headers = self._get_admin_headers(client)
         response = client.post(
             "/users/",
             json={
@@ -78,6 +127,7 @@ class TestUsersAPI:
                 "email": "test@example.com",
                 "password": "password123",
             },
+            headers=headers,
         )
         assert response.status_code == 201
         data = response.json()
@@ -88,6 +138,7 @@ class TestUsersAPI:
 
     def test_create_user_duplicate_username(self, client: TestClient):
         """Test creating a user with duplicate username."""
+        headers = self._get_admin_headers(client)
         client.post(
             "/users/",
             json={
@@ -95,6 +146,7 @@ class TestUsersAPI:
                 "email": "test@example.com",
                 "password": "password123",
             },
+            headers=headers,
         )
         response = client.post(
             "/users/",
@@ -103,12 +155,14 @@ class TestUsersAPI:
                 "email": "test2@example.com",
                 "password": "password123",
             },
+            headers=headers,
         )
         assert response.status_code == 400
         assert "Username already registered" in response.json()["detail"]
 
     def test_create_user_duplicate_email(self, client: TestClient):
         """Test creating a user with duplicate email."""
+        headers = self._get_admin_headers(client)
         client.post(
             "/users/",
             json={
@@ -116,6 +170,7 @@ class TestUsersAPI:
                 "email": "test@example.com",
                 "password": "password123",
             },
+            headers=headers,
         )
         response = client.post(
             "/users/",
@@ -124,12 +179,14 @@ class TestUsersAPI:
                 "email": "test@example.com",
                 "password": "password123",
             },
+            headers=headers,
         )
         assert response.status_code == 400
         assert "Email already registered" in response.json()["detail"]
 
     def test_list_users(self, client: TestClient):
         """Test listing users."""
+        headers = self._get_admin_headers(client)
         for i in range(3):
             client.post(
                 "/users/",
@@ -138,15 +195,18 @@ class TestUsersAPI:
                     "email": f"user{i}@example.com",
                     "password": "password123",
                 },
+                headers=headers,
             )
-        response = client.get("/users/")
+        response = client.get("/users/", headers=headers)
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 3
-        assert len(data["results"]) == 3
+        # Total includes the admin user created in the fixture + 3 new users
+        assert data["total"] == 4
+        assert len(data["results"]) == 4
 
     def test_list_users_pagination(self, client: TestClient):
         """Test listing users with pagination."""
+        headers = self._get_admin_headers(client)
         for i in range(5):
             client.post(
                 "/users/",
@@ -155,16 +215,19 @@ class TestUsersAPI:
                     "email": f"user{i}@example.com",
                     "password": "password123",
                 },
+                headers=headers,
             )
-        response = client.get("/users/?skip=0&limit=2")
+        response = client.get("/users/?skip=0&limit=2", headers=headers)
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] == 5
+        # Total includes the admin user created in the fixture + 5 new users
+        assert data["total"] == 6
         assert len(data["results"]) == 2
 
     def test_get_current_user_with_valid_token(self, client: TestClient):
         """Test getting the current authenticated user's information with valid JWT token."""
-        # Create a user
+        # Create a user with admin headers
+        admin_headers = self._get_admin_headers(client)
         create_response = client.post(
             "/users/",
             json={
@@ -172,6 +235,7 @@ class TestUsersAPI:
                 "email": "test@example.com",
                 "password": "password123",
             },
+            headers=admin_headers,
         )
         user_id = create_response.json()["id"]
 
@@ -230,7 +294,8 @@ class TestUsersAPI:
 
     def test_get_user(self, client: TestClient):
         """Test getting a user by ID (requires admin authentication)."""
-        # Create a user
+        # Create a user with admin headers
+        admin_headers = self._get_admin_headers(client)
         create_response = client.post(
             "/users/",
             json={
@@ -238,6 +303,7 @@ class TestUsersAPI:
                 "email": "test@example.com",
                 "password": "password123",
             },
+            headers=admin_headers,
         )
         user_id = create_response.json()["id"]
 
@@ -253,6 +319,7 @@ class TestUsersAPI:
 
     def test_delete_user(self, client: TestClient):
         """Test deleting a user (requires admin authentication)."""
+        admin_headers = self._get_admin_headers(client)
         create_response = client.post(
             "/users/",
             json={
@@ -260,6 +327,7 @@ class TestUsersAPI:
                 "email": "test@example.com",
                 "password": "password123",
             },
+            headers=admin_headers,
         )
         user_id = create_response.json()["id"]
 
@@ -269,6 +337,7 @@ class TestUsersAPI:
 
     def test_login_success(self, client: TestClient):
         """Test successful user login with JWT token."""
+        admin_headers = self._get_admin_headers(client)
         client.post(
             "/users/",
             json={
@@ -276,6 +345,7 @@ class TestUsersAPI:
                 "email": "test@example.com",
                 "password": "password123",
             },
+            headers=admin_headers,
         )
         response = client.post(
             "/users/login",
@@ -331,9 +401,26 @@ class TestUsersAPI:
 class TestAuthenticationCaching:
     """Test cases for authentication token caching functionality."""
 
+    def _get_admin_token(self, client: TestClient) -> str:
+        """Get admin JWT token for testing."""
+        response = client.post(
+            "/users/login",
+            json={
+                "username": "admin",
+                "password": "admin123",
+            },
+        )
+        return response.json()["access_token"]
+
+    def _get_admin_headers(self, client: TestClient) -> dict:
+        """Get headers with admin JWT token."""
+        token = self._get_admin_token(client)
+        return {"Authorization": f"Bearer {token}"}
+
     def test_cache_hit_same_token_multiple_requests(self, client: TestClient):
         """Test that the same valid token is cached and reused on subsequent requests."""
-        # Create a user
+        # Create a user with admin headers
+        admin_headers = self._get_admin_headers(client)
         create_response = client.post(
             "/users/",
             json={
@@ -341,6 +428,7 @@ class TestAuthenticationCaching:
                 "email": "cache@example.com",
                 "password": "password123",
             },
+            headers=admin_headers,
         )
         user_id = create_response.json()["id"]
 
@@ -380,7 +468,8 @@ class TestAuthenticationCaching:
 
     def test_token_isolation_different_tokens(self, client: TestClient):
         """Test that different tokens are cached separately and don't interfere."""
-        # Create two users
+        # Create two users with admin headers
+        admin_headers = self._get_admin_headers(client)
         user1_response = client.post(
             "/users/",
             json={
@@ -388,6 +477,7 @@ class TestAuthenticationCaching:
                 "email": "user1@example.com",
                 "password": "password123",
             },
+            headers=admin_headers,
         )
         user1_id = user1_response.json()["id"]
 
@@ -398,6 +488,7 @@ class TestAuthenticationCaching:
                 "email": "user2@example.com",
                 "password": "password123",
             },
+            headers=admin_headers,
         )
         user2_id = user2_response.json()["id"]
 
@@ -487,7 +578,8 @@ class TestAuthenticationCaching:
 
     def test_backward_compatibility_existing_auth_flows(self, client: TestClient):
         """Test that caching doesn't break existing authentication functionality."""
-        # Create a user
+        # Create a user with admin headers
+        admin_headers = self._get_admin_headers(client)
         create_response = client.post(
             "/users/",
             json={
@@ -495,6 +587,7 @@ class TestAuthenticationCaching:
                 "email": "backcompat@example.com",
                 "password": "password123",
             },
+            headers=admin_headers,
         )
         assert create_response.status_code == 201
         user_id = create_response.json()["id"]
@@ -531,7 +624,8 @@ class TestAuthenticationCaching:
 
     def test_cache_with_user_data_consistency(self, client: TestClient):
         """Test that cached user data remains consistent across requests."""
-        # Create a user
+        # Create a user with admin headers
+        admin_headers = self._get_admin_headers(client)
         create_response = client.post(
             "/users/",
             json={
@@ -539,6 +633,7 @@ class TestAuthenticationCaching:
                 "email": "consistency@example.com",
                 "password": "password123",
             },
+            headers=admin_headers,
         )
         user_id = create_response.json()["id"]
         assert user_id
@@ -577,7 +672,8 @@ class TestAuthenticationCaching:
         """Test that caching provides performance improvement for repeated token verification."""
         import time
 
-        # Create a user
+        # Create a user with admin headers
+        admin_headers = self._get_admin_headers(client)
         create_response = client.post(
             "/users/",
             json={
@@ -585,6 +681,7 @@ class TestAuthenticationCaching:
                 "email": "perftest@example.com",
                 "password": "password123",
             },
+            headers=admin_headers,
         )
         assert create_response
 
@@ -620,7 +717,8 @@ class TestAuthenticationCaching:
 
     def test_cache_with_different_session_parameters(self, client: TestClient):
         """Test that caching works correctly when session is provided vs not provided."""
-        # Create a user
+        # Create a user with admin headers
+        admin_headers = self._get_admin_headers(client)
         create_response = client.post(
             "/users/",
             json={
@@ -628,6 +726,7 @@ class TestAuthenticationCaching:
                 "email": "sessiontest@example.com",
                 "password": "password123",
             },
+            headers=admin_headers,
         )
         user_id = create_response.json()["id"]
 

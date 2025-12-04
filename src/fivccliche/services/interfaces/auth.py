@@ -36,6 +36,18 @@ class IUserAuthenticator(IComponent):
     """
 
     @abstractmethod
+    async def create_user_async(
+        self,
+        username: str,
+        email: str | None = None,
+        password: str | None = None,
+        is_admin: bool = False,
+        session: AsyncSession | None = None,
+        **kwargs,  # ignore additional arguments
+    ) -> IUser | None:
+        """Create a new user."""
+
+    @abstractmethod
     async def create_access_token_async(
         self,
         username: str,

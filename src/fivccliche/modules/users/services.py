@@ -13,7 +13,7 @@ from fivccliche.services.interfaces.modules import IModule
 from fivccliche.utils.deps import get_db_session_async
 
 from .models import User
-from .methods import get_user_async, authenticate_user_async
+from .methods import create_user_async, get_user_async, authenticate_user_async
 from .routers import router
 
 
@@ -80,6 +80,52 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         except jwt.InvalidTokenError as e:
             raise ValueError(f"Invalid token: {e!s}") from e
 
+    async def create_user_async(
+        self,
+        username: str,
+        email: str | None = None,
+        password: str | None = None,
+        is_admin: bool = False,
+        session: AsyncSession | None = None,
+        **kwargs,
+    ) -> IUser | None:
+        """Create a new user."""
+        if session:
+            user = await create_user_async(
+                session,
+                username=username,
+                email=email,
+                password=password,
+                is_superuser=is_admin,
+            )
+            return UserImpl(user) if user else None
+
+        async with get_db_session_async() as session:
+            user = await create_user_async(
+                session,
+                username=username,
+                email=email,
+                password=password,
+                is_superuser=is_admin,
+            )
+            return UserImpl(user) if user else None
+
+    async def create_access_token_async(
+        self,
+        username: str,
+        password: str,
+        session: AsyncSession | None = None,
+        **kwargs,
+    ) -> str | None:
+        """Login a user and return a access token."""
+        if session:
+            user = await authenticate_user_async(session, username, password)
+            return self._create_access_token(user.id) if user else None
+
+        async with get_db_session_async() as session:
+            user = await authenticate_user_async(session, username, password)
+            return self._create_access_token(user.id) if user else None
+
     async def verify_access_token_async(
         self, access_token: str, session: AsyncSession | None = None, **kwargs
     ) -> IUser | None:
@@ -122,22 +168,6 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 )
 
         return UserImpl(user) if user else None
-
-    async def create_access_token_async(
-        self,
-        username: str,
-        password: str,
-        session: AsyncSession | None = None,
-        **kwargs,
-    ) -> str | None:
-        """Login a user and return a access token."""
-        if session:
-            user = await authenticate_user_async(session, username, password)
-            return self._create_access_token(user.id) if user else None
-
-        async with get_db_session_async() as session:
-            user = await authenticate_user_async(session, username, password)
-            return self._create_access_token(user.id) if user else None
 
 
 class ModuleImpl(IModule):

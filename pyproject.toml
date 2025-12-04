@@ -38,7 +38,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "typer>=0.9.0",
     "rich>=13.0.0",
-    "fivcplayground>=0.1.1",
+    "fivcplayground>=0.1.2",
     "fivcglue>=0.1.4",
     "passlib[argon2]>=1.7.4",
     "pyjwt>=2.10.1"
@@ -103,4 +103,10 @@ disallow_incomplete_defs = false
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "--strict-markers -v"
+filterwarnings = [
+    # Ignore deprecation warnings from third-party libraries
+    "ignore::DeprecationWarning:strands.experimental.hooks",
+    "ignore::DeprecationWarning:passlib.utils",
+    "ignore::DeprecationWarning:passlib.handlers.argon2",
+]
 
