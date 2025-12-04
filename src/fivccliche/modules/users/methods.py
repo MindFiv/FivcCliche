@@ -45,7 +45,7 @@ async def create_user_async(
         The created User object
     """
     user = models.User(
-        id=str(uuid.uuid4()),
+        uuid=str(uuid.uuid4()),
         username=username,
         email=email,
         hashed_password=hash_user_password(password) if password else None,
@@ -61,7 +61,7 @@ async def create_user_async(
 
 async def get_user_async(
     session: AsyncSession,
-    user_id: str | None = None,
+    user_uuid: str | None = None,
     username: str | None = None,
     email: str | None = None,
 ) -> models.User | None:
@@ -69,7 +69,7 @@ async def get_user_async(
 
     Args:
         session: Database session
-        user_id: User ID to search by
+        user_uuid: User ID to search by
         username: Username to search by
         email: Email to search by
 
@@ -79,14 +79,14 @@ async def get_user_async(
     Raises:
         ValueError: If no search criteria are provided
     """
-    if not any([user_id, username, email]):
+    if not any([user_uuid, username, email]):
         raise ValueError(
-            "At least one search criterion (user_id, username, or email) must be provided"
+            "At least one search criterion (user_uuid, username, or email) must be provided"
         )
 
     statement = select(models.User)
-    if user_id:
-        statement = statement.where(models.User.id == user_id)
+    if user_uuid:
+        statement = statement.where(models.User.uuid == user_uuid)
     if username:
         statement = statement.where(models.User.username == username)
     if email:
@@ -123,7 +123,7 @@ async def count_users_async(session: AsyncSession) -> int:
         Number of users
     """
 
-    statement = select(func.count(models.User.id))
+    statement = select(func.count(models.User.uuid))
     result = await session.execute(statement)
     return result.scalar() or 0
 

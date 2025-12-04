@@ -28,7 +28,7 @@ class UserUpdate(BaseModel):
 class UserRead(UserBase):
     """Schema for reading user data (response)."""
 
-    id: str = Field(..., description="User ID (UUID)")
+    uuid: str = Field(..., description="User ID (UUID)")
     created_at: datetime = Field(..., description="User creation time")
     signed_in_at: datetime | None = Field(None, description="User last sign in time")
     is_active: bool = Field(..., description="User active status")

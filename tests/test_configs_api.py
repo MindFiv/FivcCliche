@@ -23,7 +23,6 @@ def client():
 
     # Import models to ensure they're registered with SQLModel
     from fivccliche.modules.users.models import User  # noqa: F401
-    from fivccliche.modules.configs.models import UserEmbedding, UserLLM, UserAgent  # noqa: F401
 
     # Create a temporary file for the database
     temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
@@ -57,7 +56,7 @@ def client():
             "services.yml",
         )
         component_site = load_component_site(filename=components_path, fmt="yaml")
-        module_site = ModuleSiteImpl(component_site, modules=["users", "configs"])
+        module_site = ModuleSiteImpl(component_site, modules=["users", "agent_configs"])
         app = module_site.create_application()
 
         # Override the database dependency

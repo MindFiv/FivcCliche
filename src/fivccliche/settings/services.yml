@@ -24,9 +24,9 @@
 
 # configs provider ------------------------------------
 - entries:
-    - interface: fivccliche.services.interfaces.configs.IUserConfigProvider
+    - interface: fivccliche.services.interfaces.agent_configs.IUserConfigProvider
 
-  class: fivccliche.modules.configs.ConfigProviderImpl
+  class: fivccliche.modules.agent_configs.ConfigProviderImpl
 
 # modules ---------------------------------------------
 - entries:
@@ -37,22 +37,22 @@
 
 - entries:
     - interface: fivccliche.services.interfaces.modules.IModule
-      name: configs
+      name: agent_configs
 
-  class: fivccliche.modules.configs.ModuleImpl
+  class: fivccliche.modules.agent_configs.ModuleImpl
 
 - entries:
     - interface: fivccliche.services.interfaces.modules.IModule
-      name: chats
+      name: agent_chats
 
-  class: fivccliche.modules.chats.ModuleImpl
+  class: fivccliche.modules.agent_chats.ModuleImpl
 
 - entries:
     - interface: fivccliche.services.interfaces.modules.IModuleSite
 
   modules:
     - 'users'
-    - 'configs'
-    - 'chats'
+    - 'agent_configs'
+    - 'agent_chats'
 
   class: fivccliche.services.implements.modules.ModuleSiteImpl

@@ -14,14 +14,14 @@ from . import models, schemas
 
 async def create_embedding_config_async(
     session: AsyncSession,
-    user_id: str,
+    user_uuid: str,
     config_create: schemas.UserEmbeddingSchema,
     **kwargs,  # ignore additional arguments
 ) -> models.UserEmbedding:
     """Create a new embedding config."""
     config = models.UserEmbedding(
         id=config_create.id,
-        user_id=user_id,
+        user_uuid=user_uuid,
         description=config_create.description,
         provider=config_create.provider,
         model=config_create.model,
@@ -36,11 +36,11 @@ async def create_embedding_config_async(
 
 
 async def get_embedding_config_async(
-    session: AsyncSession, config_id: str, user_id: str, **kwargs  # ignore additional arguments
+    session: AsyncSession, config_id: str, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> models.UserEmbedding | None:
     """Get an embedding config by ID for a specific user."""
     statement = select(models.UserEmbedding).where(
-        (models.UserEmbedding.id == config_id) & (models.UserEmbedding.user_id == user_id)
+        (models.UserEmbedding.id == config_id) & (models.UserEmbedding.user_uuid == user_uuid)
     )
     result = await session.execute(statement)
     return result.scalars().first()
@@ -48,7 +48,7 @@ async def get_embedding_config_async(
 
 async def list_embedding_configs_async(
     session: AsyncSession,
-    user_id: str,
+    user_uuid: str,
     skip: int = 0,
     limit: int = 100,
     **kwargs,  # ignore additional arguments
@@ -56,7 +56,7 @@ async def list_embedding_configs_async(
     """List all embedding configs for a user with pagination."""
     statement = (
         select(models.UserEmbedding)
-        .where(models.UserEmbedding.user_id == user_id)
+        .where(models.UserEmbedding.user_uuid == user_uuid)
         .offset(skip)
         .limit(limit)
     )
@@ -65,11 +65,11 @@ async def list_embedding_configs_async(
 
 
 async def count_embedding_configs_async(
-    session: AsyncSession, user_id: str, **kwargs  # ignore additional arguments
+    session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> int:
     """Count the number of embedding configs for a user."""
     statement = select(func.count(models.UserEmbedding.id)).where(
-        models.UserEmbedding.user_id == user_id
+        models.UserEmbedding.user_uuid == user_uuid
     )
     result = await session.execute(statement)
     return result.scalar() or 0
@@ -115,14 +115,14 @@ async def delete_embedding_config_async(
 
 async def create_llm_config_async(
     session: AsyncSession,
-    user_id: str,
+    user_uuid: str,
     config_create: schemas.UserLLMSchema,
     **kwargs,  # ignore additional arguments
 ) -> models.UserLLM:
     """Create a new LLM config."""
     config = models.UserLLM(
         id=config_create.id,
-        user_id=user_id,
+        user_uuid=user_uuid,
         description=config_create.description,
         provider=config_create.provider,
         model=config_create.model,
@@ -138,11 +138,11 @@ async def create_llm_config_async(
 
 
 async def get_llm_config_async(
-    session: AsyncSession, config_id: str, user_id: str, **kwargs  # ignore additional arguments
+    session: AsyncSession, config_id: str, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> models.UserLLM | None:
     """Get an LLM config by ID for a specific user."""
     statement = select(models.UserLLM).where(
-        (models.UserLLM.id == config_id) & (models.UserLLM.user_id == user_id)
+        (models.UserLLM.id == config_id) & (models.UserLLM.user_uuid == user_uuid)
     )
     result = await session.execute(statement)
     return result.scalars().first()
@@ -150,24 +150,27 @@ async def get_llm_config_async(
 
 async def list_llm_configs_async(
     session: AsyncSession,
-    user_id: str,
+    user_uuid: str,
     skip: int = 0,
     limit: int = 100,
     **kwargs,  # ignore additional arguments
 ) -> list[models.UserLLM]:
     """List all LLM configs for a user with pagination."""
     statement = (
-        select(models.UserLLM).where(models.UserLLM.user_id == user_id).offset(skip).limit(limit)
+        select(models.UserLLM)
+        .where(models.UserLLM.user_uuid == user_uuid)
+        .offset(skip)
+        .limit(limit)
     )
     result = await session.execute(statement)
     return list(result.scalars().all())
 
 
 async def count_llm_configs_async(
-    session: AsyncSession, user_id: str, **kwargs  # ignore additional arguments
+    session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> int:
     """Count the number of LLM configs for a user."""
-    statement = select(func.count(models.UserLLM.id)).where(models.UserLLM.user_id == user_id)
+    statement = select(func.count(models.UserLLM.id)).where(models.UserLLM.user_uuid == user_uuid)
     result = await session.execute(statement)
     return result.scalar() or 0
 
@@ -214,14 +217,14 @@ async def delete_llm_config_async(
 
 async def create_agent_config_async(
     session: AsyncSession,
-    user_id: str,
+    user_uuid: str,
     config_create: schemas.UserAgentSchema,
     **kwargs,  # ignore additional arguments
 ) -> models.UserAgent:
     """Create a new agent config."""
     config = models.UserAgent(
         id=config_create.id,
-        user_id=user_id,
+        user_uuid=user_uuid,
         description=config_create.description,
         model_id=config_create.model_id,
         system_prompt=config_create.system_prompt,
@@ -233,11 +236,11 @@ async def create_agent_config_async(
 
 
 async def get_agent_config_async(
-    session: AsyncSession, config_id: str, user_id: str, **kwargs  # ignore additional arguments
+    session: AsyncSession, config_id: str, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> models.UserAgent | None:
     """Get an agent config by ID for a specific user."""
     statement = select(models.UserAgent).where(
-        (models.UserAgent.id == config_id) & (models.UserAgent.user_id == user_id)
+        (models.UserAgent.id == config_id) & (models.UserAgent.user_uuid == user_uuid)
     )
     result = await session.execute(statement)
     return result.scalars().first()
@@ -245,7 +248,7 @@ async def get_agent_config_async(
 
 async def list_agent_configs_async(
     session: AsyncSession,
-    user_id: str,
+    user_uuid: str,
     skip: int = 0,
     limit: int = 100,
     **kwargs,  # ignore additional arguments
@@ -253,7 +256,7 @@ async def list_agent_configs_async(
     """List all agent configs for a user with pagination."""
     statement = (
         select(models.UserAgent)
-        .where(models.UserAgent.user_id == user_id)
+        .where(models.UserAgent.user_uuid == user_uuid)
         .offset(skip)
         .limit(limit)
     )
@@ -262,10 +265,12 @@ async def list_agent_configs_async(
 
 
 async def count_agent_configs_async(
-    session: AsyncSession, user_id: str, **kwargs  # ignore additional arguments
+    session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> int:
     """Count the number of agent configs for a user."""
-    statement = select(func.count(models.UserAgent.id)).where(models.UserAgent.user_id == user_id)
+    statement = select(func.count(models.UserAgent.id)).where(
+        models.UserAgent.user_uuid == user_uuid
+    )
     result = await session.execute(statement)
     return result.scalar() or 0
 

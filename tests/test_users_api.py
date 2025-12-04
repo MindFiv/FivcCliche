@@ -133,7 +133,7 @@ class TestUsersAPI:
         data = response.json()
         assert data["username"] == "testuser"
         assert data["email"] == "test@example.com"
-        assert "id" in data
+        assert "uuid" in data
         assert "hashed_password" not in data
 
     def test_create_user_duplicate_username(self, client: TestClient):
@@ -237,7 +237,7 @@ class TestUsersAPI:
             },
             headers=admin_headers,
         )
-        user_id = create_response.json()["id"]
+        user_uuid = create_response.json()["uuid"]
 
         # Login to get token
         login_response = client.post(
@@ -261,7 +261,7 @@ class TestUsersAPI:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["id"] == user_id
+        assert data["uuid"] == user_uuid
         assert data["username"] == "testuser"
         assert data["email"] == "test@example.com"
         assert "hashed_password" not in data
@@ -305,10 +305,10 @@ class TestUsersAPI:
             },
             headers=admin_headers,
         )
-        user_id = create_response.json()["id"]
+        user_uuid = create_response.json()["uuid"]
 
         # Try to get user without admin credentials - should fail
-        response = client.get(f"/users/{user_id}")
+        response = client.get(f"/users/{user_uuid}")
         assert response.status_code == 401
 
     def test_get_user_not_found(self, client: TestClient):
@@ -329,10 +329,10 @@ class TestUsersAPI:
             },
             headers=admin_headers,
         )
-        user_id = create_response.json()["id"]
+        user_uuid = create_response.json()["uuid"]
 
         # Without authentication, should get 401
-        response = client.delete(f"/users/{user_id}")
+        response = client.delete(f"/users/{user_uuid}")
         assert response.status_code == 401
 
     def test_login_success(self, client: TestClient):
@@ -430,7 +430,7 @@ class TestAuthenticationCaching:
             },
             headers=admin_headers,
         )
-        user_id = create_response.json()["id"]
+        user_uuid = create_response.json()["uuid"]
 
         # Login to get token
         login_response = client.post(
@@ -448,7 +448,7 @@ class TestAuthenticationCaching:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response1.status_code == 200
-        assert response1.json()["id"] == user_id
+        assert response1.json()["uuid"] == user_uuid
 
         # Second request with same token - should use cache
         response2 = client.get(
@@ -456,7 +456,7 @@ class TestAuthenticationCaching:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response2.status_code == 200
-        assert response2.json()["id"] == user_id
+        assert response2.json()["uuid"] == user_uuid
 
         # Third request with same token - should still use cache
         response3 = client.get(
@@ -464,7 +464,7 @@ class TestAuthenticationCaching:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response3.status_code == 200
-        assert response3.json()["id"] == user_id
+        assert response3.json()["uuid"] == user_uuid
 
     def test_token_isolation_different_tokens(self, client: TestClient):
         """Test that different tokens are cached separately and don't interfere."""
@@ -479,7 +479,7 @@ class TestAuthenticationCaching:
             },
             headers=admin_headers,
         )
-        user1_id = user1_response.json()["id"]
+        user1_id = user1_response.json()["uuid"]
 
         user2_response = client.post(
             "/users/",
@@ -490,7 +490,7 @@ class TestAuthenticationCaching:
             },
             headers=admin_headers,
         )
-        user2_id = user2_response.json()["id"]
+        user2_id = user2_response.json()["uuid"]
 
         # Login both users to get tokens
         token1_response = client.post(
@@ -517,7 +517,7 @@ class TestAuthenticationCaching:
             headers={"Authorization": f"Bearer {token1}"},
         )
         assert response1.status_code == 200
-        assert response1.json()["id"] == user1_id
+        assert response1.json()["uuid"] == user1_id
         assert response1.json()["username"] == "user1"
 
         # Verify token2 returns user2
@@ -526,7 +526,7 @@ class TestAuthenticationCaching:
             headers={"Authorization": f"Bearer {token2}"},
         )
         assert response2.status_code == 200
-        assert response2.json()["id"] == user2_id
+        assert response2.json()["uuid"] == user2_id
         assert response2.json()["username"] == "user2"
 
         # Verify token1 still returns user1 (not user2 from cache)
@@ -535,7 +535,7 @@ class TestAuthenticationCaching:
             headers={"Authorization": f"Bearer {token1}"},
         )
         assert response1_again.status_code == 200
-        assert response1_again.json()["id"] == user1_id
+        assert response1_again.json()["uuid"] == user1_id
         assert response1_again.json()["username"] == "user1"
 
     def test_invalid_token_not_cached(self, client: TestClient):
@@ -590,7 +590,7 @@ class TestAuthenticationCaching:
             headers=admin_headers,
         )
         assert create_response.status_code == 201
-        user_id = create_response.json()["id"]
+        user_uuid = create_response.json()["uuid"]
 
         # Test login flow
         login_response = client.post(
@@ -609,7 +609,7 @@ class TestAuthenticationCaching:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 200
-        assert response.json()["id"] == user_id
+        assert response.json()["uuid"] == user_uuid
 
         # Test missing token still returns 401
         response_no_token = client.get("/users/self")
@@ -635,8 +635,8 @@ class TestAuthenticationCaching:
             },
             headers=admin_headers,
         )
-        user_id = create_response.json()["id"]
-        assert user_id
+        user_uuid = create_response.json()["uuid"]
+        assert user_uuid
 
         # Login to get token
         login_response = client.post(
@@ -663,7 +663,7 @@ class TestAuthenticationCaching:
         data2 = response2.json()
 
         # Verify data consistency
-        assert data1["id"] == data2["id"]
+        assert data1["uuid"] == data2["uuid"]
         assert data1["username"] == data2["username"]
         assert data1["email"] == data2["email"]
         assert data1["is_active"] == data2["is_active"]
@@ -728,7 +728,7 @@ class TestAuthenticationCaching:
             },
             headers=admin_headers,
         )
-        user_id = create_response.json()["id"]
+        user_uuid = create_response.json()["uuid"]
 
         # Login to get token
         login_response = client.post(
@@ -746,7 +746,7 @@ class TestAuthenticationCaching:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response1.status_code == 200
-        assert response1.json()["id"] == user_id
+        assert response1.json()["uuid"] == user_uuid
 
         # Request 2 - with session (from dependency injection)
         response2 = client.get(
@@ -754,7 +754,7 @@ class TestAuthenticationCaching:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response2.status_code == 200
-        assert response2.json()["id"] == user_id
+        assert response2.json()["uuid"] == user_uuid
 
         # Both should return the same user data
         assert response1.json() == response2.json()

@@ -311,7 +311,7 @@ async def _create_superuser_async(username: str, email: str, password: str) -> N
                 username=username,
                 email=email,
                 password=password,
-                is_admin=True,
+                is_superuser=True,
                 session=session,
             )
 

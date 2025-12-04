@@ -9,16 +9,16 @@ from .routers import router
 class ModuleImpl(IModule):
 
     def __init__(self, _: IComponentSite, **kwargs):
-        print("chats module initialized.")
+        print("agent chats module initialized.")
 
     @property
     def name(self):
-        return "charts"
+        return "agent_charts"
 
     @property
     def description(self):
-        return "Chat management module."
+        return "Agent Chat management module."
 
     def mount(self, app: FastAPI, **kwargs) -> None:
-        print("chats module mounted.")
+        print("agent_chats module mounted.")
         app.include_router(router)

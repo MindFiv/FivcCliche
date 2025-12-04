@@ -19,7 +19,7 @@ class IUserConfigProvider(IComponent):
     @abstractmethod
     def get_embedding_repository(
         self,
-        user_id: str | None = None,
+        user_uuid: str | None = None,
         **kwargs,  # ignore additional arguments
     ) -> UserEmbeddingRepository:
         """Get the embedding config repository."""
@@ -27,7 +27,7 @@ class IUserConfigProvider(IComponent):
     @abstractmethod
     def get_model_repository(
         self,
-        user_id: str | None = None,
+        user_uuid: str | None = None,
         **kwargs,  # ignore additional arguments
     ) -> UserLLMRepository:
         """Get the model config repository."""
@@ -35,7 +35,7 @@ class IUserConfigProvider(IComponent):
     @abstractmethod
     def get_agent_repository(
         self,
-        user_id: str | None = None,
+        user_uuid: str | None = None,
         **kwargs,  # ignore additional arguments
     ) -> UserAgentRepository:
         """Get the agent config repository."""

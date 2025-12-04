@@ -38,8 +38,8 @@ class UserEmbedding(SQLModel, table=True):
         default=1024,
         description="Embedding dimension.",
     )
-    user_id: str = Field(
-        foreign_key="user.id",
+    user_uuid: str = Field(
+        foreign_key="user.uuid",
         description="User ID.",
     )
 
@@ -92,8 +92,8 @@ class UserLLM(SQLModel, table=True):
         default=4096,
         description="LLM max tokens.",
     )
-    user_id: str = Field(
-        foreign_key="user.id",
+    user_uuid: str = Field(
+        foreign_key="user.uuid",
         description="User ID.",
     )
 
@@ -130,8 +130,8 @@ class UserAgent(SQLModel, table=True):
         max_length=1024,
         description="Agent system prompt.",
     )
-    user_id: str = Field(
-        foreign_key="user.id",
+    user_uuid: str = Field(
+        foreign_key="user.uuid",
         description="User ID.",
     )
 

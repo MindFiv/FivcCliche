@@ -12,8 +12,8 @@ from fivcplayground.embeddings.types import EmbeddingConfig
 from fivcplayground.models.types import ModelConfig
 from fivcplayground.agents.types import AgentConfig
 
-from fivccliche.modules.configs import methods
-from fivccliche.modules.configs.services import (
+from fivccliche.modules.agent_configs import methods
+from fivccliche.modules.agent_configs.services import (
     UserEmbeddingRepositoryImpl,
     UserLLMRepositoryImpl,
     UserAgentRepositoryImpl,
@@ -21,7 +21,7 @@ from fivccliche.modules.configs.services import (
 
 # Import models to ensure they're registered with SQLModel
 from fivccliche.modules.users.models import User  # noqa: F401
-from fivccliche.modules.configs.models import UserEmbedding, UserLLM, UserAgent  # noqa: F401
+from fivccliche.modules.agent_configs.models import UserEmbedding, UserLLM, UserAgent  # noqa: F401
 
 
 @pytest.fixture
@@ -48,14 +48,14 @@ async def session():
                 text(
                     """
                 CREATE TABLE "user" (
-                    id VARCHAR NOT NULL,
+                    uuid VARCHAR NOT NULL,
                     username VARCHAR NOT NULL,
                     email VARCHAR NOT NULL,
                     hashed_password VARCHAR NOT NULL,
                     is_active BOOLEAN NOT NULL DEFAULT 1,
                     created_at DATETIME NOT NULL,
                     updated_at DATETIME NOT NULL,
-                    PRIMARY KEY (id),
+                    PRIMARY KEY (uuid),
                     UNIQUE (username),
                     UNIQUE (email)
                 )
@@ -75,9 +75,9 @@ async def session():
                     api_key VARCHAR NOT NULL,
                     base_url VARCHAR,
                     dimension INTEGER NOT NULL DEFAULT 1024,
-                    user_id VARCHAR NOT NULL,
+                    user_uuid VARCHAR NOT NULL,
                     PRIMARY KEY (id),
-                    FOREIGN KEY(user_id) REFERENCES "user" (id)
+                    FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
                 )
             """
                 )
@@ -96,9 +96,9 @@ async def session():
                     base_url VARCHAR,
                     temperature FLOAT NOT NULL DEFAULT 0.5,
                     max_tokens INTEGER NOT NULL DEFAULT 4096,
-                    user_id VARCHAR NOT NULL,
+                    user_uuid VARCHAR NOT NULL,
                     PRIMARY KEY (id),
-                    FOREIGN KEY(user_id) REFERENCES "user" (id)
+                    FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
                 )
             """
                 )
@@ -125,9 +125,9 @@ async def session():
                     description VARCHAR,
                     model_id VARCHAR NOT NULL,
                     system_prompt VARCHAR,
-                    user_id VARCHAR NOT NULL,
+                    user_uuid VARCHAR NOT NULL,
                     PRIMARY KEY (id),
-                    FOREIGN KEY(user_id) REFERENCES "user" (id),
+                    FOREIGN KEY(user_uuid) REFERENCES "user" (uuid),
                     FOREIGN KEY(model_id) REFERENCES agent_models (id)
                 )
             """
@@ -162,7 +162,7 @@ class TestEmbeddingConfigService:
         config = await methods.create_embedding_config_async(session, "user123", config_create)
 
         assert config.id is not None
-        assert config.user_id == "user123"
+        assert config.user_uuid == "user123"
         assert config.model == "text-embedding-3-small"
         assert config.dimension == 1536
 
@@ -179,7 +179,7 @@ class TestEmbeddingConfigService:
 
         assert retrieved is not None
         assert retrieved.id == created.id
-        assert retrieved.user_id == "user123"
+        assert retrieved.user_uuid == "user123"
 
     async def test_get_embedding_config_wrong_user(self, session: AsyncSession):
         """Test getting embedding config with wrong user ID."""
@@ -291,7 +291,7 @@ class TestLLMConfigService:
         config = await methods.create_llm_config_async(session, "user123", config_create)
 
         assert config.id is not None
-        assert config.user_id == "user123"
+        assert config.user_uuid == "user123"
         assert config.model == "gpt-4"
         assert config.temperature == 0.7
 
@@ -389,7 +389,7 @@ class TestAgentConfigService:
         config = await methods.create_agent_config_async(session, "user123", config_create)
 
         assert config.id is not None
-        assert config.user_id == "user123"
+        assert config.user_uuid == "user123"
         assert config.model_id == "model123"
 
     async def test_get_agent_config(self, session: AsyncSession):
@@ -465,7 +465,7 @@ class TestEmbeddingRepositoryImpl:
 
     async def test_update_embedding_config_create_new(self, session: AsyncSession):
         """Test creating a new embedding config via update_embedding_config."""
-        repo = UserEmbeddingRepositoryImpl(user_id="user123", session=session)
+        repo = UserEmbeddingRepositoryImpl(user_uuid="user123", session=session)
 
         config = EmbeddingConfig(
             id="repo-embedding-1",
@@ -484,7 +484,7 @@ class TestEmbeddingRepositoryImpl:
 
     async def test_update_embedding_config_update_existing(self, session: AsyncSession):
         """Test updating an existing embedding config via update_embedding_config."""
-        repo = UserEmbeddingRepositoryImpl(user_id="user123", session=session)
+        repo = UserEmbeddingRepositoryImpl(user_uuid="user123", session=session)
 
         # Create initial config
         config_create = EmbeddingConfig(
@@ -512,7 +512,7 @@ class TestEmbeddingRepositoryImpl:
 
     async def test_get_embedding_config_returns_config_type(self, session: AsyncSession):
         """Test that get_embedding_config returns EmbeddingConfig type."""
-        repo = UserEmbeddingRepositoryImpl(user_id="user123", session=session)
+        repo = UserEmbeddingRepositoryImpl(user_uuid="user123", session=session)
 
         config_create = EmbeddingConfig(
             id="repo-embedding-3",
@@ -531,7 +531,7 @@ class TestEmbeddingRepositoryImpl:
 
     async def test_get_embedding_config_returns_none_when_not_found(self, session: AsyncSession):
         """Test that get_embedding_config returns None when config not found."""
-        repo = UserEmbeddingRepositoryImpl(user_id="user123", session=session)
+        repo = UserEmbeddingRepositoryImpl(user_uuid="user123", session=session)
 
         result = await repo.get_embedding_config_async("nonexistent")
 
@@ -539,7 +539,7 @@ class TestEmbeddingRepositoryImpl:
 
     async def test_list_embedding_configs_returns_config_types(self, session: AsyncSession):
         """Test that list_embedding_configs returns list of EmbeddingConfig types."""
-        repo = UserEmbeddingRepositoryImpl(user_id="user123", session=session)
+        repo = UserEmbeddingRepositoryImpl(user_uuid="user123", session=session)
 
         for i in range(3):
             config = EmbeddingConfig(
@@ -557,7 +557,7 @@ class TestEmbeddingRepositoryImpl:
 
     async def test_delete_embedding_config(self, session: AsyncSession):
         """Test deleting an embedding config."""
-        repo = UserEmbeddingRepositoryImpl(user_id="user123", session=session)
+        repo = UserEmbeddingRepositoryImpl(user_uuid="user123", session=session)
 
         config = EmbeddingConfig(
             id="repo-embedding-delete",
@@ -577,7 +577,7 @@ class TestEmbeddingRepositoryImpl:
 
     async def test_embedding_repo_raises_error_without_session(self, session: AsyncSession):
         """Test that repository raises error when session is None."""
-        repo = UserEmbeddingRepositoryImpl(user_id="user123", session=None)
+        repo = UserEmbeddingRepositoryImpl(user_uuid="user123", session=None)
 
         config = EmbeddingConfig(
             id="test",
@@ -586,12 +586,12 @@ class TestEmbeddingRepositoryImpl:
             api_key="test",
         )
 
-        with pytest.raises(ValueError, match="Session and user_id are required"):
+        with pytest.raises(ValueError, match="Session and user_uuid are required"):
             await repo.update_embedding_config_async(config)
 
     async def test_embedding_repo_raises_error_without_user_id(self, session: AsyncSession):
-        """Test that repository raises error when user_id is None."""
-        repo = UserEmbeddingRepositoryImpl(user_id=None, session=session)
+        """Test that repository raises error when user_uuid is None."""
+        repo = UserEmbeddingRepositoryImpl(user_uuid=None, session=session)
 
         config = EmbeddingConfig(
             id="test",
@@ -600,7 +600,7 @@ class TestEmbeddingRepositoryImpl:
             api_key="test",
         )
 
-        with pytest.raises(ValueError, match="Session and user_id are required"):
+        with pytest.raises(ValueError, match="Session and user_uuid are required"):
             await repo.update_embedding_config_async(config)
 
 
@@ -609,7 +609,7 @@ class TestLLMRepositoryImpl:
 
     async def test_update_model_config_create_new(self, session: AsyncSession):
         """Test creating a new model config via update_model_config."""
-        repo = UserLLMRepositoryImpl(user_id="user123", session=session)
+        repo = UserLLMRepositoryImpl(user_uuid="user123", session=session)
 
         config = ModelConfig(
             id="repo-llm-1",
@@ -629,7 +629,7 @@ class TestLLMRepositoryImpl:
 
     async def test_update_model_config_update_existing(self, session: AsyncSession):
         """Test updating an existing model config via update_model_config."""
-        repo = UserLLMRepositoryImpl(user_id="user123", session=session)
+        repo = UserLLMRepositoryImpl(user_uuid="user123", session=session)
 
         # Create initial config
         config_create = ModelConfig(
@@ -657,7 +657,7 @@ class TestLLMRepositoryImpl:
 
     async def test_get_model_config_returns_config_type(self, session: AsyncSession):
         """Test that get_model_config returns ModelConfig type."""
-        repo = UserLLMRepositoryImpl(user_id="user123", session=session)
+        repo = UserLLMRepositoryImpl(user_uuid="user123", session=session)
 
         config_create = ModelConfig(
             id="repo-llm-3",
@@ -676,7 +676,7 @@ class TestLLMRepositoryImpl:
 
     async def test_get_model_config_returns_none_when_not_found(self, session: AsyncSession):
         """Test that get_model_config returns None when config not found."""
-        repo = UserLLMRepositoryImpl(user_id="user123", session=session)
+        repo = UserLLMRepositoryImpl(user_uuid="user123", session=session)
 
         result = await repo.get_model_config_async("nonexistent")
 
@@ -684,7 +684,7 @@ class TestLLMRepositoryImpl:
 
     async def test_list_model_configs_returns_config_types(self, session: AsyncSession):
         """Test that list_model_configs returns list of ModelConfig types."""
-        repo = UserLLMRepositoryImpl(user_id="user123", session=session)
+        repo = UserLLMRepositoryImpl(user_uuid="user123", session=session)
 
         for i in range(3):
             config = ModelConfig(
@@ -702,7 +702,7 @@ class TestLLMRepositoryImpl:
 
     async def test_delete_model_config(self, session: AsyncSession):
         """Test deleting a model config."""
-        repo = UserLLMRepositoryImpl(user_id="user123", session=session)
+        repo = UserLLMRepositoryImpl(user_uuid="user123", session=session)
 
         config = ModelConfig(
             id="repo-llm-delete",
@@ -720,7 +720,7 @@ class TestLLMRepositoryImpl:
 
     async def test_llm_repo_raises_error_without_session(self, session: AsyncSession):
         """Test that repository raises error when session is None."""
-        repo = UserLLMRepositoryImpl(user_id="user123", session=None)
+        repo = UserLLMRepositoryImpl(user_uuid="user123", session=None)
 
         config = ModelConfig(
             id="test",
@@ -729,12 +729,12 @@ class TestLLMRepositoryImpl:
             api_key="test",
         )
 
-        with pytest.raises(ValueError, match="Session and user_id are required"):
+        with pytest.raises(ValueError, match="Session and user_uuid are required"):
             await repo.update_model_config_async(config)
 
     async def test_llm_repo_raises_error_without_user_id(self, session: AsyncSession):
-        """Test that repository raises error when user_id is None."""
-        repo = UserLLMRepositoryImpl(user_id=None, session=session)
+        """Test that repository raises error when user_uuid is None."""
+        repo = UserLLMRepositoryImpl(user_uuid=None, session=session)
 
         config = ModelConfig(
             id="test",
@@ -743,7 +743,7 @@ class TestLLMRepositoryImpl:
             api_key="test",
         )
 
-        with pytest.raises(ValueError, match="Session and user_id are required"):
+        with pytest.raises(ValueError, match="Session and user_uuid are required"):
             await repo.update_model_config_async(config)
 
 
@@ -752,7 +752,7 @@ class TestAgentRepositoryImpl:
 
     async def test_update_agent_config_create_new(self, session: AsyncSession):
         """Test creating a new agent config via update_agent_config."""
-        repo = UserAgentRepositoryImpl(user_id="user123", session=session)
+        repo = UserAgentRepositoryImpl(user_uuid="user123", session=session)
 
         config = AgentConfig(
             id="repo-agent-1",
@@ -770,7 +770,7 @@ class TestAgentRepositoryImpl:
 
     async def test_update_agent_config_update_existing(self, session: AsyncSession):
         """Test updating an existing agent config via update_agent_config."""
-        repo = UserAgentRepositoryImpl(user_id="user123", session=session)
+        repo = UserAgentRepositoryImpl(user_uuid="user123", session=session)
 
         # Create initial config
         config_create = AgentConfig(
@@ -794,7 +794,7 @@ class TestAgentRepositoryImpl:
 
     async def test_get_agent_config_returns_config_type(self, session: AsyncSession):
         """Test that get_agent_config returns AgentConfig type."""
-        repo = UserAgentRepositoryImpl(user_id="user123", session=session)
+        repo = UserAgentRepositoryImpl(user_uuid="user123", session=session)
 
         config_create = AgentConfig(
             id="repo-agent-3",
@@ -811,7 +811,7 @@ class TestAgentRepositoryImpl:
 
     async def test_get_agent_config_returns_none_when_not_found(self, session: AsyncSession):
         """Test that get_agent_config returns None when config not found."""
-        repo = UserAgentRepositoryImpl(user_id="user123", session=session)
+        repo = UserAgentRepositoryImpl(user_uuid="user123", session=session)
 
         result = await repo.get_agent_config_async("nonexistent")
 
@@ -819,7 +819,7 @@ class TestAgentRepositoryImpl:
 
     async def test_list_agent_configs_returns_config_types(self, session: AsyncSession):
         """Test that list_agent_configs returns list of AgentConfig types."""
-        repo = UserAgentRepositoryImpl(user_id="user123", session=session)
+        repo = UserAgentRepositoryImpl(user_uuid="user123", session=session)
 
         for i in range(3):
             config = AgentConfig(
@@ -835,7 +835,7 @@ class TestAgentRepositoryImpl:
 
     async def test_delete_agent_config(self, session: AsyncSession):
         """Test deleting an agent config."""
-        repo = UserAgentRepositoryImpl(user_id="user123", session=session)
+        repo = UserAgentRepositoryImpl(user_uuid="user123", session=session)
 
         config = AgentConfig(
             id="repo-agent-delete",
@@ -851,24 +851,24 @@ class TestAgentRepositoryImpl:
 
     async def test_agent_repo_raises_error_without_session(self, session: AsyncSession):
         """Test that repository raises error when session is None."""
-        repo = UserAgentRepositoryImpl(user_id="user123", session=None)
+        repo = UserAgentRepositoryImpl(user_uuid="user123", session=None)
 
         config = AgentConfig(
             id="test",
             model_id="test",
         )
 
-        with pytest.raises(ValueError, match="Session and user_id are required"):
+        with pytest.raises(ValueError, match="Session and user_uuid are required"):
             await repo.update_agent_config_async(config)
 
     async def test_agent_repo_raises_error_without_user_id(self, session: AsyncSession):
-        """Test that repository raises error when user_id is None."""
-        repo = UserAgentRepositoryImpl(user_id=None, session=session)
+        """Test that repository raises error when user_uuid is None."""
+        repo = UserAgentRepositoryImpl(user_uuid=None, session=session)
 
         config = AgentConfig(
             id="test",
             model_id="test",
         )
 
-        with pytest.raises(ValueError, match="Session and user_id are required"):
+        with pytest.raises(ValueError, match="Session and user_uuid are required"):
             await repo.update_agent_config_async(config)

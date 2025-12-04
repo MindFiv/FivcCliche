@@ -10,7 +10,7 @@ class User(SQLModel, table=True):
 
     __tablename__ = "user"
 
-    id: str = Field(
+    uuid: str = Field(
         default_factory=lambda: str(uuid1()),
         primary_key=True,
         max_length=32,

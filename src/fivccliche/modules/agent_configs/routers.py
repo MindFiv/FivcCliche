@@ -35,7 +35,7 @@ async def create_embedding_config_async(
         )
     config = await methods.create_embedding_config_async(
         session,
-        user.id,
+        user.uuid,
         config_create,
     )
     return config.to_config()
@@ -57,8 +57,8 @@ async def list_embedding_configs_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    configs = await methods.list_embedding_configs_async(session, user.id, skip=skip, limit=limit)
-    total = await methods.count_embedding_configs_async(session, user.id)
+    configs = await methods.list_embedding_configs_async(session, user.uuid, skip=skip, limit=limit)
+    total = await methods.count_embedding_configs_async(session, user.uuid)
     return PaginatedResponse[schemas.UserEmbeddingSchema](
         total=total,
         results=[config.to_config() for config in configs],
@@ -80,7 +80,7 @@ async def get_embedding_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_embedding_config_async(session, config_id, user.id)
+    config = await methods.get_embedding_config_async(session, config_id, user.uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -102,7 +102,7 @@ async def update_embedding_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_embedding_config_async(session, config_id, user.id)
+    config = await methods.get_embedding_config_async(session, config_id, user.uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -124,7 +124,7 @@ async def delete_embedding_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_embedding_config_async(session, config_id, user.id)
+    config = await methods.get_embedding_config_async(session, config_id, user.uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -152,7 +152,7 @@ async def create_llm_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.create_llm_config_async(session, user.id, config_create)
+    config = await methods.create_llm_config_async(session, user.uuid, config_create)
     return config.to_config()
 
 
@@ -169,8 +169,8 @@ async def list_llm_configs_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    configs = await methods.list_llm_configs_async(session, user.id, skip=skip, limit=limit)
-    total = await methods.count_llm_configs_async(session, user.id)
+    configs = await methods.list_llm_configs_async(session, user.uuid, skip=skip, limit=limit)
+    total = await methods.count_llm_configs_async(session, user.uuid)
     return PaginatedResponse[schemas.UserLLMSchema](
         total=total,
         results=[config.to_config() for config in configs],
@@ -193,7 +193,7 @@ async def get_llm_config_async(
             detail="Not authenticated",
         )
 
-    config = await methods.get_llm_config_async(session, config_id, user.id)
+    config = await methods.get_llm_config_async(session, config_id, user.uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -218,7 +218,7 @@ async def update_llm_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_llm_config_async(session, config_id, user.id)
+    config = await methods.get_llm_config_async(session, config_id, user.uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -243,7 +243,7 @@ async def delete_llm_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_llm_config_async(session, config_id, user.id)
+    config = await methods.get_llm_config_async(session, config_id, user.uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -275,7 +275,7 @@ async def create_agent_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.create_agent_config_async(session, user.id, config_create)
+    config = await methods.create_agent_config_async(session, user.uuid, config_create)
     return config.to_config()
 
 
@@ -292,8 +292,8 @@ async def list_agent_configs_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    configs = await methods.list_agent_configs_async(session, user.id, skip=skip, limit=limit)
-    total = await methods.count_agent_configs_async(session, user.id)
+    configs = await methods.list_agent_configs_async(session, user.uuid, skip=skip, limit=limit)
+    total = await methods.count_agent_configs_async(session, user.uuid)
     return PaginatedResponse[schemas.UserAgentSchema](
         total=total,
         results=[config.to_config() for config in configs],
@@ -312,7 +312,7 @@ async def get_agent_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_agent_config_async(session, config_id, user.id)
+    config = await methods.get_agent_config_async(session, config_id, user.uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -334,7 +334,7 @@ async def update_agent_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_agent_config_async(session, config_id, user.id)
+    config = await methods.get_agent_config_async(session, config_id, user.uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -356,7 +356,7 @@ async def delete_agent_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_agent_config_async(session, config_id, user.id)
+    config = await methods.get_agent_config_async(session, config_id, user.uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
