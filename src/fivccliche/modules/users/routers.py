@@ -80,7 +80,7 @@ async def get_self_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    user = await methods.get_user_async(session, user_id=user.id)
+    user = await methods.get_user_async(session, user_uuid=user.uuid)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -89,9 +89,9 @@ async def get_self_async(
     return user
 
 
-@router.get("/{user_id}", response_model=schemas.UserRead)
+@router.get("/{user_uuid}", response_model=schemas.UserRead)
 async def get_user_async(
-    user_id: str,
+    user_uuid: str,
     admin_user: IUser = Depends(get_admin_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> models.User:
@@ -102,7 +102,7 @@ async def get_user_async(
             detail="Not a admin",
         )
 
-    user = await methods.get_user_async(session, user_id=user_id)
+    user = await methods.get_user_async(session, user_uuid=user_uuid)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -111,9 +111,9 @@ async def get_user_async(
     return user
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{user_uuid}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user_async(
-    user_id: str,
+    user_uuid: str,
     admin_user: IUser = Depends(get_admin_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
@@ -123,7 +123,7 @@ async def delete_user_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a admin",
         )
-    user = await methods.get_user_async(session, user_id=user_id)
+    user = await methods.get_user_async(session, user_uuid=user_uuid)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

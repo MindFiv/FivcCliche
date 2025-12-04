@@ -11,7 +11,7 @@ class IUser(IComponent):
 
     @property
     @abstractmethod
-    def id(self) -> str:
+    def uuid(self) -> str:
         """UUID of the user."""
 
     @property
@@ -26,8 +26,8 @@ class IUser(IComponent):
 
     @property
     @abstractmethod
-    def is_admin(self) -> bool:
-        """Whether the user is an admin."""
+    def is_superuser(self) -> bool:
+        """Whether the user is a superuser."""
 
 
 class IUserAuthenticator(IComponent):
@@ -41,7 +41,7 @@ class IUserAuthenticator(IComponent):
         username: str,
         email: str | None = None,
         password: str | None = None,
-        is_admin: bool = False,
+        is_superuser: bool = False,
         session: AsyncSession | None = None,
         **kwargs,  # ignore additional arguments
     ) -> IUser | None:

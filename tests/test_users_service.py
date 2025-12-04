@@ -75,7 +75,7 @@ class TestUserService:
             password="password123",
         )
 
-        assert user.id is not None
+        assert user.uuid is not None
         assert user.username == "testuser"
         assert user.email == "test@example.com"
         assert user.hashed_password != "password123"
@@ -90,10 +90,10 @@ class TestUserService:
             email="test@example.com",
             password="password123",
         )
-        retrieved_user = await methods.get_user_async(session, user_id=created_user.id)
+        retrieved_user = await methods.get_user_async(session, user_uuid=created_user.uuid)
 
         assert retrieved_user is not None
-        assert retrieved_user.id == created_user.id
+        assert retrieved_user.uuid == created_user.uuid
         assert retrieved_user.username == "testuser"
 
     async def test_get_user_by_username(self, session: AsyncSession):
@@ -171,7 +171,7 @@ class TestUserService:
         )
         await methods.delete_user_async(session, user)
 
-        retrieved_user = await methods.get_user_async(session, user_id=user.id)
+        retrieved_user = await methods.get_user_async(session, user_uuid=user.uuid)
         assert retrieved_user is None
 
     async def test_authenticate_user_success(self, session: AsyncSession):
@@ -278,11 +278,11 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create a token for the user
-        token = authenticator._create_access_token(user.id)
+        token = authenticator._create_access_token(user.uuid)
 
         # Setup cache to return user data on first call
         user_info = {
-            "id": user.id,
+            "uuid": user.uuid,
             "username": user.username,
             "email": user.email,
             "is_active": user.is_active,
@@ -296,7 +296,7 @@ class TestUserAuthenticatorCaching:
         # Verify cache was checked
         mock_cache.get_value.assert_called()
         assert result is not None
-        assert result.id == user.id
+        assert result.uuid == user.uuid
 
     async def test_cache_miss_database_query(
         self, authenticator, mock_cache, session: AsyncSession
@@ -311,7 +311,7 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create a token for the user
-        token = authenticator._create_access_token(user.id)
+        token = authenticator._create_access_token(user.uuid)
 
         # Setup cache to return None (cache miss)
         mock_cache.get_value.return_value = None
@@ -321,7 +321,7 @@ class TestUserAuthenticatorCaching:
 
         # Verify result is correct
         assert result is not None
-        assert result.id == user.id
+        assert result.uuid == user.uuid
 
         # Verify cache was set after database query
         mock_cache.set_value.assert_called()
@@ -339,7 +339,7 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create a token for the user
-        token = authenticator._create_access_token(user.id)
+        token = authenticator._create_access_token(user.uuid)
 
         # Setup cache to return None (cache miss)
         mock_cache.get_value.return_value = None
@@ -353,11 +353,11 @@ class TestUserAuthenticatorCaching:
         call_args = mock_cache.set_value.call_args
 
         # Check cache key
-        assert call_args[0][0] == f"user: {user.id}"
+        assert call_args[0][0] == f"user: {user.uuid}"
 
         # Check cache value contains user info
         cached_value = json.loads(call_args[0][1].decode("utf-8"))
-        assert cached_value["id"] == user.id
+        assert cached_value["uuid"] == user.uuid
         assert cached_value["username"] == user.username
         assert cached_value["email"] == user.email
 
@@ -374,7 +374,7 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create a token for the user
-        token = authenticator._create_access_token(user.id)
+        token = authenticator._create_access_token(user.uuid)
 
         # Setup cache to return None
         mock_cache.get_value.return_value = None
@@ -457,25 +457,25 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create tokens for both users
-        token1 = authenticator._create_access_token(user1.id)
-        token2 = authenticator._create_access_token(user2.id)
+        token1 = authenticator._create_access_token(user1.uuid)
+        token2 = authenticator._create_access_token(user2.uuid)
 
         # Setup cache to return None initially
         mock_cache.get_value.return_value = None
 
         # Verify token1
         result1 = await authenticator.verify_access_token_async(token1, session=session)
-        assert result1.id == user1.id
+        assert result1.uuid == user1.uuid
 
         # Verify token2
         result2 = await authenticator.verify_access_token_async(token2, session=session)
-        assert result2.id == user2.id
+        assert result2.uuid == user2.uuid
 
         # Verify cache was called with different keys
         cache_calls = mock_cache.get_value.call_args_list
         assert len(cache_calls) >= 2
-        assert cache_calls[0][0][0] == f"user: {user1.id}"
-        assert cache_calls[1][0][0] == f"user: {user2.id}"
+        assert cache_calls[0][0][0] == f"user: {user1.uuid}"
+        assert cache_calls[1][0][0] == f"user: {user2.uuid}"
 
     async def test_user_impl_wrapping(self, authenticator, mock_cache, session: AsyncSession):
         """Test that verified users are wrapped in UserImpl."""
@@ -488,7 +488,7 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create a token for the user
-        token = authenticator._create_access_token(user.id)
+        token = authenticator._create_access_token(user.uuid)
 
         # Setup cache to return None
         mock_cache.get_value.return_value = None
@@ -498,10 +498,10 @@ class TestUserAuthenticatorCaching:
 
         # Verify result is UserImpl instance
         assert isinstance(result, UserImpl)
-        assert result.id == user.id
+        assert result.uuid == user.uuid
         assert result.username == user.username
         assert result.email == user.email
-        assert result.is_admin == user.is_superuser
+        assert result.is_superuser == user.is_superuser
 
     async def test_cache_with_none_session(self, authenticator, mock_cache, session: AsyncSession):
         """Test that caching works when session is None (creates its own session)."""
@@ -514,7 +514,7 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create a token for the user
-        token = authenticator._create_access_token(user.id)
+        token = authenticator._create_access_token(user.uuid)
 
         # Setup cache to return None
         mock_cache.get_value.return_value = None
@@ -529,4 +529,4 @@ class TestUserAuthenticatorCaching:
 
             # Verify result is correct
             assert result is not None
-            assert result.id == user.id
+            assert result.uuid == user.uuid

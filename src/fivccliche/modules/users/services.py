@@ -24,8 +24,8 @@ class UserImpl(IUser):
         self.user = user
 
     @property
-    def id(self) -> str:
-        return self.user.id
+    def uuid(self) -> str:
+        return self.user.uuid
 
     @property
     def username(self) -> str:
@@ -36,7 +36,7 @@ class UserImpl(IUser):
         return str(self.user.email)
 
     @property
-    def is_admin(self) -> bool:
+    def is_superuser(self) -> bool:
         return self.user.is_superuser
 
 
@@ -54,13 +54,13 @@ class UserAuthenticatorImpl(IUserAuthenticator):
             config.get_value("SECRET_KEY") or "your-secret-key-change-this-in-production"
         )
 
-    def _create_access_token(self, user_id: str) -> str:
+    def _create_access_token(self, user_uuid: str) -> str:
         """Create a JWT access token for a user."""
         time_now = datetime.now(timezone.utc)
         time_expire = time_now + timedelta(hours=self.token_expire_hours)
         return jwt.encode(
             {
-                "sub": user_id,  # Subject (user ID)
+                "sub": user_uuid,  # Subject (user ID)
                 "iat": time_now,  # Issued at
                 "exp": time_expire,  # Expiration time
             },
@@ -85,7 +85,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         username: str,
         email: str | None = None,
         password: str | None = None,
-        is_admin: bool = False,
+        is_superuser: bool = False,
         session: AsyncSession | None = None,
         **kwargs,
     ) -> IUser | None:
@@ -96,7 +96,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 username=username,
                 email=email,
                 password=password,
-                is_superuser=is_admin,
+                is_superuser=is_superuser,
             )
             return UserImpl(user) if user else None
 
@@ -106,7 +106,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 username=username,
                 email=email,
                 password=password,
-                is_superuser=is_admin,
+                is_superuser=is_superuser,
             )
             return UserImpl(user) if user else None
 
@@ -120,49 +120,49 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         """Login a user and return a access token."""
         if session:
             user = await authenticate_user_async(session, username, password)
-            return self._create_access_token(user.id) if user else None
+            return self._create_access_token(user.uuid) if user else None
 
         async with get_db_session_async() as session:
             user = await authenticate_user_async(session, username, password)
-            return self._create_access_token(user.id) if user else None
+            return self._create_access_token(user.uuid) if user else None
 
     async def verify_access_token_async(
         self, access_token: str, session: AsyncSession | None = None, **kwargs
     ) -> IUser | None:
         """Authenticate a user by token."""
         try:
-            user_id = self._decode_access_token(access_token)
+            user_uuid = self._decode_access_token(access_token)
         except ValueError:
             return None
 
-        if user_id is None:
+        if user_uuid is None:
             return None
 
         user = None
-        user_info = self.cache.get_value(f"user: {user_id}")
+        user_info = self.cache.get_value(f"user: {user_uuid}")
         if user_info:
             user_info = json.loads(user_info)
             user = User(**user_info)
 
         try:
             if session:
-                user = await get_user_async(session, user_id=user_id)
+                user = await get_user_async(session, user_uuid=user_uuid)
 
             else:
                 async with get_db_session_async() as session:
-                    user = await get_user_async(session, user_id=user_id)
+                    user = await get_user_async(session, user_uuid=user_uuid)
 
         finally:
             if user:
                 user_info = {
-                    "id": user.id,
+                    "uuid": user.uuid,
                     "username": user.username,
                     "email": user.email,
                     "is_active": user.is_active,
                     "is_superuser": user.is_superuser,
                 }
                 self.cache.set_value(
-                    f"user: {user.id}",
+                    f"user: {user.uuid}",
                     json.dumps(user_info).encode("utf-8"),
                     expire=timedelta(hours=self.token_expire_hours),
                 )

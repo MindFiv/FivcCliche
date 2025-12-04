@@ -53,7 +53,7 @@ async def get_admin_user_async(
     user: IUser = Depends(get_authenticated_user_async),
 ):
     """Get the admin user for dependency injection."""
-    if not user.is_admin:
+    if not user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a super user",
