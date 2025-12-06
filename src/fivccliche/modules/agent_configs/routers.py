@@ -39,7 +39,7 @@ async def create_embedding_config_async(
         user.uuid,
         config_create,
     )
-    return config.to_config()
+    return config.to_schema()
 
 
 @router_embeddings.get(
@@ -63,7 +63,7 @@ async def list_embedding_configs_async(
     total = await methods.count_embedding_configs_async(session, user.uuid)
     return PaginatedResponse[schemas.UserEmbeddingSchema](
         total=total,
-        results=[config.to_config() for config in configs],
+        results=[config.to_schema() for config in configs],
     )
 
 
@@ -89,7 +89,7 @@ async def get_embedding_config_async(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Embedding config not found",
         )
-    return config.to_config()
+    return config.to_schema()
 
 
 @router_embeddings.patch(
@@ -116,7 +116,7 @@ async def update_embedding_config_async(
             detail="Embedding config not found",
         )
     config = await methods.update_embedding_config_async(session, config, config_update)
-    return config.to_config()
+    return config.to_schema()
 
 
 @router_embeddings.delete(
@@ -169,7 +169,7 @@ async def create_llm_config_async(
             detail="Not authenticated",
         )
     config = await methods.create_llm_config_async(session, user.uuid, config_create)
-    return config.to_config()
+    return config.to_schema()
 
 
 @router_models.get(
@@ -193,7 +193,7 @@ async def list_llm_configs_async(
     total = await methods.count_llm_configs_async(session, user.uuid)
     return PaginatedResponse[schemas.UserLLMSchema](
         total=total,
-        results=[config.to_config() for config in configs],
+        results=[config.to_schema() for config in configs],
     )
 
 
@@ -220,7 +220,7 @@ async def get_llm_config_async(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="LLM config not found",
         )
-    return config.to_config()
+    return config.to_schema()
 
 
 @router_models.patch(
@@ -247,7 +247,7 @@ async def update_llm_config_async(
             detail="LLM config not found",
         )
     config = await methods.update_llm_config_async(session, config, config_update)
-    return config.to_config()
+    return config.to_schema()
 
 
 @router_models.delete(
@@ -300,7 +300,7 @@ async def create_agent_config_async(
             detail="Not authenticated",
         )
     config = await methods.create_agent_config_async(session, user.uuid, config_create)
-    return config.to_config()
+    return config.to_schema()
 
 
 @router_agents.get(
@@ -324,7 +324,7 @@ async def list_agent_configs_async(
     total = await methods.count_agent_configs_async(session, user.uuid)
     return PaginatedResponse[schemas.UserAgentSchema](
         total=total,
-        results=[config.to_config() for config in configs],
+        results=[config.to_schema() for config in configs],
     )
 
 
@@ -350,7 +350,7 @@ async def get_agent_config_async(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Agent config not found",
         )
-    return config.to_config()
+    return config.to_schema()
 
 
 @router_agents.patch(
@@ -377,7 +377,7 @@ async def update_agent_config_async(
             detail="Agent config not found",
         )
     config = await methods.update_agent_config_async(session, config, config_update)
-    return config.to_config()
+    return config.to_schema()
 
 
 @router_agents.delete("/{config_id}", status_code=status.HTTP_204_NO_CONTENT)

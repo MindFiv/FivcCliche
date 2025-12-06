@@ -54,7 +54,7 @@ class UserEmbedding(SQLModel, table=True):
         description="User ID.",
     )
 
-    def to_config(self) -> schemas.UserEmbeddingSchema:
+    def to_schema(self) -> schemas.UserEmbeddingSchema:
         return schemas.UserEmbeddingSchema(
             uuid=self.uuid,
             id=self.id,
@@ -117,7 +117,7 @@ class UserLLM(SQLModel, table=True):
         description="User ID.",
     )
 
-    def to_config(self) -> schemas.UserLLMSchema:
+    def to_schema(self) -> schemas.UserLLMSchema:
         return schemas.UserLLMSchema(
             uuid=self.uuid,
             id=self.id,
@@ -164,7 +164,7 @@ class UserAgent(SQLModel, table=True):
         description="User ID.",
     )
 
-    def to_config(self) -> schemas.UserAgentSchema:
+    def to_schema(self) -> schemas.UserAgentSchema:
         return schemas.UserAgentSchema(
             uuid=self.uuid,
             id=self.id,

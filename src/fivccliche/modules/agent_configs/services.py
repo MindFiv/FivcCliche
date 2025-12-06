@@ -71,7 +71,7 @@ class UserEmbeddingRepositoryImpl(UserEmbeddingRepository):
         config = await methods.get_embedding_config_async(
             self.session, embedding_id, self.user_uuid
         )
-        return config.to_config() if config else None
+        return config.to_schema() if config else None
 
     async def list_embedding_configs_async(self, **kwargs) -> list[EmbeddingConfig]:
         """List all embedding configurations in the repository."""
@@ -84,7 +84,7 @@ class UserEmbeddingRepositoryImpl(UserEmbeddingRepository):
         configs = await methods.list_embedding_configs_async(
             self.session, self.user_uuid, skip=skip, limit=limit
         )
-        return [config.to_config() for config in configs]
+        return [config.to_schema() for config in configs]
 
     async def delete_embedding_config_async(self, embedding_id: str) -> None:
         """Delete an embedding configuration."""
@@ -141,7 +141,7 @@ class UserLLMRepositoryImpl(UserLLMRepository):
         if not self.session or not self.user_uuid:
             raise ValueError("Session and user_uuid are required for get_model_config operation")
         config = await methods.get_llm_config_async(self.session, model_id, self.user_uuid)
-        return config.to_config() if config else None
+        return config.to_schema() if config else None
 
     async def list_model_configs_async(self, **kwargs) -> list[ModelConfig]:
         """List all model configurations in the repository."""
@@ -152,7 +152,7 @@ class UserLLMRepositoryImpl(UserLLMRepository):
         configs = await methods.list_llm_configs_async(
             self.session, self.user_uuid, skip=skip, limit=limit
         )
-        return [config.to_config() for config in configs]
+        return [config.to_schema() for config in configs]
 
     async def delete_model_config_async(self, model_id: str) -> None:
         """Delete a model configuration."""
@@ -207,14 +207,14 @@ class UserAgentRepositoryImpl(UserAgentRepository):
         if not self.session or not self.user_uuid:
             raise ValueError("Session and user_uuid are required for get_agent_config operation")
         config = await methods.get_agent_config_async(self.session, agent_id, self.user_uuid)
-        return config.to_config() if config else None
+        return config.to_schema() if config else None
 
     async def list_agent_configs_async(self) -> list[AgentConfig]:
         """List all agent configurations in the repository."""
         if not self.session or not self.user_uuid:
             raise ValueError("Session and user_uuid are required for list_agent_configs operation")
         configs = await methods.list_agent_configs_async(self.session, self.user_uuid)
-        return [config.to_config() for config in configs]
+        return [config.to_schema() for config in configs]
 
     async def delete_agent_config_async(self, agent_id: str) -> None:
         """Delete an agent configuration."""
