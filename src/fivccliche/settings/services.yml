@@ -26,7 +26,7 @@
 - entries:
     - interface: fivccliche.services.interfaces.agent_configs.IUserConfigProvider
 
-  class: fivccliche.modules.agent_configs.ConfigProviderImpl
+  class: fivccliche.modules.agent_configs.UserConfigProviderImpl
 
 # modules ---------------------------------------------
 - entries:

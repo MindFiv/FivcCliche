@@ -20,14 +20,14 @@ router_chats = APIRouter(tags=["chats"])
 @router_chats.get(
     "/",
     summary="List all chat sessions for the authenticated user.",
-    response_model=PaginatedResponse[schemas.ChatSchema],
+    response_model=PaginatedResponse[schemas.UserChatSchema],
 )
 async def list_chats_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
-) -> PaginatedResponse[schemas.ChatSchema]:
+) -> PaginatedResponse[schemas.UserChatSchema]:
     """List all chat sessions for the authenticated user."""
     if not user:
         raise HTTPException(
@@ -36,7 +36,7 @@ async def list_chats_async(
         )
     sessions = await methods.list_chats_async(session, user.uuid, skip=skip, limit=limit)
     total = await methods.count_chats_async(session, user.uuid)
-    return PaginatedResponse[schemas.ChatSchema](
+    return PaginatedResponse[schemas.UserChatSchema](
         total=total,
         results=[s.to_schema() for s in sessions],
     )
@@ -45,13 +45,13 @@ async def list_chats_async(
 @router_chats.get(
     "/{chat_uuid}",
     summary="Get a chat session by ID for the authenticated user.",
-    response_model=schemas.ChatSchema,
+    response_model=schemas.UserChatSchema,
 )
 async def get_chat_async(
     chat_uuid: str,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
-) -> schemas.ChatSchema:
+) -> schemas.UserChatSchema:
     """Get a chat session by ID."""
     if not user:
         raise HTTPException(
@@ -102,7 +102,7 @@ router_messages = APIRouter(tags=["chat_messages"])
 @router_messages.get(
     "/{chat_uuid}/messages/",
     summary="List all chat messages for a chat.",
-    response_model=PaginatedResponse[schemas.ChatMessageSchema],
+    response_model=PaginatedResponse[schemas.UserChatMessageSchema],
 )
 async def list_chat_messages_async(
     chat_uuid: str,
@@ -110,7 +110,7 @@ async def list_chat_messages_async(
     limit: int = Query(100, ge=1, le=1000),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
-) -> PaginatedResponse[schemas.ChatMessageSchema]:
+) -> PaginatedResponse[schemas.UserChatMessageSchema]:
     """List all chat messages for a session."""
     if not user:
         raise HTTPException(
@@ -126,7 +126,7 @@ async def list_chat_messages_async(
         )
     messages = await methods.list_chat_messages_async(session, chat.uuid, skip=skip, limit=limit)
     total = await methods.count_chat_messages_async(session, chat.uuid)
-    return PaginatedResponse[schemas.ChatMessageSchema](
+    return PaginatedResponse[schemas.UserChatMessageSchema](
         total=total,
         results=[m.to_schema() for m in messages],
     )

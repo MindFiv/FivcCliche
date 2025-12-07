@@ -15,7 +15,7 @@ from fivcglue.implements.utils import load_component_site
 
 # Import models to ensure they're registered with SQLModel
 from fivccliche.modules.users.models import User  # noqa: F401
-from fivccliche.modules.agent_chats.models import Chat, ChatMessage  # noqa: F401
+from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage  # noqa: F401
 
 
 @pytest.fixture

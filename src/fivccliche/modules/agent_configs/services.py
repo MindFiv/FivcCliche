@@ -225,7 +225,7 @@ class UserAgentRepositoryImpl(UserAgentRepository):
             await methods.delete_agent_config_async(self.session, config)
 
 
-class ConfigProviderImpl(IUserConfigProvider):
+class UserConfigProviderImpl(IUserConfigProvider):
     """Config provider implementation."""
 
     def __init__(self, component_site: IComponentSite, **kwargs):

@@ -1,6 +1,6 @@
 __all__ = [
-    "ConfigProviderImpl",
     "ModuleImpl",
+    "UserConfigProviderImpl",
 ]
 
-from .services import ModuleImpl, ConfigProviderImpl
+from .services import ModuleImpl, UserConfigProviderImpl

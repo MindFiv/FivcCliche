@@ -2,8 +2,8 @@ __all__ = [
     "AgentRunContent",
     "AgentRunStatus",
     "AgentRunToolCall",
-    "ChatMessageSchema",
-    "ChatSchema",
+    "UserChatMessageSchema",
+    "UserChatSchema",
 ]
 
 from pydantic import ConfigDict, Field
@@ -17,8 +17,8 @@ from fivcplayground.agents.types import (
 )
 
 
-class ChatSchema(AgentRunSession):
-    """Schema for reading chat session data (response).
+class UserChatSchema(AgentRunSession):
+    """Schema for reading user chat session data (response).
 
     Extends AgentRunSession from fivcplayground with additional fields for
     database persistence.
@@ -29,8 +29,8 @@ class ChatSchema(AgentRunSession):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ChatMessageSchema(AgentRun):
-    """Schema for reading chat message data (response).
+class UserChatMessageSchema(AgentRun):
+    """Schema for reading user chat message data (response).
 
     Extends AgentRun from fivcplayground with additional fields for
     message-specific data and database persistence.

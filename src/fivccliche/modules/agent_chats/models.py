@@ -7,8 +7,8 @@ from sqlmodel import SQLModel, Field, JSON
 from . import schemas
 
 
-class Chat(SQLModel, table=True):
-    """Chat model."""
+class UserChat(SQLModel, table=True):
+    """User chat model."""
 
     __tablename__ = "chat"
 
@@ -42,9 +42,9 @@ class Chat(SQLModel, table=True):
         description="Chat creation time.",
     )
 
-    def to_schema(self) -> schemas.ChatSchema:
-        """Convert Chat to ChatSessionRead schema (AgentRunSession-based)."""
-        return schemas.ChatSchema(
+    def to_schema(self) -> schemas.UserChatSchema:
+        """Convert UserChat to ChatSessionRead schema (AgentRunSession-based)."""
+        return schemas.UserChatSchema(
             uuid=self.uuid,
             id=self.uuid,
             agent_id=self.agent_id,
@@ -53,8 +53,8 @@ class Chat(SQLModel, table=True):
         )
 
 
-class ChatMessage(SQLModel, table=True):
-    """Chat message model."""
+class UserChatMessage(SQLModel, table=True):
+    """User chat message model."""
 
     __tablename__ = "chat_message"
 
@@ -68,7 +68,7 @@ class ChatMessage(SQLModel, table=True):
         foreign_key="chat.uuid",
         description="Chat UUID.",
     )
-    status: str = Field(
+    status: schemas.AgentRunStatus = Field(
         default=schemas.AgentRunStatus.PENDING,
         description="Message status.",
     )
@@ -99,17 +99,17 @@ class ChatMessage(SQLModel, table=True):
         description="Message completion time.",
     )
 
-    def to_schema(self) -> schemas.ChatMessageSchema:
-        """Convert ChatMessage to ChatMessageRead schema (AgentRun-based)."""
-        return schemas.ChatMessageSchema(
+    def to_schema(self) -> schemas.UserChatMessageSchema:
+        """Convert UserChatMessage to ChatMessageRead schema (AgentRun-based)."""
+        return schemas.UserChatMessageSchema(
             uuid=self.uuid,
             chat_uuid=self.chat_uuid,
             id=self.uuid,  # Use message uuid as the run id
-            agent_id=self.session.agent_id,
-            status=schemas.AgentRunStatus.COMPLETED,
+            agent_id="",  # Agent ID is not available on ChatMessage, will be set by caller if needed
+            status=self.status or schemas.AgentRunStatus.PENDING,
             started_at=self.created_at,
             completed_at=self.completed_at,
             query=self.query,
             reply=self.reply,
-            tool_calls=self.tool_calls,
+            tool_calls=self.tool_calls or {},  # Default to empty dict if None
         )

@@ -9,10 +9,10 @@ from . import models
 
 async def get_chat_async(
     session: AsyncSession, chat_uuid: str, user_uuid: str, **kwargs
-) -> models.Chat | None:
+) -> models.UserChat | None:
     """Get a chat session by UUID for a specific user."""
-    statement = select(models.Chat).where(
-        (models.Chat.uuid == chat_uuid) & (models.Chat.user_uuid == user_uuid)
+    statement = select(models.UserChat).where(
+        (models.UserChat.uuid == chat_uuid) & (models.UserChat.user_uuid == user_uuid)
     )
     result = await session.execute(statement)
     return result.scalars().first()
@@ -24,10 +24,13 @@ async def list_chats_async(
     skip: int = 0,
     limit: int = 100,
     **kwargs,
-) -> list[models.Chat]:
+) -> list[models.UserChat]:
     """List all chat sessions for a user with pagination."""
     statement = (
-        select(models.Chat).where(models.Chat.user_uuid == user_uuid).offset(skip).limit(limit)
+        select(models.UserChat)
+        .where(models.UserChat.user_uuid == user_uuid)
+        .offset(skip)
+        .limit(limit)
     )
     result = await session.execute(statement)
     return list(result.scalars().all())
@@ -39,12 +42,14 @@ async def count_chats_async(
     **kwargs,
 ) -> int:
     """Count the number of chat sessions for a user."""
-    statement = select(func.count(models.Chat.uuid)).where(models.Chat.user_uuid == user_uuid)
+    statement = select(func.count(models.UserChat.uuid)).where(
+        models.UserChat.user_uuid == user_uuid
+    )
     result = await session.execute(statement)
     return result.scalar() or 0
 
 
-async def delete_chat_async(session: AsyncSession, chat: models.Chat, **kwargs) -> None:
+async def delete_chat_async(session: AsyncSession, chat: models.UserChat, **kwargs) -> None:
     """Delete a chat session."""
     await session.delete(chat)
     await session.commit()
@@ -56,12 +61,12 @@ async def list_chat_messages_async(
     skip: int = 0,
     limit: int = 100,
     **kwargs,  # ignore additional arguments
-) -> list[models.ChatMessage]:
+) -> list[models.UserChatMessage]:
     """List all chat messages for a session with pagination."""
     statement = (
-        select(models.ChatMessage)
-        .where(models.ChatMessage.chat_uuid == chat_uuid)
-        .order_by(models.ChatMessage.created_at)
+        select(models.UserChatMessage)
+        .where(models.UserChatMessage.chat_uuid == chat_uuid)
+        .order_by(models.UserChatMessage.created_at)
         .offset(skip)
         .limit(limit)
     )
@@ -75,8 +80,8 @@ async def count_chat_messages_async(
     **kwargs,  # ignore additional arguments
 ) -> int:
     """Count the number of chat messages for a session."""
-    statement = select(func.count(models.ChatMessage.uuid)).where(
-        models.ChatMessage.chat_uuid == chat_uuid
+    statement = select(func.count(models.UserChatMessage.uuid)).where(
+        models.UserChatMessage.chat_uuid == chat_uuid
     )
     result = await session.execute(statement)
     return result.scalar() or 0
@@ -87,11 +92,11 @@ async def get_chat_message_async(
     message_uuid: str,
     chat_uuid: str,
     **kwargs,  # ignore additional arguments
-) -> models.ChatMessage | None:
+) -> models.UserChatMessage | None:
     """Get a chat message by UUID."""
-    statement = select(models.ChatMessage).where(
-        models.ChatMessage.uuid == message_uuid,
-        models.ChatMessage.chat_uuid == chat_uuid,
+    statement = select(models.UserChatMessage).where(
+        models.UserChatMessage.uuid == message_uuid,
+        models.UserChatMessage.chat_uuid == chat_uuid,
     )
     result = await session.execute(statement)
     return result.scalars().first()
@@ -99,7 +104,7 @@ async def get_chat_message_async(
 
 async def delete_chat_message_async(
     session: AsyncSession,
-    message: models.ChatMessage,
+    message: models.UserChatMessage,
     **kwargs,  # ignore additional arguments
 ) -> None:
     """Delete a chat message."""
