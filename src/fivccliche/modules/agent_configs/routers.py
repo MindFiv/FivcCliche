@@ -68,12 +68,12 @@ async def list_embedding_configs_async(
 
 
 @router_embeddings.get(
-    "/{config_id}",
+    "/{config_uuid}",
     summary="Get an embedding config by ID for the authenticated user.",
     response_model=schemas.UserEmbeddingSchema,
 )
 async def get_embedding_config_async(
-    config_id: str,
+    config_uuid: str,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserEmbeddingSchema:
@@ -83,7 +83,7 @@ async def get_embedding_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_embedding_config_async(session, config_id, user.uuid)
+    config = await methods.get_embedding_config_async(session, user.uuid, config_uuid=config_uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -93,12 +93,12 @@ async def get_embedding_config_async(
 
 
 @router_embeddings.patch(
-    "/{config_id}",
+    "/{config_uuid}",
     summary="Update an embedding config by ID for the authenticated user.",
     response_model=schemas.UserEmbeddingSchema,
 )
 async def update_embedding_config_async(
-    config_id: str,
+    config_uuid: str,
     config_update: schemas.UserEmbeddingSchema,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
@@ -109,7 +109,7 @@ async def update_embedding_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_embedding_config_async(session, config_id, user.uuid)
+    config = await methods.get_embedding_config_async(session, user.uuid, config_uuid=config_uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -120,12 +120,12 @@ async def update_embedding_config_async(
 
 
 @router_embeddings.delete(
-    "/{config_id}",
+    "/{config_uuid}",
     summary="Delete an embedding config by ID for the authenticated user.",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_embedding_config_async(
-    config_id: str,
+    config_uuid: str,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
@@ -135,7 +135,7 @@ async def delete_embedding_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_embedding_config_async(session, config_id, user.uuid)
+    config = await methods.get_embedding_config_async(session, user.uuid, config_uuid=config_uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -198,12 +198,12 @@ async def list_llm_configs_async(
 
 
 @router_models.get(
-    "/{config_id}",
+    "/{config_uuid}",
     summary="Get an LLM config by ID for the authenticated user.",
     response_model=schemas.UserLLMSchema,
 )
 async def get_llm_config_async(
-    config_id: str,
+    config_uuid: str,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserLLMSchema:
@@ -214,7 +214,7 @@ async def get_llm_config_async(
             detail="Not authenticated",
         )
 
-    config = await methods.get_llm_config_async(session, config_id, user.uuid)
+    config = await methods.get_llm_config_async(session, user.uuid, config_uuid=config_uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -224,12 +224,12 @@ async def get_llm_config_async(
 
 
 @router_models.patch(
-    "/{config_id}",
+    "/{config_uuid}",
     summary="Update an LLM config by ID for the authenticated user.",
     response_model=schemas.UserLLMSchema,
 )
 async def update_llm_config_async(
-    config_id: str,
+    config_uuid: str,
     config_update: schemas.UserLLMSchema,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
@@ -240,7 +240,7 @@ async def update_llm_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_llm_config_async(session, config_id, user.uuid)
+    config = await methods.get_llm_config_async(session, user.uuid, config_uuid=config_uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -251,12 +251,12 @@ async def update_llm_config_async(
 
 
 @router_models.delete(
-    "/{config_id}",
+    "/{config_uuid}",
     summary="Delete an LLM config by ID for the authenticated user.",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_llm_config_async(
-    config_id: str,
+    config_uuid: str,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
@@ -266,7 +266,7 @@ async def delete_llm_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_llm_config_async(session, config_id, user.uuid)
+    config = await methods.get_llm_config_async(session, user.uuid, config_uuid=config_uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -329,12 +329,12 @@ async def list_agent_configs_async(
 
 
 @router_agents.get(
-    "/{config_id}",
+    "/{config_uuid}",
     summary="Get an agent config by ID for the authenticated user.",
     response_model=schemas.UserAgentSchema,
 )
 async def get_agent_config_async(
-    config_id: str,
+    config_uuid: str,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserAgentSchema:
@@ -344,7 +344,7 @@ async def get_agent_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_agent_config_async(session, config_id, user.uuid)
+    config = await methods.get_agent_config_async(session, user.uuid, config_uuid=config_uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -354,12 +354,12 @@ async def get_agent_config_async(
 
 
 @router_agents.patch(
-    "/{config_id}",
+    "/{config_uuid}",
     summary="Update an agent config by ID for the authenticated user.",
     response_model=schemas.UserAgentSchema,
 )
 async def update_agent_config_async(
-    config_id: str,
+    config_uuid: str,
     config_update: schemas.UserAgentSchema,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
@@ -370,7 +370,7 @@ async def update_agent_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_agent_config_async(session, config_id, user.uuid)
+    config = await methods.get_agent_config_async(session, user.uuid, config_uuid=config_uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -380,9 +380,9 @@ async def update_agent_config_async(
     return config.to_schema()
 
 
-@router_agents.delete("/{config_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router_agents.delete("/{config_uuid}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent_config_async(
-    config_id: str,
+    config_uuid: str,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
@@ -392,7 +392,7 @@ async def delete_agent_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.get_agent_config_async(session, config_id, user.uuid)
+    config = await methods.get_agent_config_async(session, user.uuid, config_uuid=config_uuid)
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

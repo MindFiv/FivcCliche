@@ -21,7 +21,7 @@ from fivccliche.modules.agent_configs.services import (
 
 # Import models to ensure they're registered with SQLModel
 from fivccliche.modules.users.models import User  # noqa: F401
-from fivccliche.modules.agent_configs.models import UserEmbedding, UserLLM, UserAgent  # noqa: F401
+from fivccliche.modules.agent_configs.models import UserEmbedding, UserLLM, UserAgent
 
 
 @pytest.fixture
@@ -76,7 +76,7 @@ async def session():
                     api_key VARCHAR NOT NULL,
                     base_url VARCHAR,
                     dimension INTEGER NOT NULL DEFAULT 1024,
-                    user_uuid VARCHAR NOT NULL,
+                    user_uuid VARCHAR,
                     PRIMARY KEY (uuid),
                     UNIQUE (id, user_uuid),
                     FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
@@ -99,7 +99,7 @@ async def session():
                     base_url VARCHAR,
                     temperature FLOAT NOT NULL DEFAULT 0.5,
                     max_tokens INTEGER NOT NULL DEFAULT 4096,
-                    user_uuid VARCHAR NOT NULL,
+                    user_uuid VARCHAR,
                     PRIMARY KEY (uuid),
                     UNIQUE (id, user_uuid),
                     FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
@@ -130,7 +130,7 @@ async def session():
                     description VARCHAR,
                     model_id VARCHAR NOT NULL,
                     system_prompt VARCHAR,
-                    user_uuid VARCHAR NOT NULL,
+                    user_uuid VARCHAR,
                     PRIMARY KEY (uuid),
                     UNIQUE (id, user_uuid),
                     FOREIGN KEY(user_uuid) REFERENCES "user" (uuid),
@@ -181,14 +181,16 @@ class TestEmbeddingConfigService:
             api_key="test-key",
         )
         created = await methods.create_embedding_config_async(session, "user123", config_create)
-        retrieved = await methods.get_embedding_config_async(session, created.id, "user123")
+        retrieved = await methods.get_embedding_config_async(
+            session, "user123", config_uuid=created.uuid
+        )
 
         assert retrieved is not None
         assert retrieved.id == created.id
         assert retrieved.user_uuid == "user123"
 
     async def test_get_embedding_config_wrong_user(self, session: AsyncSession):
-        """Test getting embedding config with wrong user ID."""
+        """Test getting embedding config with wrong user ID returns None for user-specific configs."""
         config_create = EmbeddingConfig(
             id="embedding-wrong-user",
             provider="openai",
@@ -196,9 +198,40 @@ class TestEmbeddingConfigService:
             api_key="test-key",
         )
         created = await methods.create_embedding_config_async(session, "user123", config_create)
-        retrieved = await methods.get_embedding_config_async(session, created.id, "user456")
+        # User456 should not be able to access user123's config
+        retrieved = await methods.get_embedding_config_async(session, created.uuid, "user456")
 
         assert retrieved is None
+
+    async def test_get_embedding_config_global_accessible(self, session: AsyncSession):
+        """Test that global embedding configs (user_uuid=None) are accessible to all users."""
+        # Create a global config by directly inserting into the database
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        global_config = UserEmbedding(
+            uuid=config_uuid,
+            id="global-embedding",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            user_uuid=None,  # Global config
+        )
+        session.add(global_config)
+        await session.commit()
+
+        # Any user should be able to access the global config
+        retrieved_user1 = await methods.get_embedding_config_async(
+            session, "user123", config_uuid=config_uuid
+        )
+        retrieved_user2 = await methods.get_embedding_config_async(
+            session, "user456", config_uuid=config_uuid
+        )
+
+        assert retrieved_user1 is not None, "User1 should be able to access global config"
+        assert retrieved_user2 is not None, "User2 should be able to access global config"
+        assert retrieved_user1.user_uuid is None
+        assert retrieved_user2.user_uuid is None
 
     async def test_list_embedding_configs(self, session: AsyncSession):
         """Test listing embedding configs for a user."""
@@ -262,7 +295,7 @@ class TestEmbeddingConfigService:
         config = await methods.create_embedding_config_async(session, "user123", config_create)
         await methods.delete_embedding_config_async(session, config)
 
-        retrieved = await methods.get_embedding_config_async(session, config.id, "user123")
+        retrieved = await methods.get_embedding_config_async(session, config.uuid, "user123")
         assert retrieved is None
 
     async def test_count_embedding_configs(self, session: AsyncSession):
@@ -278,6 +311,72 @@ class TestEmbeddingConfigService:
 
         count = await methods.count_embedding_configs_async(session, "user123")
         assert count == 3
+
+    async def test_list_embedding_configs_includes_global(self, session: AsyncSession):
+        """Test that listing embedding configs includes both user-specific and global configs."""
+        import uuid as uuid_lib
+
+        # Create user-specific configs
+        for i in range(2):
+            config_create = EmbeddingConfig(
+                id=f"embedding-list-global-{i}",
+                provider="openai",
+                model=f"model-{i}",
+                api_key=f"key-{i}",
+            )
+            await methods.create_embedding_config_async(session, "user123", config_create)
+
+        # Create a global config
+        global_config = UserEmbedding(
+            uuid=str(uuid_lib.uuid4()),
+            id="global-embedding-list",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            user_uuid=None,  # Global config
+        )
+        session.add(global_config)
+        await session.commit()
+
+        # List should include both user-specific and global configs
+        configs = await methods.list_embedding_configs_async(session, "user123")
+        assert len(configs) == 3  # 2 user-specific + 1 global
+
+        # Verify we have both types
+        user_specific = [c for c in configs if c.user_uuid == "user123"]
+        global_configs = [c for c in configs if c.user_uuid is None]
+        assert len(user_specific) == 2
+        assert len(global_configs) == 1
+
+    async def test_count_embedding_configs_includes_global(self, session: AsyncSession):
+        """Test that counting embedding configs includes both user-specific and global configs."""
+        import uuid as uuid_lib
+
+        # Create user-specific configs
+        for i in range(2):
+            config_create = EmbeddingConfig(
+                id=f"embedding-count-global-{i}",
+                provider="openai",
+                model=f"model-{i}",
+                api_key=f"key-{i}",
+            )
+            await methods.create_embedding_config_async(session, "user456", config_create)
+
+        # Create a global config
+        global_config = UserEmbedding(
+            uuid=str(uuid_lib.uuid4()),
+            id="global-embedding-count",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            user_uuid=None,  # Global config
+        )
+        session.add(global_config)
+        await session.commit()
+
+        # Count should include both user-specific and global configs
+        count = await methods.count_embedding_configs_async(session, "user456")
+        assert count == 3  # 2 user-specific + 1 global
 
 
 class TestLLMConfigService:
@@ -310,7 +409,7 @@ class TestLLMConfigService:
             api_key="test-key",
         )
         created = await methods.create_llm_config_async(session, "user123", config_create)
-        retrieved = await methods.get_llm_config_async(session, created.id, "user123")
+        retrieved = await methods.get_llm_config_async(session, "user123", config_uuid=created.uuid)
 
         assert retrieved is not None
         assert retrieved.id == created.id
@@ -363,7 +462,7 @@ class TestLLMConfigService:
         config = await methods.create_llm_config_async(session, "user123", config_create)
         await methods.delete_llm_config_async(session, config)
 
-        retrieved = await methods.get_llm_config_async(session, config.id, "user123")
+        retrieved = await methods.get_llm_config_async(session, config.uuid, "user123")
         assert retrieved is None
 
     async def test_count_llm_configs(self, session: AsyncSession):
@@ -379,6 +478,105 @@ class TestLLMConfigService:
 
         count = await methods.count_llm_configs_async(session, "user123")
         assert count == 3
+
+    async def test_get_llm_config_global_accessible(self, session: AsyncSession):
+        """Test that global LLM configs are accessible to all users."""
+        import uuid as uuid_lib
+
+        # Create a global LLM config
+        config_uuid = str(uuid_lib.uuid4())
+        global_config = UserLLM(
+            uuid=config_uuid,
+            id="global-llm",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            user_uuid=None,  # Global config
+        )
+        session.add(global_config)
+        await session.commit()
+
+        # Any user should be able to access the global config
+        retrieved_user1 = await methods.get_llm_config_async(
+            session, "user123", config_uuid=config_uuid
+        )
+        retrieved_user2 = await methods.get_llm_config_async(
+            session, "user456", config_uuid=config_uuid
+        )
+
+        assert retrieved_user1 is not None
+        assert retrieved_user1.user_uuid is None
+        assert retrieved_user1.id == "global-llm"
+
+        assert retrieved_user2 is not None
+        assert retrieved_user2.user_uuid is None
+        assert retrieved_user2.id == "global-llm"
+
+    async def test_list_llm_configs_includes_global(self, session: AsyncSession):
+        """Test that listing LLM configs includes both user-specific and global configs."""
+        import uuid as uuid_lib
+
+        # Create user-specific configs
+        for i in range(2):
+            config_create = ModelConfig(
+                id=f"llm-list-global-{i}",
+                provider="openai",
+                model=f"model-{i}",
+                api_key=f"key-{i}",
+            )
+            await methods.create_llm_config_async(session, "user123", config_create)
+
+        # Create a global config
+        global_config = UserLLM(
+            uuid=str(uuid_lib.uuid4()),
+            id="global-llm-list",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            user_uuid=None,  # Global config
+        )
+        session.add(global_config)
+        await session.commit()
+
+        # List should include both user-specific and global configs
+        configs = await methods.list_llm_configs_async(session, "user123")
+        assert len(configs) == 3  # 2 user-specific + 1 global
+
+        # Verify we have both types
+        user_specific = [c for c in configs if c.user_uuid == "user123"]
+        global_configs = [c for c in configs if c.user_uuid is None]
+        assert len(user_specific) == 2
+        assert len(global_configs) == 1
+
+    async def test_count_llm_configs_includes_global(self, session: AsyncSession):
+        """Test that counting LLM configs includes both user-specific and global configs."""
+        import uuid as uuid_lib
+
+        # Create user-specific configs
+        for i in range(2):
+            config_create = ModelConfig(
+                id=f"llm-count-global-{i}",
+                provider="openai",
+                model=f"model-{i}",
+                api_key=f"key-{i}",
+            )
+            await methods.create_llm_config_async(session, "user456", config_create)
+
+        # Create a global config
+        global_config = UserLLM(
+            uuid=str(uuid_lib.uuid4()),
+            id="global-llm-count",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            user_uuid=None,  # Global config
+        )
+        session.add(global_config)
+        await session.commit()
+
+        # Count should include both user-specific and global configs
+        count = await methods.count_llm_configs_async(session, "user456")
+        assert count == 3  # 2 user-specific + 1 global
 
 
 class TestAgentConfigService:
@@ -405,7 +603,9 @@ class TestAgentConfigService:
             model_id="model123",
         )
         created = await methods.create_agent_config_async(session, "user123", config_create)
-        retrieved = await methods.get_agent_config_async(session, created.id, "user123")
+        retrieved = await methods.get_agent_config_async(
+            session, "user123", config_uuid=created.uuid
+        )
 
         assert retrieved is not None
         assert retrieved.id == created.id
@@ -450,7 +650,7 @@ class TestAgentConfigService:
         config = await methods.create_agent_config_async(session, "user123", config_create)
         await methods.delete_agent_config_async(session, config)
 
-        retrieved = await methods.get_agent_config_async(session, config.id, "user123")
+        retrieved = await methods.get_agent_config_async(session, config.uuid, "user123")
         assert retrieved is None
 
     async def test_count_agent_configs(self, session: AsyncSession):
@@ -464,6 +664,98 @@ class TestAgentConfigService:
 
         count = await methods.count_agent_configs_async(session, "user123")
         assert count == 3
+
+    async def test_get_agent_config_global_accessible(self, session: AsyncSession):
+        """Test that global agent configs are accessible to all users."""
+        import uuid as uuid_lib
+
+        # Create a global agent config
+        config_uuid = str(uuid_lib.uuid4())
+        global_config = UserAgent(
+            uuid=config_uuid,
+            id="global-agent",
+            model_id="model123",
+            system_prompt="You are a helpful assistant",
+            user_uuid=None,  # Global config
+        )
+        session.add(global_config)
+        await session.commit()
+
+        # Any user should be able to access the global config
+        retrieved_user1 = await methods.get_agent_config_async(
+            session, "user123", config_uuid=config_uuid
+        )
+        retrieved_user2 = await methods.get_agent_config_async(
+            session, "user456", config_uuid=config_uuid
+        )
+
+        assert retrieved_user1 is not None
+        assert retrieved_user1.user_uuid is None
+        assert retrieved_user1.id == "global-agent"
+
+        assert retrieved_user2 is not None
+        assert retrieved_user2.user_uuid is None
+        assert retrieved_user2.id == "global-agent"
+
+    async def test_list_agent_configs_includes_global(self, session: AsyncSession):
+        """Test that listing agent configs includes both user-specific and global configs."""
+        import uuid as uuid_lib
+
+        # Create user-specific configs
+        for i in range(2):
+            config_create = AgentConfig(
+                id=f"agent-list-global-{i}",
+                model_id=f"model-{i}",
+            )
+            await methods.create_agent_config_async(session, "user123", config_create)
+
+        # Create a global config
+        global_config = UserAgent(
+            uuid=str(uuid_lib.uuid4()),
+            id="global-agent-list",
+            model_id="model123",
+            system_prompt="You are a helpful assistant",
+            user_uuid=None,  # Global config
+        )
+        session.add(global_config)
+        await session.commit()
+
+        # List should include both user-specific and global configs
+        configs = await methods.list_agent_configs_async(session, "user123")
+        assert len(configs) == 3  # 2 user-specific + 1 global
+
+        # Verify we have both types
+        user_specific = [c for c in configs if c.user_uuid == "user123"]
+        global_configs = [c for c in configs if c.user_uuid is None]
+        assert len(user_specific) == 2
+        assert len(global_configs) == 1
+
+    async def test_count_agent_configs_includes_global(self, session: AsyncSession):
+        """Test that counting agent configs includes both user-specific and global configs."""
+        import uuid as uuid_lib
+
+        # Create user-specific configs
+        for i in range(2):
+            config_create = AgentConfig(
+                id=f"agent-count-global-{i}",
+                model_id=f"model-{i}",
+            )
+            await methods.create_agent_config_async(session, "user456", config_create)
+
+        # Create a global config
+        global_config = UserAgent(
+            uuid=str(uuid_lib.uuid4()),
+            id="global-agent-count",
+            model_id="model123",
+            system_prompt="You are a helpful assistant",
+            user_uuid=None,  # Global config
+        )
+        session.add(global_config)
+        await session.commit()
+
+        # Count should include both user-specific and global configs
+        count = await methods.count_agent_configs_async(session, "user456")
+        assert count == 3  # 2 user-specific + 1 global
 
 
 class TestEmbeddingRepositoryImpl:
@@ -484,7 +776,9 @@ class TestEmbeddingRepositoryImpl:
         await repo.update_embedding_config_async(config)
 
         # Verify it was created
-        retrieved = await methods.get_embedding_config_async(session, "repo-embedding-1", "user123")
+        retrieved = await methods.get_embedding_config_async(
+            session, "user123", config_id="repo-embedding-1"
+        )
         assert retrieved is not None
         assert retrieved.dimension == 1536
 
@@ -513,7 +807,9 @@ class TestEmbeddingRepositoryImpl:
         await repo.update_embedding_config_async(config_update)
 
         # Verify it was updated
-        retrieved = await methods.get_embedding_config_async(session, "repo-embedding-2", "user123")
+        retrieved = await methods.get_embedding_config_async(
+            session, "user123", config_id="repo-embedding-2"
+        )
         assert retrieved.dimension == 3072
 
     async def test_get_embedding_config_returns_config_type(self, session: AsyncSession):
@@ -629,7 +925,7 @@ class TestLLMRepositoryImpl:
         await repo.update_model_config_async(config)
 
         # Verify it was created
-        retrieved = await methods.get_llm_config_async(session, "repo-llm-1", "user123")
+        retrieved = await methods.get_llm_config_async(session, "user123", config_id="repo-llm-1")
         assert retrieved is not None
         assert retrieved.temperature == 0.7
 
@@ -658,7 +954,7 @@ class TestLLMRepositoryImpl:
         await repo.update_model_config_async(config_update)
 
         # Verify it was updated
-        retrieved = await methods.get_llm_config_async(session, "repo-llm-2", "user123")
+        retrieved = await methods.get_llm_config_async(session, "user123", config_id="repo-llm-2")
         assert retrieved.temperature == 0.9
 
     async def test_get_model_config_returns_config_type(self, session: AsyncSession):
@@ -770,7 +1066,9 @@ class TestAgentRepositoryImpl:
         await repo.update_agent_config_async(config)
 
         # Verify it was created
-        retrieved = await methods.get_agent_config_async(session, "repo-agent-1", "user123")
+        retrieved = await methods.get_agent_config_async(
+            session, "user123", config_id="repo-agent-1"
+        )
         assert retrieved is not None
         assert retrieved.system_prompt == "You are helpful"
 
@@ -795,7 +1093,9 @@ class TestAgentRepositoryImpl:
         await repo.update_agent_config_async(config_update)
 
         # Verify it was updated
-        retrieved = await methods.get_agent_config_async(session, "repo-agent-2", "user123")
+        retrieved = await methods.get_agent_config_async(
+            session, "user123", config_id="repo-agent-2"
+        )
         assert retrieved.system_prompt == "New prompt"
 
     async def test_get_agent_config_returns_config_type(self, session: AsyncSession):

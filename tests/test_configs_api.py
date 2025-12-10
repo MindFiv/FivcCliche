@@ -227,7 +227,7 @@ class TestEmbeddingConfigAPI:
     def test_get_embedding_config(self, client: TestClient, auth_token: str):
         """Test getting a specific embedding config."""
         # Create a config
-        client.post(
+        create_response = client.post(
             "/configs/embeddings/",
             headers={"Authorization": f"Bearer {auth_token}"},
             json={
@@ -237,9 +237,10 @@ class TestEmbeddingConfigAPI:
                 "api_key": "test-key",
             },
         )
+        config_uuid = create_response.json()["uuid"]
 
         response = client.get(
-            "/configs/embeddings/embedding-get",
+            f"/configs/embeddings/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 200
@@ -257,7 +258,7 @@ class TestEmbeddingConfigAPI:
     def test_update_embedding_config(self, client: TestClient, auth_token: str):
         """Test updating an embedding config."""
         # Create a config
-        client.post(
+        create_response = client.post(
             "/configs/embeddings/",
             headers={"Authorization": f"Bearer {auth_token}"},
             json={
@@ -268,9 +269,10 @@ class TestEmbeddingConfigAPI:
                 "dimension": 1536,
             },
         )
+        config_uuid = create_response.json()["uuid"]
 
         response = client.patch(
-            "/configs/embeddings/embedding-update",
+            f"/configs/embeddings/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
             json={
                 "id": "embedding-update",
@@ -287,7 +289,7 @@ class TestEmbeddingConfigAPI:
     def test_delete_embedding_config(self, client: TestClient, auth_token: str):
         """Test deleting an embedding config."""
         # Create a config
-        client.post(
+        create_response = client.post(
             "/configs/embeddings/",
             headers={"Authorization": f"Bearer {auth_token}"},
             json={
@@ -297,16 +299,17 @@ class TestEmbeddingConfigAPI:
                 "api_key": "test-key",
             },
         )
+        config_uuid = create_response.json()["uuid"]
 
         response = client.delete(
-            "/configs/embeddings/embedding-delete",
+            f"/configs/embeddings/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 204
 
         # Verify it's deleted
         response = client.get(
-            "/configs/embeddings/embedding-delete",
+            f"/configs/embeddings/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 404
@@ -374,7 +377,7 @@ class TestLLMConfigAPI:
 
     def test_get_llm_config(self, client: TestClient, auth_token: str):
         """Test getting a specific LLM config."""
-        client.post(
+        create_response = client.post(
             "/configs/models/",
             headers={"Authorization": f"Bearer {auth_token}"},
             json={
@@ -384,9 +387,10 @@ class TestLLMConfigAPI:
                 "api_key": "test-key",
             },
         )
+        config_uuid = create_response.json()["uuid"]
 
         response = client.get(
-            "/configs/models/llm-get",
+            f"/configs/models/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 200
@@ -403,7 +407,7 @@ class TestLLMConfigAPI:
 
     def test_update_llm_config(self, client: TestClient, auth_token: str):
         """Test updating an LLM config."""
-        client.post(
+        create_response = client.post(
             "/configs/models/",
             headers={"Authorization": f"Bearer {auth_token}"},
             json={
@@ -414,9 +418,10 @@ class TestLLMConfigAPI:
                 "temperature": 0.5,
             },
         )
+        config_uuid = create_response.json()["uuid"]
 
         response = client.patch(
-            "/configs/models/llm-update",
+            f"/configs/models/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
             json={
                 "id": "llm-update",
@@ -432,7 +437,7 @@ class TestLLMConfigAPI:
 
     def test_delete_llm_config(self, client: TestClient, auth_token: str):
         """Test deleting an LLM config."""
-        client.post(
+        create_response = client.post(
             "/configs/models/",
             headers={"Authorization": f"Bearer {auth_token}"},
             json={
@@ -442,15 +447,16 @@ class TestLLMConfigAPI:
                 "api_key": "test-key",
             },
         )
+        config_uuid = create_response.json()["uuid"]
 
         response = client.delete(
-            "/configs/models/llm-delete",
+            f"/configs/models/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 204
 
         response = client.get(
-            "/configs/models/llm-delete",
+            f"/configs/models/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 404
@@ -510,7 +516,7 @@ class TestAgentConfigAPI:
 
     def test_get_agent_config(self, client: TestClient, auth_token: str):
         """Test getting a specific agent config."""
-        client.post(
+        create_response = client.post(
             "/configs/agents/",
             headers={"Authorization": f"Bearer {auth_token}"},
             json={
@@ -518,9 +524,10 @@ class TestAgentConfigAPI:
                 "model_id": "model123",
             },
         )
+        config_uuid = create_response.json()["uuid"]
 
         response = client.get(
-            "/configs/agents/agent-get",
+            f"/configs/agents/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 200
@@ -537,7 +544,7 @@ class TestAgentConfigAPI:
 
     def test_update_agent_config(self, client: TestClient, auth_token: str):
         """Test updating an agent config."""
-        client.post(
+        create_response = client.post(
             "/configs/agents/",
             headers={"Authorization": f"Bearer {auth_token}"},
             json={
@@ -546,9 +553,10 @@ class TestAgentConfigAPI:
                 "system_prompt": "Old prompt",
             },
         )
+        config_uuid = create_response.json()["uuid"]
 
         response = client.patch(
-            "/configs/agents/agent-update",
+            f"/configs/agents/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
             json={
                 "id": "agent-update",
@@ -562,7 +570,7 @@ class TestAgentConfigAPI:
 
     def test_delete_agent_config(self, client: TestClient, auth_token: str):
         """Test deleting an agent config."""
-        client.post(
+        create_response = client.post(
             "/configs/agents/",
             headers={"Authorization": f"Bearer {auth_token}"},
             json={
@@ -570,15 +578,16 @@ class TestAgentConfigAPI:
                 "model_id": "model123",
             },
         )
+        config_uuid = create_response.json()["uuid"]
 
         response = client.delete(
-            "/configs/agents/agent-delete",
+            f"/configs/agents/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 204
 
         response = client.get(
-            "/configs/agents/agent-delete",
+            f"/configs/agents/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 404

@@ -49,9 +49,9 @@ class UserEmbeddingRepositoryImpl(UserEmbeddingRepository):
             raise ValueError(
                 "Session and user_uuid are required for update_embedding_config operation"
             )
-        # Check if config exists
+        # Check if config exists by ID
         existing = await methods.get_embedding_config_async(
-            self.session, embedding_config.id, self.user_uuid
+            self.session, self.user_uuid, config_id=embedding_config.id
         )
         if existing:
             # Update existing config
@@ -69,7 +69,7 @@ class UserEmbeddingRepositoryImpl(UserEmbeddingRepository):
                 "Session and user_uuid are required for get_embedding_config operation"
             )
         config = await methods.get_embedding_config_async(
-            self.session, embedding_id, self.user_uuid
+            self.session, self.user_uuid, config_id=embedding_id
         )
         return config.to_schema() if config else None
 
@@ -93,7 +93,7 @@ class UserEmbeddingRepositoryImpl(UserEmbeddingRepository):
                 "Session and user_uuid are required for delete_embedding_config operation"
             )
         config = await methods.get_embedding_config_async(
-            self.session, embedding_id, self.user_uuid
+            self.session, self.user_uuid, config_id=embedding_id
         )
         if config:
             await methods.delete_embedding_config_async(self.session, config)
@@ -127,8 +127,10 @@ class UserLLMRepositoryImpl(UserLLMRepository):
         """Create or update a model configuration."""
         if not self.session or not self.user_uuid:
             raise ValueError("Session and user_uuid are required for update_model_config operation")
-        # Check if config exists
-        existing = await methods.get_llm_config_async(self.session, model_config.id, self.user_uuid)
+        # Check if config exists by ID
+        existing = await methods.get_llm_config_async(
+            self.session, self.user_uuid, config_id=model_config.id
+        )
         if existing:
             # Update existing config
             await methods.update_llm_config_async(self.session, existing, model_config)
@@ -140,7 +142,9 @@ class UserLLMRepositoryImpl(UserLLMRepository):
         """Retrieve a model configuration by ID."""
         if not self.session or not self.user_uuid:
             raise ValueError("Session and user_uuid are required for get_model_config operation")
-        config = await methods.get_llm_config_async(self.session, model_id, self.user_uuid)
+        config = await methods.get_llm_config_async(
+            self.session, self.user_uuid, config_id=model_id
+        )
         return config.to_schema() if config else None
 
     async def list_model_configs_async(self, **kwargs) -> list[ModelConfig]:
@@ -158,7 +162,9 @@ class UserLLMRepositoryImpl(UserLLMRepository):
         """Delete a model configuration."""
         if not self.session or not self.user_uuid:
             raise ValueError("Session and user_uuid are required for delete_model_config operation")
-        config = await methods.get_llm_config_async(self.session, model_id, self.user_uuid)
+        config = await methods.get_llm_config_async(
+            self.session, self.user_uuid, config_id=model_id
+        )
         if config:
             await methods.delete_llm_config_async(self.session, config)
 
@@ -191,9 +197,9 @@ class UserAgentRepositoryImpl(UserAgentRepository):
         """Create or update an agent configuration."""
         if not self.session or not self.user_uuid:
             raise ValueError("Session and user_uuid are required for update_agent_config operation")
-        # Check if config exists
+        # Check if config exists by ID
         existing = await methods.get_agent_config_async(
-            self.session, agent_config.id, self.user_uuid
+            self.session, self.user_uuid, config_id=agent_config.id
         )
         if existing:
             # Update existing config
@@ -206,7 +212,9 @@ class UserAgentRepositoryImpl(UserAgentRepository):
         """Retrieve an agent configuration by ID."""
         if not self.session or not self.user_uuid:
             raise ValueError("Session and user_uuid are required for get_agent_config operation")
-        config = await methods.get_agent_config_async(self.session, agent_id, self.user_uuid)
+        config = await methods.get_agent_config_async(
+            self.session, self.user_uuid, config_id=agent_id
+        )
         return config.to_schema() if config else None
 
     async def list_agent_configs_async(self) -> list[AgentConfig]:
@@ -220,7 +228,9 @@ class UserAgentRepositoryImpl(UserAgentRepository):
         """Delete an agent configuration."""
         if not self.session or not self.user_uuid:
             raise ValueError("Session and user_uuid are required for delete_agent_config operation")
-        config = await methods.get_agent_config_async(self.session, agent_id, self.user_uuid)
+        config = await methods.get_agent_config_async(
+            self.session, self.user_uuid, config_id=agent_id
+        )
         if config:
             await methods.delete_agent_config_async(self.session, config)
 
