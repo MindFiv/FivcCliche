@@ -427,3 +427,145 @@ async def delete_agent_config_async(
     """Delete an agent config."""
     await session.delete(config)
     await session.commit()
+
+
+# ============================================================================
+# Tool Config Operations
+# ============================================================================
+
+
+async def create_tool_config_async(
+    session: AsyncSession,
+    user_uuid: str,
+    config_create: schemas.UserToolSchema,
+    **kwargs,  # ignore additional arguments
+) -> models.UserTool:
+    """Create a new tool config."""
+    config = models.UserTool(
+        id=config_create.id,
+        user_uuid=user_uuid,
+        description=config_create.description,
+        transport=config_create.transport,
+        command=config_create.command,
+        args=config_create.args,
+        env=config_create.env,
+        url=config_create.url,
+    )
+    session.add(config)
+    await session.commit()
+    await session.refresh(config)
+    return config
+
+
+async def get_tool_config_async(
+    session: AsyncSession,
+    user_uuid: str,
+    config_uuid: str | None = None,
+    config_id: str | None = None,
+    **kwargs,  # ignore additional arguments
+) -> models.UserTool | None:
+    """Get a tool config by UUID or ID for a specific user.
+
+    Args:
+        session: Database session
+        user_uuid: User UUID for filtering
+        config_uuid: Global unique identifier (optional)
+        config_id: User-scoped identifier (optional)
+
+    Returns:
+        UserTool config or None if not found
+
+    Raises:
+        ValueError: If both or neither config_uuid and config_id are provided
+    """
+    if (config_uuid is None and config_id is None) or (
+        config_uuid is not None and config_id is not None
+    ):
+        raise ValueError("Exactly one of config_uuid or config_id must be provided")
+
+    if config_uuid is not None:
+        # Query by global unique identifier
+        statement = select(models.UserTool).where(
+            (models.UserTool.uuid == config_uuid)
+            & (
+                (models.UserTool.user_uuid == user_uuid)
+                | (models.UserTool.user_uuid == None)  # noqa E711
+            )
+        )
+    else:
+        # Query by user-scoped identifier
+        statement = select(models.UserTool).where(
+            (models.UserTool.id == config_id)
+            & (
+                (models.UserTool.user_uuid == user_uuid)
+                | (models.UserTool.user_uuid == None)  # noqa E711
+            )
+        )
+
+    result = await session.execute(statement)
+    return result.scalars().first()
+
+
+async def list_tool_configs_async(
+    session: AsyncSession,
+    user_uuid: str,
+    skip: int = 0,
+    limit: int = 100,
+    **kwargs,  # ignore additional arguments
+) -> list[models.UserTool]:
+    """List all tool configs for a user with pagination."""
+    statement = (
+        select(models.UserTool)
+        .where(
+            (models.UserTool.user_uuid == user_uuid)
+            | (models.UserTool.user_uuid == None)  # noqa E711
+        )
+        .offset(skip)
+        .limit(limit)
+    )
+    result = await session.execute(statement)
+    return list(result.scalars().all())
+
+
+async def count_tool_configs_async(
+    session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
+) -> int:
+    """Count the number of tool configs for a user."""
+    statement = select(func.count(models.UserTool.uuid)).where(
+        (models.UserTool.user_uuid == user_uuid) | (models.UserTool.user_uuid == None)  # noqa E711
+    )
+    result = await session.execute(statement)
+    return result.scalar() or 0
+
+
+async def update_tool_config_async(
+    session: AsyncSession,
+    config: models.UserTool,
+    config_update: schemas.UserToolSchema,
+    **kwargs,  # ignore additional arguments
+) -> models.UserTool:
+    """Update a tool config."""
+    if config_update.description is not None:
+        config.description = config_update.description
+    if config_update.transport is not None:
+        config.transport = config_update.transport
+    if config_update.command is not None:
+        config.command = config_update.command
+    if config_update.args is not None:
+        config.args = config_update.args
+    if config_update.env is not None:
+        config.env = config_update.env
+    if config_update.url is not None:
+        config.url = config_update.url
+    session.add(config)
+    await session.commit()
+    await session.refresh(config)
+    return config
+
+
+async def delete_tool_config_async(
+    session: AsyncSession, config: models.UserTool, **kwargs  # ignore additional arguments
+) -> None:
+    """Delete a tool config."""
+    await session.delete(config)
+    await session.commit()

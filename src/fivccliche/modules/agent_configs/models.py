@@ -1,7 +1,7 @@
 from uuid import uuid4
 
 from sqlalchemy import Index
-from sqlmodel import SQLModel, Field
+from sqlmodel import SQLModel, Field, JSON
 
 from . import schemas
 
@@ -128,6 +128,60 @@ class UserLLM(SQLModel, table=True):
             base_url=self.base_url,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+        )
+
+
+class UserTool(SQLModel, table=True):
+    """Tool configuration model."""
+
+    __tablename__ = "user_tool"
+    __table_args__ = (Index("ix_user_tool_id_user_uuid", "id", "user_uuid", unique=True),)
+
+    uuid: str = Field(
+        default_factory=lambda: str(uuid4()),
+        primary_key=True,
+        max_length=32,
+        description="Tool config UUID.",
+    )
+    id: str = Field(
+        max_length=32,
+        description="Tool config ID (unique within user scope).",
+        index=True,
+    )
+    description: str | None = Field(default=None, max_length=1024, description="Tool description.")
+    transport: str = Field(
+        ...,
+        max_length=255,
+        description="Transport protocol for the tool (stdio, sse, or streamable_http)",
+    )
+    command: str | None = Field(default=None, description="Command to run the tool")
+    args: list | None = Field(
+        sa_type=JSON,
+        default=None,
+        description="Arguments for the command",
+    )
+    env: dict | None = Field(
+        sa_type=JSON,
+        default=None,
+        description="Environment variables",
+    )
+    url: str | None = Field(default=None, description="URL for the tool")
+    user_uuid: str | None = Field(
+        default=None,
+        foreign_key="user.uuid",
+        description="User ID.",
+    )
+
+    def to_schema(self) -> schemas.UserToolSchema:
+        return schemas.UserToolSchema(
+            uuid=self.uuid,
+            id=self.id,
+            description=self.description,
+            transport=self.transport,
+            command=self.command,
+            args=self.args,
+            env=self.env,
+            url=self.url,
         )
 
 

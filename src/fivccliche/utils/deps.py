@@ -4,6 +4,9 @@ from collections.abc import AsyncGenerator
 from fastapi import status, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fivcglue import query_component, IComponentSite, LazyValue
+
+from fivccliche.services.interfaces.agent_chats import IUserChatProvider
+from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.services.interfaces.db import IDatabase
 from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator
 from fivccliche.services.implements import service_site
@@ -17,6 +20,14 @@ default_db: LazyValue[IDatabase] = LazyValue(
 
 default_auth: LazyValue[IUserAuthenticator] = LazyValue(
     lambda: query_component(cast(IComponentSite, service_site), IUserAuthenticator)
+)
+
+default_config_provider: LazyValue[IUserConfigProvider] = LazyValue(
+    lambda: query_component(cast(IComponentSite, service_site), IUserConfigProvider)
+)
+
+default_chat_provider: LazyValue[IUserChatProvider] = LazyValue(
+    lambda: query_component(cast(IComponentSite, service_site), IUserChatProvider)
 )
 
 
@@ -59,3 +70,13 @@ async def get_admin_user_async(
             detail="Not a super user",
         )
     return user
+
+
+async def get_config_provider_async() -> IUserConfigProvider:
+    """Get the user config provider for dependency injection."""
+    return default_config_provider()
+
+
+async def get_chat_provider_async() -> IUserChatProvider:
+    """Get the user chat provider for dependency injection."""
+    return default_chat_provider()

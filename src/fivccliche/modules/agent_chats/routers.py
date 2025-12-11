@@ -1,20 +1,68 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    responses,
+    status,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fivcplayground.agents import create_agent
+from fivccliche.services.interfaces.agent_chats import IUserChatProvider
+from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.utils.deps import (
     IUser,
     get_authenticated_user_async,
     get_db_session_async,
+    get_config_provider_async,
+    get_chat_provider_async,
 )
 from fivccliche.utils.schemas import PaginatedResponse
 
 from . import methods, schemas
+
 
 # ============================================================================
 # Chat Session Endpoints
 # ============================================================================
 
 router_chats = APIRouter(tags=["chats"])
+
+
+@router_chats.post(
+    "/",
+    summary="Query by the authenticated user.",
+    status_code=status.HTTP_201_CREATED,
+)
+async def query_chat_async(
+    chat_query: schemas.UserChatQuery,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+    config_provider: IUserConfigProvider = Depends(get_config_provider_async),
+    chat_provider: IUserChatProvider = Depends(get_chat_provider_async),
+) -> responses.StreamingResponse:
+    """Create a new chat session."""
+    # config_provider.get_embedding_repository(user_uuid=user.uuid)
+    # config_provider.get_model_repository(user_uuid=user.uuid)
+    # config_provider.get_agent_repository(user_uuid=user.uuid)
+    # chat_provider.get_chat_repository(user_uuid=user.uuid)
+
+    chat = (
+        await methods.get_chat_async(session, chat_query.chat_uuid, user.uuid)
+        if chat_query.chat_uuid
+        else None
+    )
+    agent_id = chat.agent_id if chat else chat_query.agent_id
+    agent = create_agent(
+        model_config_repository=config_provider.get_model_repository(user_uuid=user.uuid),
+        agent_config_repository=config_provider.get_agent_repository(user_uuid=user.uuid),
+        agent_config_id=agent_id,
+    )
+    await agent.run_async(
+        query=chat_query.query,
+        agent_run_repository=chat_provider.get_chat_repository(user_uuid=user.uuid),
+    )
 
 
 @router_chats.get(

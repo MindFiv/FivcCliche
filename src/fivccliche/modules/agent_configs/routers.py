@@ -402,6 +402,136 @@ async def delete_agent_config_async(
 
 
 # ============================================================================
+# Tool Config Endpoints
+# ============================================================================
+
+router_tools = APIRouter(prefix="/tools", tags=["tool_configs"])
+
+
+@router_tools.post(
+    "/",
+    summary="Create a new tool config for the authenticated user.",
+    response_model=schemas.UserToolSchema,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_tool_config_async(
+    config_create: schemas.UserToolSchema,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> schemas.UserToolSchema:
+    """Create a new tool config."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    config = await methods.create_tool_config_async(session, user.uuid, config_create)
+    return config.to_schema()
+
+
+@router_tools.get(
+    "/",
+    summary="List all tool configs for the authenticated user.",
+    response_model=PaginatedResponse[schemas.UserToolSchema],
+)
+async def list_tool_configs_async(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> PaginatedResponse[schemas.UserToolSchema]:
+    """List all tool configs for the authenticated user."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    configs = await methods.list_tool_configs_async(session, user.uuid, skip=skip, limit=limit)
+    total = await methods.count_tool_configs_async(session, user.uuid)
+    return PaginatedResponse[schemas.UserToolSchema](
+        total=total,
+        results=[config.to_schema() for config in configs],
+    )
+
+
+@router_tools.get(
+    "/{config_uuid}",
+    summary="Get a tool config by ID for the authenticated user.",
+    response_model=schemas.UserToolSchema,
+)
+async def get_tool_config_async(
+    config_uuid: str,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> schemas.UserToolSchema:
+    """Get a tool config by ID."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    config = await methods.get_tool_config_async(session, user.uuid, config_uuid=config_uuid)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tool config not found",
+        )
+    return config.to_schema()
+
+
+@router_tools.patch(
+    "/{config_uuid}",
+    summary="Update a tool config by ID for the authenticated user.",
+    response_model=schemas.UserToolSchema,
+)
+async def update_tool_config_async(
+    config_uuid: str,
+    config_update: schemas.UserToolSchema,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> schemas.UserToolSchema:
+    """Update a tool config."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    config = await methods.get_tool_config_async(session, user.uuid, config_uuid=config_uuid)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tool config not found",
+        )
+    config = await methods.update_tool_config_async(session, config, config_update)
+    return config.to_schema()
+
+
+@router_tools.delete(
+    "/{config_uuid}",
+    summary="Delete a tool config by ID for the authenticated user.",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_tool_config_async(
+    config_uuid: str,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> None:
+    """Delete a tool config."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    config = await methods.get_tool_config_async(session, user.uuid, config_uuid=config_uuid)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tool config not found",
+        )
+    await methods.delete_tool_config_async(session, config)
+
+
+# ============================================================================
 # Main Router
 # ============================================================================
 

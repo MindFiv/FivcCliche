@@ -11,12 +11,14 @@ from sqlalchemy.pool import NullPool
 from fivcplayground.embeddings.types import EmbeddingConfig
 from fivcplayground.models.types import ModelConfig
 from fivcplayground.agents.types import AgentConfig
+from fivcplayground.tools.types import ToolConfig
 
 from fivccliche.modules.agent_configs import methods
 from fivccliche.modules.agent_configs.services import (
     UserEmbeddingRepositoryImpl,
     UserLLMRepositoryImpl,
     UserAgentRepositoryImpl,
+    UserToolRepositoryImpl,
 )
 
 # Import models to ensure they're registered with SQLModel
@@ -135,6 +137,28 @@ async def session():
                     UNIQUE (id, user_uuid),
                     FOREIGN KEY(user_uuid) REFERENCES "user" (uuid),
                     FOREIGN KEY(model_id) REFERENCES agent_models (id)
+                )
+            """
+                )
+            )
+
+            # Create user_tool table
+            await conn.execute(
+                text(
+                    """
+                CREATE TABLE user_tool (
+                    uuid VARCHAR NOT NULL,
+                    id VARCHAR NOT NULL,
+                    description VARCHAR,
+                    transport VARCHAR NOT NULL,
+                    command VARCHAR,
+                    args JSON,
+                    env JSON,
+                    url VARCHAR,
+                    user_uuid VARCHAR,
+                    PRIMARY KEY (uuid),
+                    UNIQUE (id, user_uuid),
+                    FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
                 )
             """
                 )
@@ -1178,3 +1202,294 @@ class TestAgentRepositoryImpl:
 
         with pytest.raises(ValueError, match="Session and user_uuid are required"):
             await repo.update_agent_config_async(config)
+
+
+# ============================================================================
+# Tool Config Tests
+# ============================================================================
+
+
+class TestToolConfigMethods:
+    """Test cases for tool config methods."""
+
+    async def test_create_tool_config(self, session: AsyncSession):
+        """Test creating a tool config."""
+        config_create = ToolConfig(
+            id="test-tool",
+            description="Test tool",
+            transport="stdio",
+            command="python",
+            args=["script.py"],
+        )
+
+        config = await methods.create_tool_config_async(session, "user123", config_create)
+
+        assert config.id == "test-tool"
+        assert config.user_uuid == "user123"
+        assert config.transport == "stdio"
+        assert config.command == "python"
+        assert config.args == ["script.py"]
+        assert config.uuid is not None
+
+    async def test_get_tool_config_by_uuid(self, session: AsyncSession):
+        """Test getting a tool config by UUID."""
+        config_create = ToolConfig(
+            id="test-tool-uuid",
+            description="Test tool UUID",
+            transport="sse",
+        )
+        created = await methods.create_tool_config_async(session, "user123", config_create)
+
+        retrieved = await methods.get_tool_config_async(
+            session, "user123", config_uuid=created.uuid
+        )
+
+        assert retrieved is not None
+        assert retrieved.id == "test-tool-uuid"
+        assert retrieved.uuid == created.uuid
+
+    async def test_get_tool_config_by_id(self, session: AsyncSession):
+        """Test getting a tool config by ID."""
+        config_create = ToolConfig(
+            id="test-tool-id",
+            description="Test tool ID",
+            transport="streamable_http",
+            url="http://localhost:8000",
+        )
+        await methods.create_tool_config_async(session, "user123", config_create)
+
+        retrieved = await methods.get_tool_config_async(
+            session, "user123", config_id="test-tool-id"
+        )
+
+        assert retrieved is not None
+        assert retrieved.id == "test-tool-id"
+        assert retrieved.transport == "streamable_http"
+        assert retrieved.url == "http://localhost:8000"
+
+    async def test_get_tool_config_not_found(self, session: AsyncSession):
+        """Test getting a non-existent tool config."""
+        result = await methods.get_tool_config_async(session, "user123", config_id="nonexistent")
+
+        assert result is None
+
+    async def test_list_tool_configs(self, session: AsyncSession):
+        """Test listing tool configs."""
+        for i in range(3):
+            config = ToolConfig(
+                id=f"tool-{i}",
+                description=f"Tool {i}",
+                transport="stdio",
+            )
+            await methods.create_tool_config_async(session, "user123", config)
+
+        configs = await methods.list_tool_configs_async(session, "user123")
+
+        assert len(configs) == 3
+        assert all(c.user_uuid == "user123" for c in configs)
+
+    async def test_list_tool_configs_with_pagination(self, session: AsyncSession):
+        """Test listing tool configs with pagination."""
+        for i in range(5):
+            config = ToolConfig(
+                id=f"tool-page-{i}",
+                description=f"Tool page {i}",
+                transport="stdio",
+            )
+            await methods.create_tool_config_async(session, "user123", config)
+
+        configs = await methods.list_tool_configs_async(session, "user123", skip=0, limit=2)
+
+        assert len(configs) == 2
+
+        configs = await methods.list_tool_configs_async(session, "user123", skip=2, limit=2)
+
+        assert len(configs) == 2
+
+    async def test_count_tool_configs(self, session: AsyncSession):
+        """Test counting tool configs."""
+        for i in range(3):
+            config = ToolConfig(
+                id=f"tool-count-{i}",
+                description=f"Tool count {i}",
+                transport="stdio",
+            )
+            await methods.create_tool_config_async(session, "user123", config)
+
+        count = await methods.count_tool_configs_async(session, "user123")
+
+        assert count == 3
+
+    async def test_update_tool_config(self, session: AsyncSession):
+        """Test updating a tool config."""
+        config_create = ToolConfig(
+            id="tool-update",
+            description="Tool update",
+            transport="stdio",
+            command="python",
+        )
+        created = await methods.create_tool_config_async(session, "user123", config_create)
+
+        config_update = ToolConfig(
+            id="tool-update",
+            description="Tool update",
+            transport="sse",
+            command="node",
+            url="http://example.com",
+        )
+        updated = await methods.update_tool_config_async(session, created, config_update)
+
+        assert updated.id == "tool-update"
+        assert updated.transport == "sse"
+        assert updated.command == "node"
+        assert updated.url == "http://example.com"
+
+    async def test_delete_tool_config(self, session: AsyncSession):
+        """Test deleting a tool config."""
+        config_create = ToolConfig(
+            id="tool-delete",
+            description="Tool delete",
+            transport="stdio",
+        )
+        created = await methods.create_tool_config_async(session, "user123", config_create)
+
+        await methods.delete_tool_config_async(session, created)
+
+        retrieved = await methods.get_tool_config_async(session, "user123", config_id="tool-delete")
+        assert retrieved is None
+
+    async def test_tool_config_user_scoped_uniqueness(self, session: AsyncSession):
+        """Test that tool config IDs are unique within user scope."""
+        config1 = ToolConfig(
+            id="shared-id",
+            description="Shared ID 1",
+            transport="stdio",
+        )
+        await methods.create_tool_config_async(session, "user1", config1)
+
+        # Same ID for different user should work
+        config2 = ToolConfig(
+            id="shared-id",
+            description="Shared ID 2",
+            transport="sse",
+        )
+        created = await methods.create_tool_config_async(session, "user2", config2)
+        assert created.user_uuid == "user2"
+
+        # Same ID for same user should fail
+        config3 = ToolConfig(
+            id="shared-id",
+            description="Shared ID 3",
+            transport="streamable_http",
+        )
+        with pytest.raises(Exception):  # SQLAlchemy integrity error. # noqa
+            await methods.create_tool_config_async(session, "user1", config3)
+
+
+class TestToolConfigRepository:
+    """Test cases for tool config repository."""
+
+    async def test_create_tool_config_via_repo(self, session: AsyncSession):
+        """Test creating a tool config via repository."""
+        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+
+        config = ToolConfig(
+            id="repo-tool",
+            description="Repo tool",
+            transport="stdio",
+        )
+        await repo.create_tool_config_async(config)
+
+        # Verify it was created
+        retrieved = await methods.get_tool_config_async(session, "user123", config_id="repo-tool")
+        assert retrieved is not None
+        assert retrieved.id == "repo-tool"
+
+    async def test_get_tool_config_via_repo(self, session: AsyncSession):
+        """Test getting a tool config via repository."""
+        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+
+        config = ToolConfig(
+            id="repo-tool-get",
+            description="Repo tool get",
+            transport="sse",
+        )
+        await methods.create_tool_config_async(session, "user123", config)
+
+        result = await repo.get_tool_config_async("repo-tool-get")
+
+        assert result is not None
+        assert isinstance(result, ToolConfig)
+        assert result.id == "repo-tool-get"
+
+    async def test_get_tool_config_via_repo_returns_none_when_not_found(
+        self, session: AsyncSession
+    ):
+        """Test that get_tool_config returns None when config not found."""
+        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+
+        result = await repo.get_tool_config_async("nonexistent")
+
+        assert result is None
+
+    async def test_list_tool_configs_via_repo(self, session: AsyncSession):
+        """Test listing tool configs via repository."""
+        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+
+        for i in range(3):
+            config = ToolConfig(
+                id=f"repo-tool-list-{i}",
+                description=f"Repo tool list {i}",
+                transport="stdio",
+            )
+            await methods.create_tool_config_async(session, "user123", config)
+
+        results = await repo.list_tool_configs_async()
+
+        assert len(results) == 3
+        assert all(isinstance(c, ToolConfig) for c in results)
+
+    async def test_delete_tool_config_via_repo(self, session: AsyncSession):
+        """Test deleting a tool config via repository."""
+        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+
+        config = ToolConfig(
+            id="repo-tool-delete",
+            description="Repo tool delete",
+            transport="stdio",
+        )
+        await methods.create_tool_config_async(session, "user123", config)
+
+        await repo.delete_tool_config_async("repo-tool-delete")
+
+        # Verify it was deleted
+        retrieved = await methods.get_tool_config_async(
+            session, "user123", config_id="repo-tool-delete"
+        )
+        assert retrieved is None
+
+    async def test_tool_repo_raises_error_without_session(self, session: AsyncSession):
+        """Test that repository raises error when session is None."""
+        repo = UserToolRepositoryImpl(user_uuid="user123", session=None)
+
+        config = ToolConfig(
+            id="test",
+            description="Test",
+            transport="stdio",
+        )
+
+        with pytest.raises(ValueError, match="Session and user_uuid are required"):
+            await repo.create_tool_config_async(config)
+
+    async def test_tool_repo_raises_error_without_user_id(self, session: AsyncSession):
+        """Test that repository raises error when user_uuid is None."""
+        repo = UserToolRepositoryImpl(user_uuid=None, session=session)
+
+        config = ToolConfig(
+            id="test",
+            description="Test",
+            transport="stdio",
+        )
+
+        with pytest.raises(ValueError, match="Session and user_uuid are required"):
+            await repo.create_tool_config_async(config)

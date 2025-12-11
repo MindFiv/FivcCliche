@@ -235,6 +235,50 @@ class UserAgentRepositoryImpl(UserAgentRepository):
             await methods.delete_agent_config_async(self.session, config)
 
 
+class UserToolRepositoryImpl:
+    """Tool config repository implementation."""
+
+    def __init__(self, user_uuid: str | None = None, session: AsyncSession | None = None):
+        self.user_uuid = user_uuid
+        self.session = session
+
+    async def create_tool_config_async(self, tool_config) -> None:
+        """Create or update a tool configuration."""
+        if not self.session or not self.user_uuid:
+            raise ValueError("Session and user_uuid are required for create_tool_config operation")
+        await methods.create_tool_config_async(self.session, self.user_uuid, tool_config)
+
+    async def get_tool_config_async(self, tool_id: str):
+        """Retrieve a tool configuration by ID."""
+        if not self.session or not self.user_uuid:
+            raise ValueError("Session and user_uuid are required for get_tool_config operation")
+        config = await methods.get_tool_config_async(
+            self.session, self.user_uuid, config_id=tool_id
+        )
+        return config.to_schema() if config else None
+
+    async def list_tool_configs_async(self, **kwargs) -> list:
+        """List all tool configurations in the repository."""
+        if not self.session or not self.user_uuid:
+            raise ValueError("Session and user_uuid are required for list_tool_configs operation")
+        skip = kwargs.get("skip", 0)
+        limit = kwargs.get("limit", 100)
+        configs = await methods.list_tool_configs_async(
+            self.session, self.user_uuid, skip=skip, limit=limit
+        )
+        return [config.to_schema() for config in configs]
+
+    async def delete_tool_config_async(self, tool_id: str) -> None:
+        """Delete a tool configuration."""
+        if not self.session or not self.user_uuid:
+            raise ValueError("Session and user_uuid are required for delete_tool_config operation")
+        config = await methods.get_tool_config_async(
+            self.session, self.user_uuid, config_id=tool_id
+        )
+        if config:
+            await methods.delete_tool_config_async(self.session, config)
+
+
 class UserConfigProviderImpl(IUserConfigProvider):
     """Config provider implementation."""
 
@@ -289,3 +333,4 @@ class ModuleImpl(IModule):
         app.include_router(routers.router_embeddings, prefix="/configs")
         app.include_router(routers.router_models, prefix="/configs")
         app.include_router(routers.router_agents, prefix="/configs")
+        app.include_router(routers.router_tools, prefix="/configs")

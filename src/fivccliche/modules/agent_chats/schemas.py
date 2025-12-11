@@ -6,7 +6,7 @@ __all__ = [
     "UserChatSchema",
 ]
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, BaseModel
 
 from fivcplayground.agents.types import (
     AgentRunSession,
@@ -40,3 +40,11 @@ class UserChatMessageSchema(AgentRun):
     chat_uuid: str = Field(default=None, description="Chat UUID")
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserChatQuery(BaseModel):
+    """Schema for querying in chat."""
+
+    chat_uuid: str | None = Field(default=None, description="Chat UUID")
+    agent_id: str | None = Field(default=None, description="Agent ID")
+    query: str = Field(..., description="Chat query")

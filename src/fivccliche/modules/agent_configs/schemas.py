@@ -2,13 +2,14 @@ __all__ = [
     "UserAgentSchema",
     "UserEmbeddingSchema",
     "UserLLMSchema",
+    "UserToolSchema",
 ]
-
 
 from pydantic import ConfigDict, Field
 
 from fivcplayground.embeddings.types import EmbeddingConfig
 from fivcplayground.models.types import ModelConfig
+from fivcplayground.tools.types import ToolConfig
 from fivcplayground.agents.types import AgentConfig
 
 
@@ -29,6 +30,14 @@ class UserLLMSchema(ModelConfig):
     """Schema for reading LLM config data (response)."""
 
     uuid: str = Field(default=None, description="LLM config UUID (globally unique)")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserToolSchema(ToolConfig):
+    """Schema for reading tool config data (response)."""
+
+    uuid: str = Field(default=None, description="Tool config UUID (globally unique)")
 
     model_config = ConfigDict(from_attributes=True)
 

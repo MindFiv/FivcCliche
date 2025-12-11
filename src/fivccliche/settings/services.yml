@@ -28,6 +28,12 @@
 
   class: fivccliche.modules.agent_configs.UserConfigProviderImpl
 
+# chat provider ---------------------------------------
+- entries:
+    - interface: fivccliche.services.interfaces.agent_chats.IUserChatProvider
+
+  class: fivccliche.modules.agent_chats.UserChatProviderImpl
+
 # modules ---------------------------------------------
 - entries:
     - interface: fivccliche.services.interfaces.modules.IModule

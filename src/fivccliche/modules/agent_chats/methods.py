@@ -7,6 +7,45 @@ from sqlmodel import select
 from . import models
 
 
+async def create_chat_async(
+    session: AsyncSession,
+    user_uuid: str,
+    agent_id: str,
+    chat_uuid: str | None = None,
+    description: str | None = None,
+    **kwargs,
+) -> models.UserChat:
+    """Create a new chat session asynchronously.
+
+    Args:
+        session: AsyncSession for database operations
+        user_uuid: User UUID (required)
+        agent_id: Agent config ID (required)
+        chat_uuid: Optional chat UUID (will be auto-generated if not provided)
+        description: Optional chat description
+        **kwargs: Additional arguments (ignored)
+
+    Returns:
+        Created UserChat instance
+
+    Raises:
+        ValueError: If required parameters are missing
+    """
+    if not user_uuid or not agent_id:
+        raise ValueError("user_uuid and agent_id are required to create a chat")
+
+    chat = models.UserChat(
+        uuid=chat_uuid,  # Will use auto-generated UUID if None
+        user_uuid=user_uuid,
+        agent_id=agent_id,
+        description=description,
+    )
+    session.add(chat)
+    await session.commit()
+    await session.refresh(chat)
+    return chat
+
+
 async def get_chat_async(
     session: AsyncSession, chat_uuid: str, user_uuid: str, **kwargs
 ) -> models.UserChat | None:

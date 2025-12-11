@@ -83,17 +83,14 @@ class UserChatRepositoryImpl(UserChatRepository):
             await self.session.commit()
             await self.session.refresh(existing)
         else:
-            # Create new chat
-            chat = models.UserChat(
-                uuid=session.id,
-                id=session.id,
+            # Create new chat using create_chat_async
+            await methods.create_chat_async(
+                self.session,
                 user_uuid=self.user_uuid,
                 agent_id=session.agent_id,
+                chat_uuid=session.id,
                 description=session.description,
             )
-            self.session.add(chat)
-            await self.session.commit()
-            await self.session.refresh(chat)
 
     async def get_agent_run_session_async(self, session_id: str) -> AgentRunSession | None:
         """Retrieve an agent run session (chat) by ID.

@@ -27,6 +27,7 @@ def client():
         UserEmbedding,
         UserLLM,
         UserAgent,
+        UserTool,
     )
 
     # Create a temporary file for the database
@@ -591,3 +592,197 @@ class TestAgentConfigAPI:
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 404
+
+
+class TestToolConfigAPI:
+    """Test cases for Tool Config API endpoints."""
+
+    def test_create_tool_config_unauthorized(self, client: TestClient):
+        """Test creating tool config without authentication."""
+        response = client.post(
+            "/configs/tools/",
+            json={
+                "id": "test-tool",
+                "transport": "stdio",
+            },
+        )
+        assert response.status_code == 401
+
+    def test_create_tool_config(self, client: TestClient, auth_token: str):
+        """Test creating a tool config."""
+        response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "test-tool",
+                "description": "Test tool",
+                "transport": "stdio",
+                "command": "python",
+                "args": ["script.py"],
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["id"] == "test-tool"
+        assert data["description"] == "Test tool"
+        assert data["transport"] == "stdio"
+        assert data["command"] == "python"
+        assert data["args"] == ["script.py"]
+        assert "uuid" in data
+
+    def test_list_tool_configs(self, client: TestClient, auth_token: str):
+        """Test listing tool configs."""
+        # Create multiple tool configs
+        for i in range(3):
+            client.post(
+                "/configs/tools/",
+                headers={"Authorization": f"Bearer {auth_token}"},
+                json={
+                    "id": f"tool-{i}",
+                    "description": f"Tool {i}",
+                    "transport": "stdio",
+                },
+            )
+
+        response = client.get(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 3
+        assert len(data["results"]) == 3
+
+    def test_list_tool_configs_with_pagination(self, client: TestClient, auth_token: str):
+        """Test listing tool configs with pagination."""
+        # Create multiple tool configs
+        for i in range(5):
+            client.post(
+                "/configs/tools/",
+                headers={"Authorization": f"Bearer {auth_token}"},
+                json={
+                    "id": f"tool-page-{i}",
+                    "description": f"Tool page {i}",
+                    "transport": "stdio",
+                },
+            )
+
+        response = client.get(
+            "/configs/tools/?skip=0&limit=2",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 5
+        assert len(data["results"]) == 2
+
+    def test_get_tool_config(self, client: TestClient, auth_token: str):
+        """Test getting a tool config."""
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-get",
+                "description": "Tool get",
+                "transport": "sse",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.get(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == "tool-get"
+        assert data["transport"] == "sse"
+
+    def test_get_tool_config_not_found(self, client: TestClient, auth_token: str):
+        """Test getting a non-existent tool config."""
+        response = client.get(
+            "/configs/tools/nonexistent-uuid",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 404
+
+    def test_update_tool_config(self, client: TestClient, auth_token: str):
+        """Test updating a tool config."""
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-update",
+                "description": "Tool update",
+                "transport": "stdio",
+                "command": "python",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.patch(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-update",
+                "description": "Tool update",
+                "transport": "sse",
+                "command": "node",
+                "url": "http://example.com",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["transport"] == "sse"
+        assert data["command"] == "node"
+        assert data["url"] == "http://example.com"
+
+    def test_delete_tool_config(self, client: TestClient, auth_token: str):
+        """Test deleting a tool config."""
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-delete",
+                "description": "Tool delete",
+                "transport": "stdio",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.delete(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 204
+
+        response = client.get(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 404
+
+    def test_tool_config_with_all_fields(self, client: TestClient, auth_token: str):
+        """Test creating a tool config with all fields."""
+        response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-full",
+                "transport": "streamable_http",
+                "description": "A complete tool config",
+                "command": "bash",
+                "args": ["script.sh", "--verbose"],
+                "env": {"PATH": "/usr/bin", "DEBUG": "true"},
+                "url": "http://localhost:8000/tool",
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["id"] == "tool-full"
+        assert data["transport"] == "streamable_http"
+        assert data["description"] == "A complete tool config"
+        assert data["command"] == "bash"
+        assert data["args"] == ["script.sh", "--verbose"]
+        assert data["env"] == {"PATH": "/usr/bin", "DEBUG": "true"}
+        assert data["url"] == "http://localhost:8000/tool"
