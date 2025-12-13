@@ -3,13 +3,17 @@ __all__ = [
     "UserEmbeddingSchema",
     "UserLLMSchema",
     "UserToolSchema",
+    "UserToolTransport",
 ]
 
 from pydantic import ConfigDict, Field
 
 from fivcplayground.embeddings.types import EmbeddingConfig
 from fivcplayground.models.types import ModelConfig
-from fivcplayground.tools.types import ToolConfig
+from fivcplayground.tools.types import (
+    ToolConfig,
+    ToolConfigTransport as UserToolTransport,
+)
 from fivcplayground.agents.types import AgentConfig
 
 

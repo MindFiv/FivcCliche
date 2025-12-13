@@ -8,6 +8,9 @@ from fivcplayground.embeddings.types.repositories import (
 from fivcplayground.models.types.repositories import (
     ModelConfigRepository as UserLLMRepository,
 )
+from fivcplayground.tools.types.repositories import (
+    ToolConfigRepository as UserToolRepository,
+)
 from fivcplayground.agents.types.repositories import (
     AgentConfigRepository as UserAgentRepository,
 )
@@ -31,6 +34,14 @@ class IUserConfigProvider(IComponent):
         **kwargs,  # ignore additional arguments
     ) -> UserLLMRepository:
         """Get the model config repository."""
+
+    @abstractmethod
+    def get_tool_repository(
+        self,
+        user_uuid: str | None = None,
+        **kwargs,  # ignore additional arguments
+    ) -> UserToolRepository:
+        """Get the tool config repository."""
 
     @abstractmethod
     def get_agent_repository(

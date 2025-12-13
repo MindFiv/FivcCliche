@@ -1398,7 +1398,7 @@ class TestToolConfigRepository:
             description="Repo tool",
             transport="stdio",
         )
-        await repo.create_tool_config_async(config)
+        await repo.update_tool_config_async(config)
 
         # Verify it was created
         retrieved = await methods.get_tool_config_async(session, "user123", config_id="repo-tool")
@@ -1479,7 +1479,7 @@ class TestToolConfigRepository:
         )
 
         with pytest.raises(ValueError, match="Session and user_uuid are required"):
-            await repo.create_tool_config_async(config)
+            await repo.update_tool_config_async(config)
 
     async def test_tool_repo_raises_error_without_user_id(self, session: AsyncSession):
         """Test that repository raises error when user_uuid is None."""
@@ -1492,4 +1492,100 @@ class TestToolConfigRepository:
         )
 
         with pytest.raises(ValueError, match="Session and user_uuid are required"):
-            await repo.create_tool_config_async(config)
+            await repo.update_tool_config_async(config)
+
+    async def test_update_tool_config_create_new(self, session: AsyncSession):
+        """Test creating a new tool config via update_tool_config_async."""
+        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+
+        config = ToolConfig(
+            id="repo-tool-update-1",
+            description="Repo tool update",
+            transport="stdio",
+            command="python",
+            args=["script.py"],
+        )
+
+        await repo.update_tool_config_async(config)
+
+        # Verify it was created
+        retrieved = await methods.get_tool_config_async(
+            session, "user123", config_id="repo-tool-update-1"
+        )
+        assert retrieved is not None
+        assert retrieved.id == "repo-tool-update-1"
+        assert retrieved.transport == "stdio"
+        assert retrieved.command == "python"
+        assert retrieved.args == ["script.py"]
+
+    async def test_update_tool_config_update_existing(self, session: AsyncSession):
+        """Test updating an existing tool config via update_tool_config_async."""
+        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+
+        # Create initial config
+        config_create = ToolConfig(
+            id="repo-tool-update-2",
+            description="Initial description",
+            transport="stdio",
+            command="python",
+        )
+        await methods.create_tool_config_async(session, "user123", config_create)
+
+        # Update via repository
+        config_update = ToolConfig(
+            id="repo-tool-update-2",
+            description="Updated description",
+            transport="sse",
+            command="node",
+            url="http://example.com",
+        )
+        await repo.update_tool_config_async(config_update)
+
+        # Verify it was updated
+        retrieved = await methods.get_tool_config_async(
+            session, "user123", config_id="repo-tool-update-2"
+        )
+        assert retrieved.description == "Updated description"
+        assert retrieved.transport == "sse"
+        assert retrieved.command == "node"
+        assert retrieved.url == "http://example.com"
+
+    async def test_update_tool_config_returns_none(self, session: AsyncSession):
+        """Test that update_tool_config_async returns None."""
+        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+
+        config = ToolConfig(
+            id="repo-tool-update-3",
+            description="Test",
+            transport="stdio",
+        )
+
+        result = await repo.update_tool_config_async(config)
+
+        assert result is None
+
+    async def test_update_tool_config_raises_error_without_session(self, session: AsyncSession):
+        """Test that update_tool_config_async raises error when session is None."""
+        repo = UserToolRepositoryImpl(user_uuid="user123", session=None)
+
+        config = ToolConfig(
+            id="test",
+            description="Test",
+            transport="stdio",
+        )
+
+        with pytest.raises(ValueError, match="Session and user_uuid are required"):
+            await repo.update_tool_config_async(config)
+
+    async def test_update_tool_config_raises_error_without_user_id(self, session: AsyncSession):
+        """Test that update_tool_config_async raises error when user_uuid is None."""
+        repo = UserToolRepositoryImpl(user_uuid=None, session=session)
+
+        config = ToolConfig(
+            id="test",
+            description="Test",
+            transport="stdio",
+        )
+
+        with pytest.raises(ValueError, match="Session and user_uuid are required"):
+            await repo.update_tool_config_async(config)

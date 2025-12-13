@@ -149,9 +149,9 @@ class UserTool(SQLModel, table=True):
         index=True,
     )
     description: str | None = Field(default=None, max_length=1024, description="Tool description.")
-    transport: str = Field(
-        ...,
-        max_length=255,
+    transport: schemas.UserToolTransport = Field(
+        default=schemas.UserToolTransport.STDIO,
+        max_length=16,
         description="Transport protocol for the tool (stdio, sse, or streamable_http)",
     )
     command: str | None = Field(default=None, description="Command to run the tool")

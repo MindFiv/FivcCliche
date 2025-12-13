@@ -786,3 +786,95 @@ class TestToolConfigAPI:
         assert data["args"] == ["script.sh", "--verbose"]
         assert data["env"] == {"PATH": "/usr/bin", "DEBUG": "true"}
         assert data["url"] == "http://localhost:8000/tool"
+
+    def test_update_tool_config_via_repository(self, client: TestClient, auth_token: str):
+        """Test updating a tool config via repository (create new)."""
+        # This test verifies that the update_tool_config_async method works
+        # by creating a new tool config through the API
+        response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-repo-update",
+                "description": "Tool repo update",
+                "transport": "stdio",
+                "command": "python",
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["id"] == "tool-repo-update"
+        assert data["transport"] == "stdio"
+        assert data["command"] == "python"
+
+    def test_update_tool_config_via_repository_update_existing(
+        self, client: TestClient, auth_token: str
+    ):
+        """Test updating an existing tool config via repository."""
+        # Create initial config
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-repo-update-existing",
+                "description": "Initial description",
+                "transport": "stdio",
+                "command": "python",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Update via PATCH endpoint
+        update_response = client.patch(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-repo-update-existing",
+                "description": "Updated description",
+                "transport": "sse",
+                "command": "node",
+                "url": "http://example.com",
+            },
+        )
+        assert update_response.status_code == 200
+        data = update_response.json()
+        assert data["description"] == "Updated description"
+        assert data["transport"] == "sse"
+        assert data["command"] == "node"
+        assert data["url"] == "http://example.com"
+
+    def test_update_tool_config_partial_update(self, client: TestClient, auth_token: str):
+        """Test partial update of a tool config."""
+        # Create initial config
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-partial-update",
+                "description": "Initial description",
+                "transport": "stdio",
+                "command": "python",
+                "args": ["script.py"],
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Partial update - only change description and transport
+        update_response = client.patch(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-partial-update",
+                "description": "Updated description",
+                "transport": "sse",
+            },
+        )
+        assert update_response.status_code == 200
+        data = update_response.json()
+        assert data["description"] == "Updated description"
+        assert data["transport"] == "sse"
+        # Command and args should remain unchanged
+        assert data["command"] == "python"
+        assert data["args"] == ["script.py"]
