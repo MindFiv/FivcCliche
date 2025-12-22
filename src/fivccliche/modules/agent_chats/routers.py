@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import (
     APIRouter,
     Depends,
@@ -8,7 +9,8 @@ from fastapi import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fivcplayground.agents import create_agent
+from fivcplayground.agents import create_agent, AgentRunEvent
+from fivcplayground.tools import create_tool_retriever
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.utils.deps import (
@@ -21,6 +23,46 @@ from fivccliche.utils.deps import (
 from fivccliche.utils.schemas import PaginatedResponse
 
 from . import methods, schemas
+
+
+class TaskStreamingGenerator:
+    """Generator for streaming agent runs."""
+
+    def __init__(
+        self,
+        task: asyncio.Task,
+        task_queue: asyncio.Queue,
+    ):
+        self.task = task
+        self.task_queue = task_queue
+
+    async def __call__(self, *args, **kwargs):
+        while True:
+            if self.task.done() and self.task_queue.empty():
+                break
+
+            ev, ev_run = await self.task_queue.get()
+            if ev == AgentRunEvent.START:
+                data = ev_run.model_dump(include={"id", "agent_id", "started_at"})
+                data.update({"event": "start"})
+                yield f"data: {data}\n\n"
+
+            elif ev == AgentRunEvent.FINISH:
+                data = ev_run.model_dump(include={"id", "agent_id", "completed_at"})
+                data.update({"event": "finish"})
+                yield f"data: {data}\n\n"
+
+            elif ev == AgentRunEvent.STREAM:
+                data = ev_run.model_dump(include={"id", "agent_id", "streaming_text"})
+                data.update({"event": "stream"})
+                yield f"data: {data}\n\n"
+
+            elif ev == AgentRunEvent.TOOL:
+                data = ev_run.model_dump(include={"id", "agent_id", "tool_calls"})
+                data.update({"event": "tool"})
+                yield f"data: {data}\n\n"
+
+            self.task_queue.task_done()
 
 
 # ============================================================================
@@ -43,10 +85,16 @@ async def query_chat_async(
     chat_provider: IUserChatProvider = Depends(get_chat_provider_async),
 ) -> responses.StreamingResponse:
     """Create a new chat session."""
-    # config_provider.get_embedding_repository(user_uuid=user.uuid)
-    # config_provider.get_model_repository(user_uuid=user.uuid)
-    # config_provider.get_agent_repository(user_uuid=user.uuid)
-    # chat_provider.get_chat_repository(user_uuid=user.uuid)
+    if chat_query.chat_uuid and chat_query.agent_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot specify both chat_uuid and agent_id",
+        )
+    if not chat_query.chat_uuid and not chat_query.agent_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Must specify either chat_uuid or agent_id",
+        )
 
     chat = (
         await methods.get_chat_async(session, chat_query.chat_uuid, user.uuid)
@@ -59,10 +107,21 @@ async def query_chat_async(
         agent_config_repository=config_provider.get_agent_repository(user_uuid=user.uuid),
         agent_config_id=agent_id,
     )
-    await agent.run_async(
-        query=chat_query.query,
-        agent_run_repository=chat_provider.get_chat_repository(user_uuid=user.uuid),
+    agent_tools = create_tool_retriever(
+        tool_repository=config_provider.get_tool_repository(user_uuid=user.uuid),
+        embedding_repository=config_provider.get_embedding_repository(user_uuid=user.uuid),
+        space_id=user.uuid,
     )
+    task_queue = asyncio.Queue()
+    task = asyncio.create_task(
+        agent.run_async(
+            query=chat_query.query,
+            tool_retriever=agent_tools,
+            agent_run_repository=chat_provider.get_chat_repository(user_uuid=user.uuid),
+            callback_queue=lambda ev, run: task_queue.put_nowait((ev, run)),
+        )
+    )
+    return responses.StreamingResponse(TaskStreamingGenerator(task, task_queue))
 
 
 @router_chats.get(

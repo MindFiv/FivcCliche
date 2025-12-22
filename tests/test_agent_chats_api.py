@@ -124,6 +124,38 @@ class TestChatAPI:
         response = client.delete("/chats/nonexistent", headers=headers)
         assert response.status_code == 404
 
+    def test_query_chat_unauthorized(self, client: TestClient):
+        """Test querying chat without authentication."""
+        response = client.post(
+            "/chats/",
+            json={"agent_id": "test_agent", "query": "Hello"},
+        )
+        assert response.status_code == 401
+
+    def test_query_chat_missing_both_params(self, client: TestClient, auth_token: str):
+        """Test querying chat without chat_uuid or agent_id."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.post(
+            "/chats/",
+            json={"query": "Hello"},
+            headers=headers,
+        )
+        assert response.status_code == 400
+        data = response.json()
+        assert "Must specify either chat_uuid or agent_id" in data["detail"]
+
+    def test_query_chat_both_params(self, client: TestClient, auth_token: str):
+        """Test querying chat with both chat_uuid and agent_id."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.post(
+            "/chats/",
+            json={"chat_uuid": "test-uuid", "agent_id": "test_agent", "query": "Hello"},
+            headers=headers,
+        )
+        assert response.status_code == 400
+        data = response.json()
+        assert "Cannot specify both chat_uuid and agent_id" in data["detail"]
+
 
 class TestChatMessageAPI:
     """Test cases for chat message API endpoints."""

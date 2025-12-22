@@ -1027,8 +1027,8 @@ requires-dist = [
     { name = "aiosqlite", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "fastapi", specifier = ">=0.104.0" },
-    { name = "fivcglue", specifier = ">=0.1.4" },
-    { name = "fivcplayground", specifier = ">=0.1.2" },
+    { name = "fivcglue", specifier = ">=0.1.5" },
+    { name = "fivcplayground", specifier = ">=0.1.5" },
     { name = "greenlet", specifier = ">=3.2.4" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.25.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.5.0" },
@@ -1051,16 +1051,16 @@ requires-dist = [
 
 [[package]]
 name = "fivcglue"
-version = "0.1.4"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/03/ae/7312c5f9365e112d69e939b223002ea868990e237594cbef20311a2057ec/fivcglue-0.1.4.tar.gz", hash = "sha256:1b7f53c91d1e1b9ecd6dd783e036075536c4dd450dbf12bf12ff9e22b9ee4e3c", size = 34734 }
+sdist = { url = "https://files.pythonhosted.org/packages/c6/58/93b1c42f3c6827cc6cff27c81ed28453cd2e084209938b9be174f8a0cb6b/fivcglue-0.1.5.tar.gz", hash = "sha256:b5f5fec853f0ef98ee637a13059e8425f4d0aa03ced497b6e5808e691a27ea18", size = 38391 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/61/3a/cfa2849d7c723fa3c2b5d2febbd8b7a847c12704e269c68d9d8b184b0fbb/fivcglue-0.1.4-py3-none-any.whl", hash = "sha256:3ee78f14138358297f72a7489b17c47a48a88174cb4cb1694433486fe7431df0", size = 31155 },
+    { url = "https://files.pythonhosted.org/packages/68/db/cdf624bdb44c20f5c354e55fb9f72f79a9160fc7f7480317113395c0b3cf/fivcglue-0.1.5-py3-none-any.whl", hash = "sha256:66b72c5955bd6a8676f2cb6b2c2540ed4bc7b4ebae0a464b045b5753bd02471b", size = 34310 },
 ]
 
 [[package]]
 name = "fivcplayground"
-version = "0.1.2"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "chromadb" },
@@ -1083,9 +1083,9 @@ dependencies = [
     { name = "streamlit" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c6/86/d443c9f0c7cae790c7f02a398d54dd6f2433f4cc529473415499a04b4fa0/fivcplayground-0.1.2.tar.gz", hash = "sha256:512d74408b4ad22dbbca7db2c52d8d8729effbd28c19a7586097a150a75a5e48", size = 115269 }
+sdist = { url = "https://files.pythonhosted.org/packages/52/8f/74deafbb5b22177ec98f32b3842628a5da1d4b5eeff453ba590e83a71150/fivcplayground-0.1.5.tar.gz", hash = "sha256:392620197170fa1ec3f5b2b7ad897809c038adde4686d07a180c5b9a31845920", size = 111757 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f8/38/336b3a5d2becba6816f27730230e8efdaa9d07211ffffb529b95ae51299f/fivcplayground-0.1.2-py3-none-any.whl", hash = "sha256:d4283e2e60f213b08b4760596db9d248e5451c816000d285e5e9ba745c2a03dc", size = 96939 },
+    { url = "https://files.pythonhosted.org/packages/e6/08/1bbd815d0d1a9ea04d0d0c4be2ead1ed9eb8cf1605b378e08e3980a03942/fivcplayground-0.1.5-py3-none-any.whl", hash = "sha256:44cb1a8ef55537d5a602555cdfbdfaccc4a0e8a188bae9770b1a9c65d5d7438c", size = 94080 },
 ]
 
 [[package]]
