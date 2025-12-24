@@ -597,6 +597,189 @@ class TestAgentConfigAPI:
 class TestToolConfigAPI:
     """Test cases for Tool Config API endpoints."""
 
+    def test_indexing_tool_unauthorized(self, client: TestClient):
+        """Test indexing tool without authentication."""
+        response = client.post("/configs/tools/indexing")
+        assert response.status_code == 401
+
+    def test_indexing_tool_success(self, client: TestClient, auth_token: str):
+        """Test successful tool indexing."""
+        from unittest.mock import Mock, patch
+
+        # Mock the create_tool_retriever function and its return value
+        mock_tool_retriever = Mock()
+        mock_tool_retriever.index_tools = Mock()
+
+        with patch("fivccliche.modules.agent_configs.routers.create_tool_retriever") as mock_create:
+            mock_create.return_value = mock_tool_retriever
+
+            response = client.post(
+                "/configs/tools/indexing",
+                headers={"Authorization": f"Bearer {auth_token}"},
+            )
+
+            assert response.status_code == 200
+            # Verify create_tool_retriever was called
+            assert mock_create.called
+            # Verify index_tools was called on the retriever
+            mock_tool_retriever.index_tools.assert_called_once()
+
+    def test_indexing_tool_with_existing_tools(self, client: TestClient, auth_token: str):
+        """Test indexing tool when user has existing tool configs."""
+        from unittest.mock import Mock, patch
+
+        # Create some tool configs first
+        for i in range(3):
+            client.post(
+                "/configs/tools/",
+                headers={"Authorization": f"Bearer {auth_token}"},
+                json={
+                    "id": f"tool-index-{i}",
+                    "description": f"Tool for indexing {i}",
+                    "transport": "stdio",
+                    "command": "python",
+                },
+            )
+
+        # Mock the create_tool_retriever function
+        mock_tool_retriever = Mock()
+        mock_tool_retriever.index_tools = Mock()
+
+        with patch("fivccliche.modules.agent_configs.routers.create_tool_retriever") as mock_create:
+            mock_create.return_value = mock_tool_retriever
+
+            response = client.post(
+                "/configs/tools/indexing",
+                headers={"Authorization": f"Bearer {auth_token}"},
+            )
+
+            assert response.status_code == 200
+            # Verify the tool retriever was created with correct parameters
+            assert mock_create.called
+            call_kwargs = mock_create.call_args.kwargs
+            assert "tool_backend" in call_kwargs
+            assert "tool_repository" in call_kwargs
+            assert "embedding_backend" in call_kwargs
+            assert "embedding_repository" in call_kwargs
+            assert "space_id" in call_kwargs
+            # Verify index_tools was called
+            mock_tool_retriever.index_tools.assert_called_once()
+
+    def test_indexing_tool_calls_config_provider_methods(self, client: TestClient, auth_token: str):
+        """Test that indexing tool calls all required config provider methods."""
+        from unittest.mock import Mock, patch
+
+        mock_tool_retriever = Mock()
+        mock_tool_retriever.index_tools = Mock()
+
+        with patch("fivccliche.modules.agent_configs.routers.create_tool_retriever") as mock_create:
+            mock_create.return_value = mock_tool_retriever
+
+            response = client.post(
+                "/configs/tools/indexing",
+                headers={"Authorization": f"Bearer {auth_token}"},
+            )
+
+            assert response.status_code == 200
+            # Verify create_tool_retriever was called with all required parameters
+            call_kwargs = mock_create.call_args.kwargs
+            assert "tool_backend" in call_kwargs
+            assert "tool_repository" in call_kwargs
+            assert "embedding_backend" in call_kwargs
+            assert "embedding_repository" in call_kwargs
+            assert "space_id" in call_kwargs
+
+    def test_indexing_tool_exception_handling(self, client: TestClient, auth_token: str):
+        """Test indexing tool handles exceptions from index_tools."""
+        from unittest.mock import Mock, patch
+
+        mock_tool_retriever = Mock()
+        mock_tool_retriever.index_tools = Mock(side_effect=Exception("Indexing failed"))
+
+        with patch("fivccliche.modules.agent_configs.routers.create_tool_retriever") as mock_create:
+            mock_create.return_value = mock_tool_retriever
+
+            # The endpoint doesn't explicitly handle exceptions, so it should raise
+            with pytest.raises(Exception) as exc_info:  # noqa
+                client.post(
+                    "/configs/tools/indexing",
+                    headers={"Authorization": f"Bearer {auth_token}"},
+                )
+            assert "Indexing failed" in str(exc_info.value)
+
+    def test_indexing_tool_with_different_users(self, client: TestClient):
+        """Test that indexing tool uses correct user context."""
+        from unittest.mock import Mock, patch
+
+        # Create two different users
+        admin_token = client.post(
+            "/users/login",
+            json={"username": "admin", "password": "admin123"},
+        ).json()["access_token"]
+
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        # Create first user
+        client.post(
+            "/users/",
+            json={
+                "username": "user1",
+                "email": "user1@example.com",
+                "password": "password123",
+            },
+            headers=admin_headers,
+        )
+        user1_token = client.post(
+            "/users/login",
+            json={"username": "user1", "password": "password123"},
+        ).json()["access_token"]
+
+        # Create second user
+        client.post(
+            "/users/",
+            json={
+                "username": "user2",
+                "email": "user2@example.com",
+                "password": "password123",
+            },
+            headers=admin_headers,
+        )
+        user2_token = client.post(
+            "/users/login",
+            json={"username": "user2", "password": "password123"},
+        ).json()["access_token"]
+
+        mock_tool_retriever = Mock()
+        mock_tool_retriever.index_tools = Mock()
+
+        with patch("fivccliche.modules.agent_configs.routers.create_tool_retriever") as mock_create:
+            mock_create.return_value = mock_tool_retriever
+
+            # Call indexing for user1
+            response1 = client.post(
+                "/configs/tools/indexing",
+                headers={"Authorization": f"Bearer {user1_token}"},
+            )
+            assert response1.status_code == 200
+
+            # Get the space_id used for user1
+            call_kwargs_1 = mock_create.call_args.kwargs
+            space_id_1 = call_kwargs_1["space_id"]
+
+            # Call indexing for user2
+            response2 = client.post(
+                "/configs/tools/indexing",
+                headers={"Authorization": f"Bearer {user2_token}"},
+            )
+            assert response2.status_code == 200
+
+            # Get the space_id used for user2
+            call_kwargs_2 = mock_create.call_args.kwargs
+            space_id_2 = call_kwargs_2["space_id"]
+
+            # Verify different users have different space_ids
+            assert space_id_1 != space_id_2
+
     def test_create_tool_config_unauthorized(self, client: TestClient):
         """Test creating tool config without authentication."""
         response = client.post(

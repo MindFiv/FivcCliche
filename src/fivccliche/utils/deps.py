@@ -1,9 +1,11 @@
 from typing import cast
 from collections.abc import AsyncGenerator
 
+from cas import CASClient, CASClientBase
 from fastapi import status, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fivcglue import query_component, IComponentSite, LazyValue
+from fivcglue.interfaces import configs
 
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
@@ -13,6 +15,10 @@ from fivccliche.services.implements import service_site
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 default_security = HTTPBearer()
+
+default_config: LazyValue[configs.IConfig] = LazyValue(
+    lambda: query_component(cast(IComponentSite, service_site), configs.IConfig)
+)
 
 default_db: LazyValue[IDatabase] = LazyValue(
     lambda: query_component(cast(IComponentSite, service_site), IDatabase)
@@ -29,6 +35,16 @@ default_config_provider: LazyValue[IUserConfigProvider] = LazyValue(
 default_chat_provider: LazyValue[IUserChatProvider] = LazyValue(
     lambda: query_component(cast(IComponentSite, service_site), IUserChatProvider)
 )
+
+
+async def get_cas_client_async() -> CASClientBase:
+    """Get the CAS client for dependency injection."""
+    sess = default_config.get_session("cas.yaml")
+    return CASClient(
+        version=sess.get_value("VERSION"),
+        service_url=sess.get_value("SERVICE_URL"),
+        server_url=sess.get_value("SERVER_URL"),
+    )
 
 
 async def get_db_session_async() -> AsyncGenerator[AsyncSession, None]:

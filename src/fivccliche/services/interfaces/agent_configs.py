@@ -2,16 +2,20 @@ from abc import abstractmethod
 
 from fivcglue import IComponent
 
-from fivcplayground.embeddings.types.repositories import (
+from fivcplayground.embeddings import (
+    EmbeddingBackend as UserEmbeddingBackend,
     EmbeddingConfigRepository as UserEmbeddingRepository,
 )
-from fivcplayground.models.types.repositories import (
+from fivcplayground.models import (
+    ModelBackend as UserLLMBackend,
     ModelConfigRepository as UserLLMRepository,
 )
-from fivcplayground.tools.types.repositories import (
+from fivcplayground.tools import (
+    ToolBackend as UserToolBackend,
     ToolConfigRepository as UserToolRepository,
 )
-from fivcplayground.agents.types.repositories import (
+from fivcplayground.agents import (
+    AgentBackend as UserAgentBackend,
     AgentConfigRepository as UserAgentRepository,
 )
 
@@ -28,12 +32,28 @@ class IUserConfigProvider(IComponent):
         """Get the embedding config repository."""
 
     @abstractmethod
+    def get_embedding_backend(
+        self,
+        user_uuid: str | None = None,
+        **kwargs,  # ignore additional arguments
+    ) -> UserEmbeddingBackend:
+        """Get the embedding backend."""
+
+    @abstractmethod
     def get_model_repository(
         self,
         user_uuid: str | None = None,
         **kwargs,  # ignore additional arguments
     ) -> UserLLMRepository:
         """Get the model config repository."""
+
+    @abstractmethod
+    def get_model_backend(
+        self,
+        user_uuid: str | None = None,
+        **kwargs,  # ignore additional arguments
+    ) -> UserLLMBackend:
+        """Get the model backend."""
 
     @abstractmethod
     def get_tool_repository(
@@ -44,9 +64,25 @@ class IUserConfigProvider(IComponent):
         """Get the tool config repository."""
 
     @abstractmethod
+    def get_tool_backend(
+        self,
+        user_uuid: str | None = None,
+        **kwargs,  # ignore additional arguments
+    ) -> UserToolBackend:
+        """Get the tool backend."""
+
+    @abstractmethod
     def get_agent_repository(
         self,
         user_uuid: str | None = None,
         **kwargs,  # ignore additional arguments
     ) -> UserAgentRepository:
         """Get the agent config repository."""
+
+    @abstractmethod
+    def get_agent_backend(
+        self,
+        user_uuid: str | None = None,
+        **kwargs,  # ignore additional arguments
+    ) -> UserAgentBackend:
+        """Get the agent backend."""

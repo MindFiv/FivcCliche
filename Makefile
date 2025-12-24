@@ -62,7 +62,7 @@ format: install-dev
 
 lint: install-dev
 	@echo "🔍 Running Ruff linter..."
-	$(PYTHON) scripts/ruff_wrapper.py src/ tests/ --fix --ignore B008 --output-format=pylint
+	$(PYTHON) scripts/ruff_wrapper.py src/ tests/ --fix --output-format=pylint
 	@echo "✅ Linting complete"
 
 typecheck:

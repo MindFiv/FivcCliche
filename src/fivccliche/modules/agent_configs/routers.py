@@ -1,14 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fivcplayground.tools import create_tool_retriever
+
 from fivccliche.utils.deps import (
     IUser,
     get_authenticated_user_async,
     get_db_session_async,
+    get_config_provider_async,
 )
 from fivccliche.utils.schemas import PaginatedResponse
 
 from . import methods, schemas
+from ...services.interfaces.agent_configs import IUserConfigProvider
 
 # ============================================================================
 # Embedding Config Endpoints
@@ -406,6 +410,32 @@ async def delete_agent_config_async(
 # ============================================================================
 
 router_tools = APIRouter(prefix="/tools", tags=["tool_configs"])
+
+
+@router_tools.post(
+    "/indexing",
+    summary="Indexing tool for the authenticated user.",
+    status_code=status.HTTP_200_OK,
+)
+async def indexing_tool_async(
+    user: IUser = Depends(get_authenticated_user_async),
+    # session: AsyncSession = Depends(get_db_session_async),
+    config_provider: IUserConfigProvider = Depends(get_config_provider_async),
+):
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    agent_tools = create_tool_retriever(
+        tool_backend=config_provider.get_tool_backend(),
+        tool_repository=config_provider.get_tool_repository(user_uuid=user.uuid),
+        embedding_backend=config_provider.get_embedding_backend(),
+        embedding_repository=config_provider.get_embedding_repository(user_uuid=user.uuid),
+        space_id=user.uuid,
+    )
+    agent_tools.index_tools()
 
 
 @router_tools.post(

@@ -38,11 +38,12 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "typer>=0.9.0",
     "rich>=13.0.0",
-    "fivcplayground>=0.1.7",
+    "fivcplayground>=0.1.8",
     "fivcglue>=0.1.5",
     "passlib[argon2]>=1.7.4",
     "pyjwt>=2.10.1",
     "greenlet>=3.2.4",
+    "python-cas>=1.7.1",
 ]
 
 [project.optional-dependencies]
@@ -92,7 +93,7 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "PIE", "PT", "RUF"]
-ignore = ["E501", "I001"]
+ignore = ["E501", "I001", "B008"]
 
 [tool.mypy]
 python_version = "3.10"

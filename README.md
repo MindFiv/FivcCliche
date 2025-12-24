@@ -24,8 +24,8 @@ A **production-ready, multi-user backend framework** designed specifically for *
 
 ```bash
 # Clone the repository
-git clone https://gitee.com/NerdCamp/cliche.git
-cd cliche
+git clone https://github.com/MindFiv/FivcCliche.git
+cd FivcCliche
 
 # Install production dependencies
 uv pip install -e .

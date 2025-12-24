@@ -103,12 +103,16 @@ async def query_chat_async(
     )
     agent_id = chat.agent_id if chat else chat_query.agent_id
     agent = create_agent(
+        model_backend=config_provider.get_model_backend(),
         model_config_repository=config_provider.get_model_repository(user_uuid=user.uuid),
+        agent_backend=config_provider.get_agent_backend(),
         agent_config_repository=config_provider.get_agent_repository(user_uuid=user.uuid),
         agent_config_id=agent_id,
     )
     agent_tools = create_tool_retriever(
+        tool_backend=config_provider.get_tool_backend(),
         tool_repository=config_provider.get_tool_repository(user_uuid=user.uuid),
+        embedding_backend=config_provider.get_embedding_backend(),
         embedding_repository=config_provider.get_embedding_repository(user_uuid=user.uuid),
         space_id=user.uuid,
     )

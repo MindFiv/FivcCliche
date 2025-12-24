@@ -2,18 +2,32 @@ import asyncio
 from fastapi import FastAPI
 
 from fivcglue import IComponentSite
-from fivcplayground.tools import ToolConfigRepository as UserToolRepository, ToolConfig
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from fivcplayground.embeddings.types import EmbeddingConfig
+from fivcplayground.tools.types import ToolConfig
 from fivcplayground.models.types import ModelConfig
 from fivcplayground.agents.types import AgentConfig
+
+from fivcplayground.backends.chroma import (
+    ChromaEmbeddingBackend,
+)
+from fivcplayground.backends.strands import (
+    StrandsModelBackend,
+    StrandsToolBackend,
+    StrandsAgentBackend,
+)
 
 from fivccliche.services.interfaces.modules import IModule
 from fivccliche.services.interfaces.agent_configs import (
     UserEmbeddingRepository,
+    UserEmbeddingBackend,
+    UserToolRepository,
+    UserToolBackend,
     UserLLMRepository,
+    UserLLMBackend,
     UserAgentRepository,
+    UserAgentBackend,
     IUserConfigProvider,
 )
 
@@ -321,6 +335,14 @@ class UserConfigProviderImpl(IUserConfigProvider):
         """Get the embedding config repository."""
         return UserEmbeddingRepositoryImpl(user_uuid=user_uuid, session=session)
 
+    def get_embedding_backend(
+        self,
+        user_uuid: str | None = None,
+        **kwargs,  # ignore additional arguments
+    ) -> UserEmbeddingBackend:
+        """Get the embedding backend."""
+        return ChromaEmbeddingBackend()
+
     def get_model_repository(
         self,
         user_uuid: str | None = None,
@@ -329,6 +351,14 @@ class UserConfigProviderImpl(IUserConfigProvider):
     ) -> UserLLMRepository:
         """Get the model config repository."""
         return UserLLMRepositoryImpl(user_uuid=user_uuid, session=session)
+
+    def get_model_backend(
+        self,
+        user_uuid: str | None = None,
+        **kwargs,  # ignore additional arguments
+    ) -> UserLLMBackend:
+        """Get the model backend."""
+        return StrandsModelBackend()
 
     def get_tool_repository(
         self,
@@ -339,6 +369,14 @@ class UserConfigProviderImpl(IUserConfigProvider):
         """Get the tool config repository."""
         return UserToolRepositoryImpl(user_uuid=user_uuid, session=session)
 
+    def get_tool_backend(
+        self,
+        user_uuid: str | None = None,
+        **kwargs,  # ignore additional arguments
+    ) -> UserToolBackend:
+        """Get the tool backend."""
+        return StrandsToolBackend()
+
     def get_agent_repository(
         self,
         user_uuid: str | None = None,
@@ -347,6 +385,14 @@ class UserConfigProviderImpl(IUserConfigProvider):
     ) -> UserAgentRepository:
         """Get the agent config repository."""
         return UserAgentRepositoryImpl(user_uuid=user_uuid, session=session)
+
+    def get_agent_backend(
+        self,
+        user_uuid: str | None = None,
+        **kwargs,  # ignore additional arguments
+    ) -> UserAgentBackend:
+        """Get the agent backend."""
+        return StrandsAgentBackend()
 
 
 class ModuleImpl(IModule):

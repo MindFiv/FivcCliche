@@ -13,7 +13,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ### 2. Install Project with Dependencies
 ```bash
-cd /Users/charlie/Works/Cliche
+cd /Users/charlie/Works/FivcCliche
 
 # Install production dependencies
 uv pip install -e .
