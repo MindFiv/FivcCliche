@@ -40,11 +40,12 @@ default_chat_provider: LazyValue[IUserChatProvider] = LazyValue(
 
 async def get_cas_client_async() -> CASClientBase:
     """Get the CAS client for dependency injection."""
-    sess = default_config.get_session("cas.yaml")
+    sess = default_config.get_session("cas")
     return CASClient(
         version=sess.get_value("VERSION"),
         service_url=sess.get_value("SERVICE_URL"),
         server_url=sess.get_value("SERVER_URL"),
+        verify_ssl_certificate=bool(sess.get_value("VERIFY_SSL_CERTIFICATE")),
     )
 
 
