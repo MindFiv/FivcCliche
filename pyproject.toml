@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fivccliche"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A modern async Python framework for building scalable applications with FastAPI and SQLModel"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -68,6 +68,9 @@ packages = ["fivccliche"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+[tool.setuptools.dynamic]
+version = {attr = "fivccliche.__version__"}
 
 [tool.black]
 line-length = 100
