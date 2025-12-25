@@ -15,6 +15,7 @@ from fivccliche.services.implements import service_site
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 default_security = HTTPBearer()
+default_security_optional = HTTPBearer(auto_error=False)
 
 default_config: LazyValue[configs.IConfig] = LazyValue(
     lambda: query_component(cast(IComponentSite, service_site), configs.IConfig)
@@ -60,7 +61,7 @@ async def get_db_session_async() -> AsyncGenerator[AsyncSession, None]:
 async def get_authenticated_user_async(
     credentials: HTTPAuthorizationCredentials = Depends(default_security),
     session: AsyncSession = Depends(get_db_session_async),
-) -> IUser | None:
+) -> IUser:
     """Get the user authenticator for dependency injection."""
     auth = default_auth
     user = await auth.verify_access_token_async(
@@ -74,6 +75,19 @@ async def get_authenticated_user_async(
             headers={"WWW-Authenticate": "Bearer"},
         )
     return user
+
+
+async def get_authenticated_user_optional_async(
+    credentials: HTTPAuthorizationCredentials = Depends(default_security_optional),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> IUser | None:
+    if not credentials:
+        return None
+
+    return await default_auth.verify_access_token_async(
+        credentials.credentials,
+        session=session,
+    )
 
 
 async def get_admin_user_async(

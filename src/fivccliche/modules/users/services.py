@@ -152,6 +152,12 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 async with get_db_session_async() as session:
                     user = await get_user_async(session, user_uuid=user_uuid)
 
+            return UserImpl(user) if user else None
+
+        except Exception as e:
+            # do nothing
+            print(e)
+
         finally:
             if user:
                 user_info = {
@@ -166,8 +172,6 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                     json.dumps(user_info).encode("utf-8"),
                     expire=timedelta(hours=self.token_expire_hours),
                 )
-
-        return UserImpl(user) if user else None
 
 
 class ModuleImpl(IModule):

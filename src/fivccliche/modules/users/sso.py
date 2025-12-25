@@ -7,9 +7,10 @@ from fastapi import (
     responses,
 )
 
+from fivccliche.services.interfaces.auth import IUser
 from fivccliche.utils.deps import (
     get_cas_client_async,
-    get_authenticated_user_async,
+    get_authenticated_user_optional_async,
     # default_auth,
 )
 
@@ -24,16 +25,12 @@ router = APIRouter(prefix="/sso/ctrip", tags=["sso-ctrip"])
 async def login(
     next: str | None = None,  # noqa
     ticket: str | None = None,
+    user: IUser = Depends(get_authenticated_user_optional_async),
     cas_client: CASClientBase = Depends(get_cas_client_async),
 ):
     # check if user is already logged in
-    try:
-        user = get_authenticated_user_async()
-        if user:
-            return responses.RedirectResponse(next)
-
-    except HTTPException:
-        pass
+    if user:
+        return responses.RedirectResponse(next)
 
     # next = request.args.get('next')
     # ticket = request.args.get('ticket')
