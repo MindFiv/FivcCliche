@@ -8,24 +8,10 @@ dynamic = ["version"]
 description = "A modern async Python framework for building scalable applications with FastAPI and SQLModel"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
 authors = [
     {name = "Charlie Zhang", email = "sunnypig2002@gmail.com"}
 ]
 keywords = ["fastapi", "sqlmodel", "async", "orm", "rest-api"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Environment :: Web Environment",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Internet :: WWW/HTTP",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-]
 
 dependencies = [
     "fastapi>=0.104.0",
@@ -63,14 +49,22 @@ Homepage = "https://github.com/MindFiv/FivcCliche"
 Repository = "https://github.com/MindFiv/FivcCliche.git"
 Issues = "https://github.com/MindFiv/FivcCliche/issues"
 
-[tool.setuptools]
-packages = ["fivccliche"]
+[project.scripts]
+fivccliche = "fivccliche.cli:main"
 
-[tool.setuptools.package-dir]
-"" = "src"
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+fivccliche = ["settings/*.yml"]
 
 [tool.setuptools.dynamic]
 version = {attr = "fivccliche.__version__"}
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+]
 
 [tool.black]
 line-length = 100
