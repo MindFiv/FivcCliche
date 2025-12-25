@@ -67,20 +67,20 @@ async def login_user_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserLoginResponse:
     """Authenticate a user and return user data with JWT token."""
-    access_token = await default_auth.create_access_token_async(
+    credential = await default_auth.create_credential_async(
         user_login.username,
         user_login.password,
         session=session,
     )
-    if not access_token:
+    if not credential:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
 
     return schemas.UserLoginResponse(
-        access_token=access_token,
-        token_type="bearer",
+        access_token=credential.access_token,
+        expires_in=credential.expires_in,
     )
 
 

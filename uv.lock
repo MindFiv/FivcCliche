@@ -991,7 +991,7 @@ wheels = [
 
 [[package]]
 name = "fivccliche"
-version = "0.1.0"
+version = "0.1.4"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -1023,6 +1023,11 @@ dev = [
     { name = "ruff" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", marker = "extra == 'dev'", specifier = ">=0.21.0" },
@@ -1050,6 +1055,9 @@ requires-dist = [
     { name = "typer", specifier = ">=0.9.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.4.1" }]
 
 [[package]]
 name = "fivcglue"

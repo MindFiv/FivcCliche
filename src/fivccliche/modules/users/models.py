@@ -17,9 +17,11 @@ class User(SQLModel, table=True):
         description="User ID (UUID).",
     )
     username: str = Field(max_length=255, index=True, unique=True, description="User name.")
-    email: EmailStr = Field(max_length=255, index=True, unique=True, description="User email.")
-    full_name: str | None = Field(max_length=1024, description="User full name.")
-    hashed_password: str = Field(max_length=255, description="User password.")
+    email: EmailStr | None = Field(
+        default=None, max_length=255, index=True, unique=True, description="User email."
+    )
+    full_name: str | None = Field(default=None, max_length=1024, description="User full name.")
+    hashed_password: str | None = Field(default=None, max_length=255, description="User password.")
     created_at: datetime = Field(default_factory=datetime.now, description="User creation time.")
     signed_in_at: datetime | None = Field(default=None, description="User last sign in time.")
     is_active: bool = True

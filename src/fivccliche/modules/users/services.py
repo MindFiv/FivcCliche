@@ -8,7 +8,7 @@ from fivcglue.interfaces.caches import ICache
 from fivcglue.interfaces.configs import IConfig
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
-from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator
+from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator, UserCredential
 from fivccliche.services.interfaces.modules import IModule
 from fivccliche.utils.deps import get_db_session_async
 
@@ -54,11 +54,11 @@ class UserAuthenticatorImpl(IUserAuthenticator):
             config.get_value("SECRET_KEY") or "your-secret-key-change-this-in-production"
         )
 
-    def _create_access_token(self, user_uuid: str) -> str:
+    def _create_access_token(self, user_uuid: str) -> UserCredential:
         """Create a JWT access token for a user."""
         time_now = datetime.now(timezone.utc)
         time_expire = time_now + timedelta(hours=self.token_expire_hours)
-        return jwt.encode(
+        access_token = jwt.encode(
             {
                 "sub": user_uuid,  # Subject (user ID)
                 "iat": time_now,  # Issued at
@@ -67,6 +67,8 @@ class UserAuthenticatorImpl(IUserAuthenticator):
             self.token_secret_key,
             algorithm=self.token_algorithm,
         )
+        expires_in = int(self.token_expire_hours * 3600)  # Convert hours to seconds
+        return UserCredential(access_token=access_token, expires_in=expires_in)
 
     def _decode_access_token(self, access_token: str) -> str | None:
         """Decode and validate a JWT access token."""
@@ -110,14 +112,14 @@ class UserAuthenticatorImpl(IUserAuthenticator):
             )
             return UserImpl(user) if user else None
 
-    async def create_access_token_async(
+    async def create_credential_async(
         self,
         username: str,
         password: str,
         session: AsyncSession | None = None,
         **kwargs,
-    ) -> str | None:
-        """Login a user and return a access token."""
+    ) -> UserCredential | None:
+        """Login a user and return a credential."""
         if session:
             user = await authenticate_user_async(session, username, password)
             return self._create_access_token(user.uuid) if user else None
@@ -126,7 +128,63 @@ class UserAuthenticatorImpl(IUserAuthenticator):
             user = await authenticate_user_async(session, username, password)
             return self._create_access_token(user.uuid) if user else None
 
-    async def verify_access_token_async(
+    async def create_sso_credential_async(
+        self,
+        username: str,
+        attributes: dict,
+        session: AsyncSession | None = None,
+        **kwargs,
+    ) -> UserCredential | None:
+        """Create a credential for SSO user.
+
+        This method will get or create a user based on SSO authentication.
+        If the user doesn't exist, it will be created without a password.
+
+        Args:
+            username: Username from SSO provider
+            attributes: Additional attributes from SSO provider (may contain email, etc.)
+            session: Database session (optional)
+            **kwargs: Additional arguments (ignored)
+
+        Returns:
+            UserCredential if successful, None otherwise
+        """
+        # Extract email from attributes if available
+        email = attributes.get("email") or attributes.get("mail")
+
+        if session:
+            # Try to get existing user
+            user = await get_user_async(session, username=username)
+
+            # Create user if doesn't exist
+            if not user:
+                user = await create_user_async(
+                    session,
+                    username=username,
+                    email=email,
+                    password=None,  # SSO users don't have passwords
+                    is_superuser=False,
+                )
+
+            return self._create_access_token(user.uuid) if user else None
+
+        async with get_db_session_async() as session:
+            # Try to get existing user
+            user = await get_user_async(session, username=username)
+
+            # Create user if doesn't exist
+            if not user:
+                user = await create_user_async(
+                    session,
+                    username=username,
+                    email=email,
+                    password=None,  # SSO users don't have passwords
+                    is_superuser=False,
+                )
+
+            return self._create_access_token(user.uuid) if user else None
+
+    async def verify_credential_async(
         self, access_token: str, session: AsyncSession | None = None, **kwargs
     ) -> IUser | None:
         """Authenticate a user by token."""
@@ -160,16 +218,9 @@ class UserAuthenticatorImpl(IUserAuthenticator):
 
         finally:
             if user:
-                user_info = {
-                    "uuid": user.uuid,
-                    "username": user.username,
-                    "email": user.email,
-                    "is_active": user.is_active,
-                    "is_superuser": user.is_superuser,
-                }
                 self.cache.set_value(
                     f"user: {user.uuid}",
-                    json.dumps(user_info).encode("utf-8"),
+                    user.model_dump_json().encode("utf-8"),
                     expire=timedelta(hours=self.token_expire_hours),
                 )
 

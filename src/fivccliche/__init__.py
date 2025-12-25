@@ -15,7 +15,7 @@ Key Features:
 - Built on FastAPI for high performance
 """
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 __author__ = "Charlie Zhang"
 __email__ = "sunnypig2002@gmail.com"
 __license__ = "MIT"

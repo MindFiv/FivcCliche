@@ -1,7 +1,15 @@
 from abc import abstractmethod
 
 from fivcglue import IComponent
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio.session import AsyncSession
+
+
+class UserCredential(BaseModel):
+    """User credential model."""
+
+    access_token: str = Field(..., description="Access token")
+    expires_in: int = Field(..., description="Token expiration time in seconds")
 
 
 class IUser(IComponent):
@@ -48,17 +56,27 @@ class IUserAuthenticator(IComponent):
         """Create a new user."""
 
     @abstractmethod
-    async def create_access_token_async(
+    async def create_credential_async(
         self,
         username: str,
         password: str,
         session: AsyncSession | None = None,
         **kwargs,  # ignore additional arguments
-    ) -> str | None:
-        """Login a user and return a access token."""
+    ) -> UserCredential | None:
+        """Login a user and return a credential."""
 
     @abstractmethod
-    async def verify_access_token_async(
+    async def create_sso_credential_async(
+        self,
+        username: str,
+        attributes: dict,
+        session: AsyncSession | None = None,
+        **kwargs,  # ignore additional arguments
+    ) -> UserCredential | None:
+        """Create a credential for SSO user."""
+
+    @abstractmethod
+    async def verify_credential_async(
         self,
         access_token: str,
         session: AsyncSession | None = None,

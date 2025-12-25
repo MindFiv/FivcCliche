@@ -250,7 +250,8 @@ class TestUsersAPI:
         assert login_response.status_code == 200
         login_data = login_response.json()
         assert "access_token" in login_data
-        assert login_data["token_type"] == "bearer"
+        assert "expires_in" in login_data
+        assert login_data["expires_in"] > 0
 
         token = login_data["access_token"]
 
@@ -359,10 +360,10 @@ class TestUsersAPI:
 
         # Verify response structure
         assert "access_token" in data
-        assert "token_type" in data
+        assert "expires_in" in data
 
         # Verify token
-        assert data["token_type"] == "bearer"
+        assert data["expires_in"] > 0
         assert len(data["access_token"]) > 0
 
     def test_login_wrong_password(self, client: TestClient):

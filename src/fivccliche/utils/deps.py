@@ -65,7 +65,7 @@ async def get_authenticated_user_async(
 ) -> IUser:
     """Get the user authenticator for dependency injection."""
     auth = default_auth
-    user = await auth.verify_access_token_async(
+    user = await auth.verify_credential_async(
         credentials.credentials,
         session=session,
     )
@@ -85,7 +85,7 @@ async def get_authenticated_user_optional_async(
     if not credentials:
         return None
 
-    return await default_auth.verify_access_token_async(
+    return await default_auth.verify_credential_async(
         credentials.credentials,
         session=session,
     )

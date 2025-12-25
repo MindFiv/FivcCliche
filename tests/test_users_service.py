@@ -205,6 +205,147 @@ class TestUserService:
         assert user is None
 
 
+class TestSSOAuthentication:
+    """Test cases for SSO authentication functionality."""
+
+    @pytest.fixture
+    def mock_cache(self):
+        """Create a mock cache for testing."""
+        return Mock()
+
+    @pytest.fixture
+    def mock_config(self):
+        """Create a mock config for testing."""
+        config_session = Mock()
+        config_session.get_value.side_effect = lambda key: {
+            "EXPIRATION_HOURS": "12",
+            "ALGORITHM": "HS256",
+            "SECRET_KEY": "test-secret-key",
+        }.get(key)
+
+        config = Mock()
+        config.get_session.return_value = config_session
+        return config
+
+    @pytest.fixture
+    def authenticator(self, mock_cache, mock_config):
+        """Create a UserAuthenticatorImpl instance with mocked dependencies."""
+        with patch("fivccliche.modules.users.services.query_component") as mock_query:
+
+            def query_side_effect(site, interface):
+                from fivcglue.interfaces.caches import ICache
+                from fivcglue.interfaces.configs import IConfig
+
+                if interface == ICache:
+                    return mock_cache
+                elif interface == IConfig:
+                    return mock_config
+                return None
+
+            mock_query.side_effect = query_side_effect
+            authenticator = UserAuthenticatorImpl(Mock())
+            return authenticator
+
+    async def test_create_sso_credential_new_user(
+        self, authenticator, mock_cache, session: AsyncSession
+    ):
+        """Test creating SSO credential for a new user."""
+        # Create SSO credential for a user that doesn't exist yet
+        credential = await authenticator.create_sso_credential_async(
+            username="ssouser",
+            attributes={"email": "sso@example.com"},
+            session=session,
+        )
+
+        # Verify credential was created
+        assert credential is not None
+        assert credential.access_token is not None
+        assert credential.expires_in > 0
+
+        # Verify user was created in database
+        user = await methods.get_user_async(session, username="ssouser")
+        assert user is not None
+        assert user.username == "ssouser"
+        assert user.email == "sso@example.com"
+        assert user.hashed_password is None  # SSO users don't have passwords
+
+    async def test_create_sso_credential_existing_user(
+        self, authenticator, mock_cache, session: AsyncSession
+    ):
+        """Test creating SSO credential for an existing user."""
+        # Create a user first
+        existing_user = await methods.create_user_async(
+            session,
+            username="existinguser",
+            email="existing@example.com",
+            password=None,
+        )
+
+        # Create SSO credential for existing user
+        credential = await authenticator.create_sso_credential_async(
+            username="existinguser",
+            attributes={"email": "different@example.com"},  # Different email in attributes
+            session=session,
+        )
+
+        # Verify credential was created
+        assert credential is not None
+        assert credential.access_token is not None
+        assert credential.expires_in > 0
+
+        # Verify user still exists with original email (not updated)
+        user = await methods.get_user_async(session, username="existinguser")
+        assert user is not None
+        assert user.uuid == existing_user.uuid
+        assert user.email == "existing@example.com"  # Email should not change
+
+    async def test_create_sso_credential_without_email(
+        self, authenticator, mock_cache, session: AsyncSession
+    ):
+        """Test creating SSO credential without email in attributes."""
+        # Create SSO credential without email
+        credential = await authenticator.create_sso_credential_async(
+            username="noemailuser",
+            attributes={},
+            session=session,
+        )
+
+        # Verify credential was created
+        assert credential is not None
+        assert credential.access_token is not None
+
+        # Verify user was created without email
+        user = await methods.get_user_async(session, username="noemailuser")
+        assert user is not None
+        assert user.username == "noemailuser"
+        assert user.email is None
+        assert user.hashed_password is None  # SSO users don't have passwords
+
+    async def test_create_sso_credential_without_session(
+        self, authenticator, mock_cache, session: AsyncSession
+    ):
+        """Test creating SSO credential without providing session."""
+        # Mock get_db_session_async to return our test session
+        with patch("fivccliche.modules.users.services.get_db_session_async") as mock_get_session:
+            mock_get_session.return_value.__aenter__.return_value = session
+            mock_get_session.return_value.__aexit__.return_value = None
+
+            # Create SSO credential without session parameter
+            credential = await authenticator.create_sso_credential_async(
+                username="sessionlessuser",
+                attributes={"email": "sessionless@example.com"},
+                session=None,
+            )
+
+            # Verify credential was created
+            assert credential is not None
+            assert credential.access_token is not None
+
+            # Verify user was created
+            user = await methods.get_user_async(session, username="sessionlessuser")
+            assert user is not None
+
+
 class TestUserAuthenticatorCaching:
     """Test cases for UserAuthenticatorImpl caching functionality."""
 
@@ -278,7 +419,8 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create a token for the user
-        token = authenticator._create_access_token(user.uuid)
+        credential = authenticator._create_access_token(user.uuid)
+        token = credential.access_token
 
         # Setup cache to return user data on first call
         user_info = {
@@ -291,7 +433,7 @@ class TestUserAuthenticatorCaching:
         mock_cache.get_value.return_value = json.dumps(user_info).encode("utf-8")
 
         # First verification - cache hit
-        result = await authenticator.verify_access_token_async(token, session=session)
+        result = await authenticator.verify_credential_async(token, session=session)
 
         # Verify cache was checked
         mock_cache.get_value.assert_called()
@@ -311,13 +453,14 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create a token for the user
-        token = authenticator._create_access_token(user.uuid)
+        credential = authenticator._create_access_token(user.uuid)
+        token = credential.access_token
 
         # Setup cache to return None (cache miss)
         mock_cache.get_value.return_value = None
 
         # Verify token - should query database
-        result = await authenticator.verify_access_token_async(token, session=session)
+        result = await authenticator.verify_credential_async(token, session=session)
 
         # Verify result is correct
         assert result is not None
@@ -339,13 +482,14 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create a token for the user
-        token = authenticator._create_access_token(user.uuid)
+        credential = authenticator._create_access_token(user.uuid)
+        token = credential.access_token
 
         # Setup cache to return None (cache miss)
         mock_cache.get_value.return_value = None
 
         # Verify token
-        result = await authenticator.verify_access_token_async(token, session=session)
+        result = await authenticator.verify_credential_async(token, session=session)
         assert result
 
         # Verify cache.set_value was called with correct parameters
@@ -374,13 +518,14 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create a token for the user
-        token = authenticator._create_access_token(user.uuid)
+        credential = authenticator._create_access_token(user.uuid)
+        token = credential.access_token
 
         # Setup cache to return None
         mock_cache.get_value.return_value = None
 
         # Verify token
-        await authenticator.verify_access_token_async(token, session=session)
+        await authenticator.verify_credential_async(token, session=session)
 
         # Verify cache.set_value was called with correct expiration
         call_args = mock_cache.set_value.call_args
@@ -398,7 +543,7 @@ class TestUserAuthenticatorCaching:
         mock_cache.get_value.return_value = None
 
         # Verify invalid token
-        result = await authenticator.verify_access_token_async(invalid_token, session=session)
+        result = await authenticator.verify_credential_async(invalid_token, session=session)
 
         # Should return None
         assert result is None
@@ -429,7 +574,7 @@ class TestUserAuthenticatorCaching:
         mock_cache.get_value.return_value = None
 
         # Verify expired token
-        result = await authenticator.verify_access_token_async(expired_token, session=session)
+        result = await authenticator.verify_credential_async(expired_token, session=session)
 
         # Should return None
         assert result is None
@@ -457,18 +602,20 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create tokens for both users
-        token1 = authenticator._create_access_token(user1.uuid)
-        token2 = authenticator._create_access_token(user2.uuid)
+        credential1 = authenticator._create_access_token(user1.uuid)
+        token1 = credential1.access_token
+        credential2 = authenticator._create_access_token(user2.uuid)
+        token2 = credential2.access_token
 
         # Setup cache to return None initially
         mock_cache.get_value.return_value = None
 
         # Verify token1
-        result1 = await authenticator.verify_access_token_async(token1, session=session)
+        result1 = await authenticator.verify_credential_async(token1, session=session)
         assert result1.uuid == user1.uuid
 
         # Verify token2
-        result2 = await authenticator.verify_access_token_async(token2, session=session)
+        result2 = await authenticator.verify_credential_async(token2, session=session)
         assert result2.uuid == user2.uuid
 
         # Verify cache was called with different keys
@@ -488,13 +635,14 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create a token for the user
-        token = authenticator._create_access_token(user.uuid)
+        credential = authenticator._create_access_token(user.uuid)
+        token = credential.access_token
 
         # Setup cache to return None
         mock_cache.get_value.return_value = None
 
         # Verify token
-        result = await authenticator.verify_access_token_async(token, session=session)
+        result = await authenticator.verify_credential_async(token, session=session)
 
         # Verify result is UserImpl instance
         assert isinstance(result, UserImpl)
@@ -514,7 +662,8 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create a token for the user
-        token = authenticator._create_access_token(user.uuid)
+        credential = authenticator._create_access_token(user.uuid)
+        token = credential.access_token
 
         # Setup cache to return None
         mock_cache.get_value.return_value = None
@@ -525,7 +674,7 @@ class TestUserAuthenticatorCaching:
             mock_get_session.return_value.__aenter__.return_value = session
             mock_get_session.return_value.__aexit__.return_value = None
 
-            result = await authenticator.verify_access_token_async(token, session=None)
+            result = await authenticator.verify_credential_async(token, session=None)
 
             # Verify result is correct
             assert result is not None

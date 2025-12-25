@@ -6,12 +6,14 @@ from fastapi import (
     status,
     responses,
 )
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.services.interfaces.auth import IUser
 from fivccliche.utils.deps import (
     get_cas_client_async,
     get_authenticated_user_optional_async,
-    # default_auth,
+    get_db_session_async,
+    default_auth,
 )
 
 
@@ -27,6 +29,7 @@ async def login(
     ticket: str | None = None,
     user: IUser = Depends(get_authenticated_user_optional_async),
     cas_client: CASClientBase = Depends(get_cas_client_async),
+    session: AsyncSession = Depends(get_db_session_async),
 ):
     # check if user is already logged in
     if user:
@@ -56,7 +59,19 @@ async def login(
 
     print("user: %s", user)
 
-    # TODO: create user if not exists
-    # return RedirectResponse(next)
-    # default_auth.create_access_token_async(user, response)
+    # Create or get user and generate credential
+    credential = await default_auth.create_sso_credential_async(
+        username=user,
+        attributes=attributes or {},
+        session=session,
+    )
+
+    if not credential:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create user credential",
+        )
+
+    # TODO: Set the access token in a cookie or return it in the response
+    # For now, just redirect to the next URL
     return responses.RedirectResponse(next)
