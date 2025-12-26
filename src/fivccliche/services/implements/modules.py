@@ -26,9 +26,15 @@ class ModuleSiteImpl(IModuleSite):
     def __init__(
         self,
         component_site: IComponentSite,
+        name: str = "FivcCliche",
+        description: str = "A production-ready, multi-user backend framework for AI agents.",
+        prefix: str = "",
         modules: list[str] | None = None,
         **kwargs,  # ignore additional arguments
     ):
+        self._name = name
+        self._description = description
+        self._prefix = prefix
         self._modules = {}
 
         for mod in modules or []:
@@ -51,8 +57,8 @@ class ModuleSiteImpl(IModuleSite):
 
     def create_application(self, **kwargs) -> FastAPI:
         app = FastAPI(
-            title="FivcCliche",
-            description="A production-ready, multi-user backend framework for AI agents.",
+            title=self._name,
+            description=self._description,
             version=__version__,
             lifespan=_lifespan,
         )
@@ -66,7 +72,7 @@ class ModuleSiteImpl(IModuleSite):
         )
 
         for module in self._modules.values():
-            module.mount(app, **kwargs)
+            module.mount(app, prefix=self._prefix)
 
         return app
 

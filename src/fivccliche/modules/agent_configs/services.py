@@ -411,7 +411,7 @@ class ModuleImpl(IModule):
 
     def mount(self, app: FastAPI, **kwargs) -> None:
         print("agent_configs module mounted.")
-        app.include_router(routers.router_embeddings, prefix="/configs")
-        app.include_router(routers.router_models, prefix="/configs")
-        app.include_router(routers.router_agents, prefix="/configs")
-        app.include_router(routers.router_tools, prefix="/configs")
+        app.include_router(routers.router_embeddings, **kwargs)
+        app.include_router(routers.router_models, **kwargs)
+        app.include_router(routers.router_agents, **kwargs)
+        app.include_router(routers.router_tools, **kwargs)

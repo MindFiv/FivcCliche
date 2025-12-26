@@ -337,5 +337,5 @@ class ModuleImpl(IModule):
 
     def mount(self, app: FastAPI, **kwargs) -> None:
         print("agent_chats module mounted.")
-        app.include_router(routers.router_chats, prefix="/chats")
-        app.include_router(routers.router_messages, prefix="/chats")
+        app.include_router(routers.router_chats, **kwargs)
+        app.include_router(routers.router_messages, **kwargs)

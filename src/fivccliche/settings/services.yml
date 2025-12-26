@@ -55,7 +55,7 @@
 
 - entries:
     - interface: fivccliche.services.interfaces.modules.IModuleSite
-
+  prefix: '/api'
   modules:
     - 'users'
     - 'agent_configs'

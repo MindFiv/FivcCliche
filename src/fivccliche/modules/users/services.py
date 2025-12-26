@@ -241,4 +241,4 @@ class ModuleImpl(IModule):
 
     def mount(self, app: FastAPI, **kwargs) -> None:
         print("users module mounted.")
-        app.include_router(router)
+        app.include_router(router, **kwargs)

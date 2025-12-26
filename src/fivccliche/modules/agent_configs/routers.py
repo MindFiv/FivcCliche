@@ -18,7 +18,7 @@ from ...services.interfaces.agent_configs import IUserConfigProvider
 # Embedding Config Endpoints
 # ============================================================================
 
-router_embeddings = APIRouter(prefix="/embeddings", tags=["embedding_configs"])
+router_embeddings = APIRouter(prefix="/configs/embeddings", tags=["embedding_configs"])
 
 
 @router_embeddings.post(
@@ -152,7 +152,7 @@ async def delete_embedding_config_async(
 # LLM Config Endpoints
 # ============================================================================
 
-router_models = APIRouter(prefix="/models", tags=["model_configs"])
+router_models = APIRouter(prefix="/configs/models", tags=["model_configs"])
 
 
 @router_models.post(
@@ -283,7 +283,7 @@ async def delete_llm_config_async(
 # Agent Config Endpoints
 # ============================================================================
 
-router_agents = APIRouter(prefix="/agents", tags=["agent_configs"])
+router_agents = APIRouter(prefix="/configs/agents", tags=["agent_configs"])
 
 
 @router_agents.post(
@@ -409,7 +409,7 @@ async def delete_agent_config_async(
 # Tool Config Endpoints
 # ============================================================================
 
-router_tools = APIRouter(prefix="/tools", tags=["tool_configs"])
+router_tools = APIRouter(prefix="/configs/tools", tags=["tool_configs"])
 
 
 @router_tools.post(

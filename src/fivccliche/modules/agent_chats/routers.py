@@ -69,7 +69,7 @@ class TaskStreamingGenerator:
 # Chat Session Endpoints
 # ============================================================================
 
-router_chats = APIRouter(tags=["chats"])
+router_chats = APIRouter(tags=["chats"], prefix="/chats")
 
 
 @router_chats.post(
@@ -207,7 +207,7 @@ async def delete_chat_async(
 # Chat Message Endpoints
 # ============================================================================
 
-router_messages = APIRouter(tags=["chat_messages"])
+router_messages = APIRouter(tags=["chat_messages"], prefix="/chats")
 
 
 @router_messages.get(

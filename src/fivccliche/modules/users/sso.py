@@ -1,4 +1,4 @@
-from cas import CASClientBase
+from cas import CASClient
 from fastapi import (
     APIRouter,
     Depends,
@@ -8,60 +8,54 @@ from fastapi import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fivccliche.services.interfaces.auth import IUser
+from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator
 from fivccliche.utils.deps import (
-    get_cas_client_async,
+    get_authenticator_async,
     get_authenticated_user_optional_async,
     get_db_session_async,
-    default_auth,
+    get_config_async,
+    configs,
 )
 
-
-router = APIRouter(prefix="/sso/ctrip", tags=["sso-ctrip"])
+router = APIRouter(prefix="/sso", tags=["sso"])
 
 
 @router.get(
     "/login",
-    summary="Login with Ctrip SSO.",
+    summary="Login with SSO.",
 )
 async def login(
     next: str | None = None,  # noqa
     ticket: str | None = None,
     user: IUser = Depends(get_authenticated_user_optional_async),
-    cas_client: CASClientBase = Depends(get_cas_client_async),
+    auth: IUserAuthenticator = Depends(get_authenticator_async),
+    config: configs.IConfig = Depends(get_config_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
     # check if user is already logged in
     if user:
         return responses.RedirectResponse(next)
 
-    # next = request.args.get('next')
-    # ticket = request.args.get('ticket')
+    config_sess = config.get_session("cas")
+    cas_client = CASClient(
+        version=config_sess.get_value("VERSION"),
+        service_url=config_sess.get_value("SERVICE_URL"),
+        server_url=config_sess.get_value("SERVER_URL"),
+        verify_ssl_certificate=bool(config_sess.get_value("VERIFY_SSL_CERTIFICATE")),
+    )
     if not ticket:
         return responses.RedirectResponse(cas_client.get_login_url())
 
-    # There is a ticket, the request come from CAS as callback.
-    # need call `verify_ticket()` to validate ticket and get user profile.
-    print("ticket: %s", ticket)
-    print("next: %s", next)
-
-    user, attributes, pgtiou = cas_client.verify_ticket(ticket)
-
-    print(
-        "CAS verify ticket response: user: %s, attributes: %s, pgtiou: %s", user, attributes, pgtiou
-    )
-
-    if not user:
+    username, attributes, _ = cas_client.verify_ticket(ticket)
+    if not username:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid ticket",
         )
 
-    print("user: %s", user)
-
     # Create or get user and generate credential
-    credential = await default_auth.create_sso_credential_async(
-        username=user,
+    credential = await auth.create_sso_credential_async(
+        username=username,
         attributes=attributes or {},
         session=session,
     )

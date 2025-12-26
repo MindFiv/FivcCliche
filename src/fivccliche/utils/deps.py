@@ -1,7 +1,6 @@
 from typing import cast
 from collections.abc import AsyncGenerator
 
-from cas import CASClient, CASClientBase
 from fastapi import status, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fivcglue import query_component, IComponentSite, LazyValue
@@ -38,17 +37,6 @@ default_chat_provider: LazyValue[IUserChatProvider] = LazyValue(
 )
 
 
-async def get_cas_client_async() -> CASClientBase:
-    """Get the CAS client for dependency injection."""
-    sess = default_config.get_session("cas")
-    return CASClient(
-        version=sess.get_value("VERSION"),
-        service_url=sess.get_value("SERVICE_URL"),
-        server_url=sess.get_value("SERVER_URL"),
-        verify_ssl_certificate=bool(sess.get_value("VERIFY_SSL_CERTIFICATE")),
-    )
-
-
 async def get_db_session_async() -> AsyncGenerator[AsyncSession, None]:
     """Get an async database session for dependency injection."""
     db = default_db
@@ -59,12 +47,17 @@ async def get_db_session_async() -> AsyncGenerator[AsyncSession, None]:
         await async_session.close()
 
 
+async def get_authenticator_async() -> IUserAuthenticator:
+    """Get the user authenticator for dependency injection."""
+    return default_auth()
+
+
 async def get_authenticated_user_async(
     credentials: HTTPAuthorizationCredentials = Depends(default_security),
     session: AsyncSession = Depends(get_db_session_async),
+    auth: IUserAuthenticator = Depends(get_authenticator_async),
 ) -> IUser:
     """Get the user authenticator for dependency injection."""
-    auth = default_auth
     user = await auth.verify_credential_async(
         credentials.credentials,
         session=session,
@@ -101,6 +94,11 @@ async def get_admin_user_async(
             detail="Not a super user",
         )
     return user
+
+
+async def get_config_async() -> configs.IConfig:
+    """Get the config for dependency injection."""
+    return default_config()
 
 
 async def get_config_provider_async() -> IUserConfigProvider:
