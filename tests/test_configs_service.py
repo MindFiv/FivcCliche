@@ -131,6 +131,7 @@ async def session():
                     id VARCHAR NOT NULL,
                     description VARCHAR,
                     model_id VARCHAR NOT NULL,
+                    tools_ids JSON,
                     system_prompt VARCHAR,
                     user_uuid VARCHAR,
                     PRIMARY KEY (uuid),

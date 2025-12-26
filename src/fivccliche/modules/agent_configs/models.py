@@ -207,6 +207,11 @@ class UserAgent(SQLModel, table=True):
         foreign_key="user_llm.id",
         description="LLM config ID.",
     )
+    tools_ids: list[str] | None = Field(
+        sa_type=JSON,
+        default=None,
+        description="List of tool config IDs.",
+    )
     system_prompt: str | None = Field(
         default=None,
         max_length=1024,
@@ -224,5 +229,6 @@ class UserAgent(SQLModel, table=True):
             id=self.id,
             description=self.description,
             model_id=self.model_id,
+            tool_ids=self.tools_ids,
             system_prompt=self.system_prompt,
         )
