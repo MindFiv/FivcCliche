@@ -83,6 +83,9 @@ class ModuleSiteImpl(IModuleSite):
         port: int = 8000,
         **kwargs,  # ignore additional arguments
     ) -> None:
+        from fastapi_cdn_host import patch_docs
         from uvicorn import run as uvicorn_run
 
+        # patch docs
+        patch_docs(app)
         uvicorn_run(app, host=host, port=port)
