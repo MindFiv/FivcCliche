@@ -74,7 +74,7 @@ def run(
         if verbose:
             console.print("[cyan]Verbose mode enabled[/cyan]")
 
-        modules.run_application(app, host=host, port=port, reload=reload)
+        modules.run_application(app, host=host, port=port)
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Server stopped by user[/yellow]")

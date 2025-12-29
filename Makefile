@@ -92,7 +92,7 @@ test-watch:
 # Development Commands
 serve:
 	@echo "🚀 Starting development server..."
-	$(VENV_BIN)/uvicorn src.fivccliche.cli:app --reload --host 0.0.0.0 --port 8000
+	$(VENV_BIN)/uvicorn fivccliche.cli:app --reload --host 0.0.0.0 --port 8000
 	@echo "✅ Server stopped"
 
 clean:

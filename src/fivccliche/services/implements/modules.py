@@ -81,9 +81,8 @@ class ModuleSiteImpl(IModuleSite):
         app: FastAPI,
         host: str = "0.0.0.0",
         port: int = 8000,
-        reload: bool = True,
         **kwargs,  # ignore additional arguments
     ) -> None:
         from uvicorn import run as uvicorn_run
 
-        uvicorn_run(app, host=host, port=port, reload=reload)
+        uvicorn_run(app, host=host, port=port)
