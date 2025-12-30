@@ -64,6 +64,7 @@ class UserEmbedding(SQLModel, table=True):
             api_key=self.api_key,
             base_url=self.base_url,
             dimension=self.dimension,
+            user_uuid=self.user_uuid,
         )
 
 
@@ -128,6 +129,7 @@ class UserLLM(SQLModel, table=True):
             base_url=self.base_url,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            user_uuid=self.user_uuid,
         )
 
 
@@ -182,6 +184,7 @@ class UserTool(SQLModel, table=True):
             args=self.args,
             env=self.env,
             url=self.url,
+            user_uuid=self.user_uuid,
         )
 
 
@@ -231,4 +234,5 @@ class UserAgent(SQLModel, table=True):
             model_id=self.model_id,
             tool_ids=self.tools_ids,
             system_prompt=self.system_prompt,
+            user_uuid=self.user_uuid,
         )

@@ -177,6 +177,7 @@ class TestEmbeddingConfigAPI:
         assert data["id"] == "embedding-1"
         assert data["model"] == "text-embedding-3-small"
         assert data["dimension"] == 1536
+        assert "user_uuid" in data
 
     def test_list_embedding_configs(self, client: TestClient, auth_token: str):
         """Test listing embedding configs."""
@@ -247,6 +248,7 @@ class TestEmbeddingConfigAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == "embedding-get"
+        assert "user_uuid" in data
 
     def test_get_embedding_config_not_found(self, client: TestClient, auth_token: str):
         """Test getting non-existent embedding config."""
@@ -352,6 +354,7 @@ class TestLLMConfigAPI:
         assert data["id"] == "llm-1"
         assert data["model"] == "gpt-4"
         assert data["temperature"] == 0.7
+        assert "user_uuid" in data
 
     def test_list_llm_configs(self, client: TestClient, auth_token: str):
         """Test listing LLM configs."""
@@ -493,6 +496,7 @@ class TestAgentConfigAPI:
         data = response.json()
         assert data["id"] == "agent-1"
         assert data["model_id"] == "model123"
+        assert "user_uuid" in data
 
     def test_list_agent_configs(self, client: TestClient, auth_token: str):
         """Test listing agent configs."""
@@ -534,6 +538,7 @@ class TestAgentConfigAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == "agent-get"
+        assert "user_uuid" in data
 
     def test_get_agent_config_not_found(self, client: TestClient, auth_token: str):
         """Test getting non-existent agent config."""
@@ -812,6 +817,7 @@ class TestToolConfigAPI:
         assert data["command"] == "python"
         assert data["args"] == ["script.py"]
         assert "uuid" in data
+        assert "user_uuid" in data
 
     def test_list_tool_configs(self, client: TestClient, auth_token: str):
         """Test listing tool configs."""
@@ -880,6 +886,7 @@ class TestToolConfigAPI:
         data = response.json()
         assert data["id"] == "tool-get"
         assert data["transport"] == "sse"
+        assert "user_uuid" in data
 
     def test_get_tool_config_not_found(self, client: TestClient, auth_token: str):
         """Test getting a non-existent tool config."""
