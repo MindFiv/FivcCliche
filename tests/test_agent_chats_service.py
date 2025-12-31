@@ -965,3 +965,96 @@ class TestUserChatRepositoryImpl:
 
         message = asyncio.run(verify())
         assert message is None
+
+    async def test_update_agent_run_with_tool_calls_objects(
+        self, repository: "UserChatRepositoryImpl", test_user, test_chat: UserChat
+    ):
+        """Test creating an agent run with AgentRunToolCall objects (JSON serialization)."""
+        from fivcplayground.agents.types import AgentRun, AgentRunToolCall
+
+        # Create tool calls as AgentRunToolCall objects (not dicts)
+        tool_calls = {
+            "0": AgentRunToolCall(
+                id="call-1",
+                tool_id="get_weather",
+                tool_input={"location": "San Francisco"},
+            ),
+            "1": AgentRunToolCall(
+                id="call-2",
+                tool_id="get_time",
+                tool_input={},
+            ),
+        }
+
+        agent_run = AgentRun(
+            id="run-with-tools",
+            agent_id="agent1",
+            status="completed",
+            query={"text": "What's the weather?"},
+            reply={"text": "It's sunny"},
+            tool_calls=tool_calls,
+        )
+
+        # This should not raise a JSON serialization error
+        await repository.update_agent_run_async(test_chat.uuid, agent_run)
+
+        # Verify it was created and tool_calls were serialized
+        message = await methods.get_chat_message_async(
+            repository.session, "run-with-tools", test_chat.uuid
+        )
+        assert message is not None
+        assert message.uuid == "run-with-tools"
+        assert message.tool_calls is not None
+        # Tool calls should be serialized as dicts
+        assert isinstance(message.tool_calls, dict)
+        assert "0" in message.tool_calls
+        assert "1" in message.tool_calls
+        assert message.tool_calls["0"]["tool_id"] == "get_weather"
+        assert message.tool_calls["1"]["tool_id"] == "get_time"
+
+    async def test_update_agent_run_with_tool_calls_objects_update_existing(
+        self, repository: "UserChatRepositoryImpl", test_user, test_chat: UserChat
+    ):
+        """Test updating an agent run with AgentRunToolCall objects (JSON serialization)."""
+        from fivcplayground.agents.types import AgentRun, AgentRunToolCall
+
+        # Create initial message
+        message = UserChatMessage(
+            uuid="run-update-tools",
+            chat_uuid=test_chat.uuid,
+            status="pending",
+            query={"text": "Initial query"},
+        )
+        repository.session.add(message)
+        await repository.session.commit()
+
+        # Update with tool calls as AgentRunToolCall objects
+        tool_calls = {
+            "0": AgentRunToolCall(
+                id="call-1",
+                tool_id="search",
+                tool_input={"query": "test"},
+            ),
+        }
+
+        agent_run = AgentRun(
+            id="run-update-tools",
+            agent_id="agent1",
+            status="completed",
+            query={"text": "Updated query"},
+            reply={"text": "Updated reply"},
+            tool_calls=tool_calls,
+        )
+
+        # This should not raise a JSON serialization error
+        await repository.update_agent_run_async(test_chat.uuid, agent_run)
+
+        # Verify it was updated and tool_calls were serialized
+        updated_message = await methods.get_chat_message_async(
+            repository.session, "run-update-tools", test_chat.uuid
+        )
+        assert updated_message is not None
+        assert updated_message.tool_calls is not None
+        assert isinstance(updated_message.tool_calls, dict)
+        assert "0" in updated_message.tool_calls
+        assert updated_message.tool_calls["0"]["tool_id"] == "search"

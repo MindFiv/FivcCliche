@@ -156,6 +156,47 @@ class UserChatRepositoryImpl(UserChatRepository):
     # Async methods for agent runs (chat messages)
     # ========================================================================
 
+    @staticmethod
+    def _serialize_tool_calls(tool_calls) -> dict | None:
+        """Convert tool_calls to JSON-serializable format.
+
+        Args:
+            tool_calls: Tool calls data (can be dict, list, or objects with model_dump)
+
+        Returns:
+            JSON-serializable dict or None
+        """
+        if tool_calls is None:
+            return None
+
+        # If it's a dict, convert values if they have model_dump
+        if isinstance(tool_calls, dict):
+            result = {}
+            for key, value in tool_calls.items():
+                if hasattr(value, "model_dump"):
+                    result[key] = value.model_dump()
+                else:
+                    result[key] = value
+            return result
+
+        # If it's a list, convert each item if needed
+        if isinstance(tool_calls, list):
+            result = {}
+            for i, item in enumerate(tool_calls):
+                key = str(i)
+                if hasattr(item, "model_dump"):
+                    result[key] = item.model_dump()
+                else:
+                    result[key] = item
+            return result
+
+        # If it has model_dump, use it
+        if hasattr(tool_calls, "model_dump"):
+            return tool_calls.model_dump()
+
+        # Otherwise return as-is (will fail at DB level if not serializable)
+        return tool_calls
+
     async def update_agent_run_async(self, session_id: str, agent_run: AgentRun) -> None:
         """Create or update an agent run (chat message).
 
@@ -195,7 +236,8 @@ class UserChatRepositoryImpl(UserChatRepository):
                     else agent_run.reply
                 )
             if agent_run.tool_calls is not None:
-                existing.tool_calls = agent_run.tool_calls
+                # Convert AgentRunToolCall objects to dicts if needed
+                existing.tool_calls = self._serialize_tool_calls(agent_run.tool_calls)
             if agent_run.completed_at is not None:
                 existing.completed_at = agent_run.completed_at
             self.session.add(existing)
@@ -214,7 +256,8 @@ class UserChatRepositoryImpl(UserChatRepository):
                 if hasattr(agent_run.reply, "model_dump")
                 else agent_run.reply
             )
-            tool_calls_data = agent_run.tool_calls or {}
+            # Convert AgentRunToolCall objects to dicts if needed
+            tool_calls_data = self._serialize_tool_calls(agent_run.tool_calls)
 
             message = models.UserChatMessage(
                 uuid=agent_run.id,
