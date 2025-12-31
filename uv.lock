@@ -1004,7 +1004,7 @@ wheels = [
 
 [[package]]
 name = "fivccliche"
-version = "0.1.7"
+version = "0.1.10"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -1049,7 +1049,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.104.0" },
     { name = "fastapi-cdn-host", specifier = ">=0.9.3" },
     { name = "fivcglue", specifier = ">=0.1.5" },
-    { name = "fivcplayground", specifier = ">=0.1.9" },
+    { name = "fivcplayground", specifier = ">=0.1.12" },
     { name = "greenlet", specifier = ">=3.2.4" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.25.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.5.0" },
@@ -1085,7 +1085,7 @@ wheels = [
 
 [[package]]
 name = "fivcplayground"
-version = "0.1.9"
+version = "0.1.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "chromadb" },
@@ -1108,9 +1108,9 @@ dependencies = [
     { name = "streamlit" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b8/c4/4e141475f225fd0ad3a2ad8138c3abc3ced6898c85eead66899f5ebf04e5/fivcplayground-0.1.9.tar.gz", hash = "sha256:702bd639c628a4f8025bd03b54f22f49871f37819d028565a6f3d6243b83aa67", size = 102918 }
+sdist = { url = "https://files.pythonhosted.org/packages/82/55/19207749832c63d5b886e7997d6f8827d93a44994751ea7166760fc5185a/fivcplayground-0.1.12.tar.gz", hash = "sha256:6cb89f608dadfcd76d5d34df335fef70f04b6377b70432ff494c5e282376a0c2", size = 104403 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/fb/be809a4273d4e195ed10f7c02a7afe99e6da64343c5e7845b00c16efa173/fivcplayground-0.1.9-py3-none-any.whl", hash = "sha256:a6eb14265ecc76b99f8dd787578b15bf3314e8752a963f0ab08946c4d2f2cfce", size = 82738 },
+    { url = "https://files.pythonhosted.org/packages/fe/32/9f35088073684f9945b0225d54ccd9c7318816ee9f4b5497bd22cf13491b/fivcplayground-0.1.12-py3-none-any.whl", hash = "sha256:d0c92deb89675c60dc3b6acb6e837e00a7f49953b23bd232b720f52cfb43d7bf", size = 81491 },
 ]
 
 [[package]]

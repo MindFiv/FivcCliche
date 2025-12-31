@@ -1,4 +1,6 @@
 import asyncio
+import uuid
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -44,22 +46,22 @@ class TaskStreamingGenerator:
             ev, ev_run = await self.task_queue.get()
             if ev == AgentRunEvent.START:
                 data = ev_run.model_dump(include={"id", "agent_id", "started_at"})
-                data.update({"event": "start"})
+                data = {"event": "start", "info": data}
                 yield f"data: {data}\n\n"
 
             elif ev == AgentRunEvent.FINISH:
-                data = ev_run.model_dump(include={"id", "agent_id", "completed_at"})
-                data.update({"event": "finish"})
+                data = ev_run.model_dump(exclude={"streaming_text"})
+                data = {"event": "finish", "info": data}
                 yield f"data: {data}\n\n"
 
             elif ev == AgentRunEvent.STREAM:
                 data = ev_run.model_dump(include={"id", "agent_id", "streaming_text"})
-                data.update({"event": "stream"})
+                data = {"event": "stream", "info": data}
                 yield f"data: {data}\n\n"
 
             elif ev == AgentRunEvent.TOOL:
                 data = ev_run.model_dump(include={"id", "agent_id", "tool_calls"})
-                data.update({"event": "tool"})
+                data = {"event": "tool", "info": data}
                 yield f"data: {data}\n\n"
 
             self.task_queue.task_done()
@@ -104,16 +106,24 @@ async def query_chat_async(
     agent_id = chat.agent_id if chat else chat_query.agent_id
     agent = await create_agent_async(
         model_backend=config_provider.get_model_backend(),
-        model_config_repository=config_provider.get_model_repository(user_uuid=user.uuid),
+        model_config_repository=config_provider.get_model_repository(
+            user_uuid=user.uuid, session=session
+        ),
         agent_backend=config_provider.get_agent_backend(),
-        agent_config_repository=config_provider.get_agent_repository(user_uuid=user.uuid),
+        agent_config_repository=config_provider.get_agent_repository(
+            user_uuid=user.uuid, session=session
+        ),
         agent_config_id=agent_id,
     )
     agent_tools = await create_tool_retriever_async(
         tool_backend=config_provider.get_tool_backend(),
-        tool_repository=config_provider.get_tool_repository(user_uuid=user.uuid),
+        tool_config_repository=config_provider.get_tool_repository(
+            user_uuid=user.uuid, session=session
+        ),
         embedding_backend=config_provider.get_embedding_backend(),
-        embedding_repository=config_provider.get_embedding_repository(user_uuid=user.uuid),
+        embedding_config_repository=config_provider.get_embedding_repository(
+            user_uuid=user.uuid, session=session
+        ),
         space_id=user.uuid,
     )
     task_queue = asyncio.Queue()
@@ -121,11 +131,15 @@ async def query_chat_async(
         agent.run_async(
             query=chat_query.query,
             tool_retriever=agent_tools,
-            agent_run_repository=chat_provider.get_chat_repository(user_uuid=user.uuid),
-            callback_queue=lambda ev, run: task_queue.put_nowait((ev, run)),
+            agent_run_repository=chat_provider.get_chat_repository(
+                user_uuid=user.uuid, session=session
+            ),
+            agent_run_session_id=chat.uuid if chat else str(uuid.uuid4()),
+            event_callback=lambda ev, run: task_queue.put_nowait((ev, run)),
         )
     )
-    return responses.StreamingResponse(TaskStreamingGenerator(task, task_queue))
+    task_streamer = TaskStreamingGenerator(task, task_queue)
+    return responses.StreamingResponse(task_streamer())
 
 
 @router_chats.get(
