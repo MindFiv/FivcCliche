@@ -1,10 +1,12 @@
 """Chat service module with functions for chat operations."""
 
+from datetime import datetime
+
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from . import models
+from . import models, schemas
 
 
 async def create_chat_async(
@@ -139,6 +141,75 @@ async def get_chat_message_async(
     )
     result = await session.execute(statement)
     return result.scalars().first()
+
+
+async def create_chat_message_async(
+    session: AsyncSession,
+    chat_uuid: str,
+    query: dict,
+    reply: dict | None = None,
+    tool_calls: dict | None = None,
+    message_uuid: str | None = None,
+    **kwargs,  # ignore additional arguments
+) -> models.UserChatMessage:
+    """Create a new chat message.
+
+    Args:
+        session: AsyncSession for database operations
+        chat_uuid: Chat UUID (required)
+        query: Query data (required)
+        reply: Optional reply data
+        tool_calls: Optional tool calls data
+        message_uuid: Optional message UUID (will be auto-generated if not provided)
+        **kwargs: Additional arguments (ignored)
+
+    Returns:
+        Created UserChatMessage instance
+
+    Raises:
+        ValueError: If chat_uuid is missing
+    """
+    if not chat_uuid:
+        raise ValueError("Chat UUID is required to create a message")
+
+    message = models.UserChatMessage(
+        uuid=message_uuid,  # Will use auto-generated UUID if None
+        chat_uuid=chat_uuid,
+        query=query,
+        reply=reply,
+        tool_calls=tool_calls,
+    )
+    session.add(message)
+    await session.commit()
+    await session.refresh(message)
+    return message
+
+
+async def update_chat_message_async(
+    session: AsyncSession,
+    message: models.UserChatMessage,
+    status: schemas.AgentRunStatus | None = None,
+    reply: dict | None = None,
+    query: dict | None = None,
+    tool_calls: dict | None = None,
+    completed_at: datetime | None = None,
+    **kwargs,  # ignore additional arguments
+) -> models.UserChatMessage:
+    """Update a chat message."""
+    if status is not None:
+        message.status = status
+    if reply is not None:
+        message.reply = reply
+    if query is not None:
+        message.query = query
+    if tool_calls is not None:
+        message.tool_calls = tool_calls
+    if completed_at is not None:
+        message.completed_at = completed_at
+    session.add(message)
+    await session.commit()
+    await session.refresh(message)
+    return message
 
 
 async def delete_chat_message_async(

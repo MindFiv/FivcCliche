@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio.session import AsyncSession
 from fivccliche.services.interfaces.modules import IModule
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider, UserChatRepository
 
-from . import methods, models, routers
+from . import methods, routers
 
 
 class UserChatRepositoryImpl(UserChatRepository):
@@ -152,51 +152,6 @@ class UserChatRepositoryImpl(UserChatRepository):
         if chat:
             await methods.delete_chat_async(self.session, chat)
 
-    # ========================================================================
-    # Async methods for agent runs (chat messages)
-    # ========================================================================
-
-    @staticmethod
-    def _serialize_tool_calls(tool_calls) -> dict | None:
-        """Convert tool_calls to JSON-serializable format.
-
-        Args:
-            tool_calls: Tool calls data (can be dict, list, or objects with model_dump)
-
-        Returns:
-            JSON-serializable dict or None
-        """
-        if tool_calls is None:
-            return None
-
-        # If it's a dict, convert values if they have model_dump
-        if isinstance(tool_calls, dict):
-            result = {}
-            for key, value in tool_calls.items():
-                if hasattr(value, "model_dump"):
-                    result[key] = value.model_dump()
-                else:
-                    result[key] = value
-            return result
-
-        # If it's a list, convert each item if needed
-        if isinstance(tool_calls, list):
-            result = {}
-            for i, item in enumerate(tool_calls):
-                key = str(i)
-                if hasattr(item, "model_dump"):
-                    result[key] = item.model_dump()
-                else:
-                    result[key] = item
-            return result
-
-        # If it has model_dump, use it
-        if hasattr(tool_calls, "model_dump"):
-            return tool_calls.model_dump()
-
-        # Otherwise return as-is (will fail at DB level if not serializable)
-        return tool_calls
-
     async def update_agent_run_async(self, session_id: str, agent_run: AgentRun) -> None:
         """Create or update an agent run (chat message).
 
@@ -205,7 +160,7 @@ class UserChatRepositoryImpl(UserChatRepository):
             agent_run: AgentRun to create or update
 
         Raises:
-            ValueError: If session or user_uuid is not set
+            ValueError: If session or user_uuid is not set, or if chat not found
         """
         if not self.session or not self.user_uuid:
             raise ValueError("Session and user_uuid are required for update_agent_run operation")
@@ -217,60 +172,23 @@ class UserChatRepositoryImpl(UserChatRepository):
 
         # Check if message exists
         existing = await methods.get_chat_message_async(self.session, agent_run.id, session_id)
-        if existing:
-            # Update existing message
-            if agent_run.status is not None:
-                existing.status = agent_run.status
-            if agent_run.query is not None:
-                # Convert AgentRunContent to dict if needed
-                existing.query = (
-                    agent_run.query.model_dump()
-                    if hasattr(agent_run.query, "model_dump")
-                    else agent_run.query
-                )
-            if agent_run.reply is not None:
-                # Convert AgentRunContent to dict if needed
-                existing.reply = (
-                    agent_run.reply.model_dump()
-                    if hasattr(agent_run.reply, "model_dump")
-                    else agent_run.reply
-                )
-            if agent_run.tool_calls is not None:
-                # Convert AgentRunToolCall objects to dicts if needed
-                existing.tool_calls = self._serialize_tool_calls(agent_run.tool_calls)
-            if agent_run.completed_at is not None:
-                existing.completed_at = agent_run.completed_at
-            self.session.add(existing)
-            await self.session.commit()
-            await self.session.refresh(existing)
-        else:
-            # Create new message
-            # Convert AgentRunContent objects to dicts if needed
-            query_data = (
-                agent_run.query.model_dump()
-                if hasattr(agent_run.query, "model_dump")
-                else agent_run.query
-            )
-            reply_data = (
-                agent_run.reply.model_dump()
-                if hasattr(agent_run.reply, "model_dump")
-                else agent_run.reply
-            )
-            # Convert AgentRunToolCall objects to dicts if needed
-            tool_calls_data = self._serialize_tool_calls(agent_run.tool_calls)
-
-            message = models.UserChatMessage(
-                uuid=agent_run.id,
+        if not existing:
+            existing = await methods.create_chat_message_async(
+                self.session,
                 chat_uuid=session_id,
-                status=agent_run.status or "pending",
-                query=query_data,
-                reply=reply_data,
-                tool_calls=tool_calls_data,
-                completed_at=agent_run.completed_at,
+                query=agent_run.query.model_dump() if agent_run.query else None,
+                message_uuid=agent_run.id,
             )
-            self.session.add(message)
-            await self.session.commit()
-            await self.session.refresh(message)
+
+        await methods.update_chat_message_async(
+            self.session,
+            existing,
+            status=agent_run.status,
+            query=agent_run.query.model_dump(mode="json") if agent_run.query else None,
+            reply=agent_run.reply.model_dump(mode="json") if agent_run.reply else None,
+            tool_calls={k: v.model_dump(mode="json") for k, v in agent_run.tool_calls.items()},
+            completed_at=agent_run.completed_at,
+        )
 
     async def get_agent_run_async(self, session_id: str, run_id: str) -> AgentRun | None:
         """Retrieve an agent run (chat message) by ID.

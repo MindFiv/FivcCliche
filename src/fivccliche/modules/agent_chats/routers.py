@@ -39,32 +39,50 @@ class TaskStreamingGenerator:
         self.task_queue = task_queue
 
     async def __call__(self, *args, **kwargs):
-        while True:
-            if self.task.done() and self.task_queue.empty():
-                break
+        try:
+            while True:
+                # Check if task is done and queue is empty
+                if self.task.done() and self.task_queue.empty():
+                    # Make sure to get any exception from the task
+                    self.task.result()
+                    break
 
-            ev, ev_run = await self.task_queue.get()
-            if ev == AgentRunEvent.START:
-                data = ev_run.model_dump(include={"id", "agent_id", "started_at"})
-                data = {"event": "start", "info": data}
-                yield f"data: {data}\n\n"
+                # Try to get an event from the queue with timeout
+                try:
+                    ev, ev_run = await asyncio.wait_for(self.task_queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    # No event available, continue checking
+                    continue
 
-            elif ev == AgentRunEvent.FINISH:
-                data = ev_run.model_dump(exclude={"streaming_text"})
-                data = {"event": "finish", "info": data}
-                yield f"data: {data}\n\n"
+                # Process the event
+                if ev == AgentRunEvent.START:
+                    data = ev_run.model_dump(mode="json", include={"id", "agent_id", "started_at"})
+                    data = {"event": "start", "info": data}
+                    yield f"data: {data}\n\n"
 
-            elif ev == AgentRunEvent.STREAM:
-                data = ev_run.model_dump(include={"id", "agent_id", "streaming_text"})
-                data = {"event": "stream", "info": data}
-                yield f"data: {data}\n\n"
+                elif ev == AgentRunEvent.FINISH:
+                    data = ev_run.model_dump(mode="json", exclude={"streaming_text"})
+                    data = {"event": "finish", "info": data}
+                    yield f"data: {data}\n\n"
 
-            elif ev == AgentRunEvent.TOOL:
-                data = ev_run.model_dump(include={"id", "agent_id", "tool_calls"})
-                data = {"event": "tool", "info": data}
-                yield f"data: {data}\n\n"
+                elif ev == AgentRunEvent.STREAM:
+                    data = ev_run.model_dump(
+                        mode="json", include={"id", "agent_id", "streaming_text"}
+                    )
+                    data = {"event": "stream", "info": data}
+                    yield f"data: {data}\n\n"
 
-            self.task_queue.task_done()
+                elif ev == AgentRunEvent.TOOL:
+                    data = ev_run.model_dump(mode="json", include={"id", "agent_id", "tool_calls"})
+                    data = {"event": "tool", "info": data}
+                    yield f"data: {data}\n\n"
+
+                self.task_queue.task_done()
+
+        except Exception as e:
+            # Ensure any exception is properly handled
+            data = {"event": "error", "info": {"message": str(e)}}
+            yield f"data: {data}\n\n"
 
 
 # ============================================================================
