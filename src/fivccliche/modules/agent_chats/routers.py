@@ -9,8 +9,8 @@ from fastapi import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fivcplayground.agents import create_agent, AgentRunEvent
-from fivcplayground.tools import create_tool_retriever
+from fivcplayground.agents import create_agent_async, AgentRunEvent
+from fivcplayground.tools import create_tool_retriever_async
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.utils.deps import (
@@ -102,14 +102,14 @@ async def query_chat_async(
         else None
     )
     agent_id = chat.agent_id if chat else chat_query.agent_id
-    agent = create_agent(
+    agent = await create_agent_async(
         model_backend=config_provider.get_model_backend(),
         model_config_repository=config_provider.get_model_repository(user_uuid=user.uuid),
         agent_backend=config_provider.get_agent_backend(),
         agent_config_repository=config_provider.get_agent_repository(user_uuid=user.uuid),
         agent_config_id=agent_id,
     )
-    agent_tools = create_tool_retriever(
+    agent_tools = await create_tool_retriever_async(
         tool_backend=config_provider.get_tool_backend(),
         tool_repository=config_provider.get_tool_repository(user_uuid=user.uuid),
         embedding_backend=config_provider.get_embedding_backend(),
