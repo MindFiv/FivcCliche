@@ -1,4 +1,5 @@
 import asyncio
+import json
 import uuid
 
 from fastapi import (
@@ -34,9 +35,11 @@ class TaskStreamingGenerator:
         self,
         task: asyncio.Task,
         task_queue: asyncio.Queue,
+        chat_uuid: str | None = None,
     ):
         self.task = task
         self.task_queue = task_queue
+        self.chat_uuid = chat_uuid
 
     async def __call__(self, *args, **kwargs):
         try:
@@ -52,29 +55,36 @@ class TaskStreamingGenerator:
                     ev, ev_run = await asyncio.wait_for(self.task_queue.get(), timeout=0.5)
                 except asyncio.TimeoutError:
                     # No event available, continue checking
+                    if not self.task.done():
+                        print("⏱️  [QUEUE] Timeout waiting for event, task still running")
                     continue
 
                 # Process the event
                 if ev == AgentRunEvent.START:
                     data = ev_run.model_dump(mode="json", include={"id", "agent_id", "started_at"})
+                    # Add chat_uuid from the router context (for new chats)
+                    data.update({"chat_uuid": self.chat_uuid})
                     data = {"event": "start", "info": data}
-                    yield f"data: {data}\n\n"
+                    data_json = json.dumps(data)
+                    yield f"data: {data_json}\n\n"
 
                 elif ev == AgentRunEvent.FINISH:
                     data = ev_run.model_dump(mode="json", exclude={"streaming_text"})
                     data = {"event": "finish", "info": data}
-                    yield f"data: {data}\n\n"
+                    data_json = json.dumps(data)
+                    yield f"data: {data_json}\n\n"
 
                 elif ev == AgentRunEvent.STREAM:
-                    data = ev_run.model_dump(
-                        mode="json", include={"id", "agent_id", "streaming_text"}
-                    )
+                    data = ev_run.model_dump(mode="json", include={"id", "agent_id"})
+                    data.update({"streaming_text": ev_run.streaming_text})
                     data = {"event": "stream", "info": data}
+                    data = json.dumps(data)
                     yield f"data: {data}\n\n"
 
                 elif ev == AgentRunEvent.TOOL:
                     data = ev_run.model_dump(mode="json", include={"id", "agent_id", "tool_calls"})
                     data = {"event": "tool", "info": data}
+                    data = json.dumps(data)
                     yield f"data: {data}\n\n"
 
                 self.task_queue.task_done()
@@ -82,6 +92,7 @@ class TaskStreamingGenerator:
         except Exception as e:
             # Ensure any exception is properly handled
             data = {"event": "error", "info": {"message": str(e)}}
+            data = json.dumps(data)
             yield f"data: {data}\n\n"
 
 
@@ -122,6 +133,8 @@ async def query_chat_async(
         else None
     )
     agent_id = chat.agent_id if chat else chat_query.agent_id
+    print(f"🤖 [AGENT] Creating agent with ID: {agent_id}")
+
     agent = await create_agent_async(
         model_backend=config_provider.get_model_backend(),
         model_config_repository=config_provider.get_model_repository(
@@ -145,6 +158,12 @@ async def query_chat_async(
         space_id=user.uuid,
     )
     task_queue = asyncio.Queue()
+    chat_uuid = chat.uuid if chat else str(uuid.uuid4())
+
+    # Debug: Event callback wrapper
+    def _event_callback(ev, run):
+        task_queue.put_nowait((ev, run))
+
     task = asyncio.create_task(
         agent.run_async(
             query=chat_query.query,
@@ -152,11 +171,11 @@ async def query_chat_async(
             agent_run_repository=chat_provider.get_chat_repository(
                 user_uuid=user.uuid, session=session
             ),
-            agent_run_session_id=chat.uuid if chat else str(uuid.uuid4()),
-            event_callback=lambda ev, run: task_queue.put_nowait((ev, run)),
+            agent_run_session_id=chat_uuid,
+            event_callback=_event_callback,
         )
     )
-    task_streamer = TaskStreamingGenerator(task, task_queue)
+    task_streamer = TaskStreamingGenerator(task, task_queue, chat_uuid=chat_uuid)
     return responses.StreamingResponse(task_streamer())
 
 
