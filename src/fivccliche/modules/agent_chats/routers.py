@@ -28,34 +28,34 @@ from fivccliche.utils.schemas import PaginatedResponse
 from . import methods, schemas
 
 
-class TaskStreamingGenerator:
+class ChatStreamingGenerator:
     """Generator for streaming agent runs."""
 
     def __init__(
         self,
-        task: asyncio.Task,
-        task_queue: asyncio.Queue,
+        chat_task: asyncio.Task,
+        chat_queue: asyncio.Queue,
         chat_uuid: str | None = None,
     ):
-        self.task = task
-        self.task_queue = task_queue
+        self.chat_task = chat_task
+        self.chat_queue = chat_queue
         self.chat_uuid = chat_uuid
 
     async def __call__(self, *args, **kwargs):
         try:
             while True:
                 # Check if task is done and queue is empty
-                if self.task.done() and self.task_queue.empty():
+                if self.chat_task.done() and self.chat_queue.empty():
                     # Make sure to get any exception from the task
-                    self.task.result()
+                    self.chat_task.result()
                     break
 
                 # Try to get an event from the queue with timeout
                 try:
-                    ev, ev_run = await asyncio.wait_for(self.task_queue.get(), timeout=0.5)
+                    ev, ev_run = await asyncio.wait_for(self.chat_queue.get(), timeout=0.5)
                 except asyncio.TimeoutError:
                     # No event available, continue checking
-                    if not self.task.done():
+                    if not self.chat_task.done():
                         print("⏱️  [QUEUE] Timeout waiting for event, task still running")
                     continue
 
@@ -103,7 +103,7 @@ class TaskStreamingGenerator:
                     data = json.dumps(data)
                     yield f"data: {data}\n\n"
 
-                self.task_queue.task_done()
+                self.chat_queue.task_done()
 
         except Exception as e:
             # Ensure any exception is properly handled
@@ -173,14 +173,14 @@ async def query_chat_async(
         ),
         space_id=user.uuid,
     )
-    task_queue = asyncio.Queue()
+    chat_queue = asyncio.Queue()
     chat_uuid = chat.uuid if chat else str(uuid.uuid4())
 
     # Debug: Event callback wrapper
     def _event_callback(ev, run):
-        task_queue.put_nowait((ev, run))
+        chat_queue.put_nowait((ev, run))
 
-    task = asyncio.create_task(
+    chat_task = asyncio.create_task(
         agent.run_async(
             query=chat_query.query,
             tool_retriever=agent_tools,
@@ -191,8 +191,8 @@ async def query_chat_async(
             event_callback=_event_callback,
         )
     )
-    task_streamer = TaskStreamingGenerator(task, task_queue, chat_uuid=chat_uuid)
-    return responses.StreamingResponse(task_streamer())
+    chat_streamer = ChatStreamingGenerator(chat_task, chat_queue, chat_uuid=chat_uuid)
+    return responses.StreamingResponse(chat_streamer())
 
 
 @router_chats.get(

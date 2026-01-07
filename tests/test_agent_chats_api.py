@@ -297,12 +297,12 @@ class TestChatIntegration:
 
 
 class TestTaskStreamingGenerator:
-    """Test cases for TaskStreamingGenerator class."""
+    """Test cases for ChatStreamingGenerator class."""
 
     def test_task_streaming_generator_initialization(self):
-        """Test TaskStreamingGenerator initialization."""
+        """Test ChatStreamingGenerator initialization."""
         import asyncio
-        from fivccliche.modules.agent_chats.routers import TaskStreamingGenerator
+        from fivccliche.modules.agent_chats.routers import ChatStreamingGenerator
 
         # Create a simple task
         async def dummy_task():
@@ -314,7 +314,7 @@ class TestTaskStreamingGenerator:
             task = loop.create_task(dummy_task())
             queue = asyncio.Queue()
 
-            generator = TaskStreamingGenerator(task, queue)
+            generator = ChatStreamingGenerator(task, queue)
             assert generator.task == task
             assert generator.task_queue == queue
             assert hasattr(generator, "__call__")  # noqa
@@ -329,9 +329,9 @@ class TestTaskStreamingGenerator:
             loop.close()
 
     def test_task_streaming_generator_has_call_method(self):
-        """Test TaskStreamingGenerator has __call__ method."""
+        """Test ChatStreamingGenerator has __call__ method."""
         import asyncio
-        from fivccliche.modules.agent_chats.routers import TaskStreamingGenerator
+        from fivccliche.modules.agent_chats.routers import ChatStreamingGenerator
 
         async def dummy_task():
             await asyncio.sleep(0.01)
@@ -342,7 +342,7 @@ class TestTaskStreamingGenerator:
             task = loop.create_task(dummy_task())
             queue = asyncio.Queue()
 
-            generator = TaskStreamingGenerator(task, queue)
+            generator = ChatStreamingGenerator(task, queue)
             # Verify it's callable
             assert callable(generator)
             # Verify calling it returns an async generator
@@ -359,9 +359,9 @@ class TestTaskStreamingGenerator:
             loop.close()
 
     def test_task_streaming_generator_attributes(self):
-        """Test TaskStreamingGenerator has required attributes."""
+        """Test ChatStreamingGenerator has required attributes."""
         import asyncio
-        from fivccliche.modules.agent_chats.routers import TaskStreamingGenerator
+        from fivccliche.modules.agent_chats.routers import ChatStreamingGenerator
 
         async def dummy_task():
             await asyncio.sleep(0.01)
@@ -372,7 +372,7 @@ class TestTaskStreamingGenerator:
             task = loop.create_task(dummy_task())
             queue = asyncio.Queue()
 
-            generator = TaskStreamingGenerator(task, queue)
+            generator = ChatStreamingGenerator(task, queue)
             # Verify attributes
             assert hasattr(generator, "task")
             assert hasattr(generator, "task_queue")
