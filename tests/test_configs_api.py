@@ -141,6 +141,53 @@ def auth_token(client: TestClient):
     return response.json()["access_token"]
 
 
+@pytest.fixture
+def admin_token(client: TestClient):
+    """Generate a JWT token for the admin user."""
+    response = client.post(
+        "/users/login",
+        json={
+            "username": "admin",
+            "password": "admin123",
+        },
+    )
+    return response.json()["access_token"]
+
+
+@pytest.fixture
+def other_user_token(client: TestClient):
+    """Generate a JWT token for another test user."""
+    admin_token = client.post(
+        "/users/login",
+        json={
+            "username": "admin",
+            "password": "admin123",
+        },
+    ).json()["access_token"]
+
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # Create another test user
+    client.post(
+        "/users/",
+        json={
+            "username": "otheruser",
+            "email": "other@example.com",
+            "password": "password123",
+        },
+        headers=admin_headers,
+    )
+    # Login to get token
+    response = client.post(
+        "/users/login",
+        json={
+            "username": "otheruser",
+            "password": "password123",
+        },
+    )
+    return response.json()["access_token"]
+
+
 class TestEmbeddingConfigAPI:
     """Test cases for Embedding Config API endpoints."""
 
@@ -609,13 +656,17 @@ class TestToolConfigAPI:
 
     def test_indexing_tool_success(self, client: TestClient, auth_token: str):
         """Test successful tool indexing."""
-        from unittest.mock import Mock, patch
+        from unittest.mock import patch
 
         # Mock the create_tool_retriever function and its return value
-        mock_tool_retriever = Mock()
-        mock_tool_retriever.index_tools = Mock()
+        from unittest.mock import AsyncMock
 
-        with patch("fivccliche.modules.agent_configs.routers.create_tool_retriever") as mock_create:
+        mock_tool_retriever = AsyncMock()
+        mock_tool_retriever.index_tools_async = AsyncMock()
+
+        with patch(
+            "fivccliche.modules.agent_configs.routers.create_tool_retriever_async"
+        ) as mock_create:
             mock_create.return_value = mock_tool_retriever
 
             response = client.post(
@@ -624,14 +675,14 @@ class TestToolConfigAPI:
             )
 
             assert response.status_code == 200
-            # Verify create_tool_retriever was called
+            # Verify create_tool_retriever_async was called
             assert mock_create.called
-            # Verify index_tools was called on the retriever
-            mock_tool_retriever.index_tools.assert_called_once()
+            # Verify index_tools_async was called on the retriever
+            mock_tool_retriever.index_tools_async.assert_called_once()
 
     def test_indexing_tool_with_existing_tools(self, client: TestClient, auth_token: str):
         """Test indexing tool when user has existing tool configs."""
-        from unittest.mock import Mock, patch
+        from unittest.mock import patch
 
         # Create some tool configs first
         for i in range(3):
@@ -647,10 +698,14 @@ class TestToolConfigAPI:
             )
 
         # Mock the create_tool_retriever function
-        mock_tool_retriever = Mock()
-        mock_tool_retriever.index_tools = Mock()
+        from unittest.mock import AsyncMock
 
-        with patch("fivccliche.modules.agent_configs.routers.create_tool_retriever") as mock_create:
+        mock_tool_retriever = AsyncMock()
+        mock_tool_retriever.index_tools_async = AsyncMock()
+
+        with patch(
+            "fivccliche.modules.agent_configs.routers.create_tool_retriever_async"
+        ) as mock_create:
             mock_create.return_value = mock_tool_retriever
 
             response = client.post(
@@ -667,17 +722,19 @@ class TestToolConfigAPI:
             assert "embedding_backend" in call_kwargs
             assert "embedding_repository" in call_kwargs
             assert "space_id" in call_kwargs
-            # Verify index_tools was called
-            mock_tool_retriever.index_tools.assert_called_once()
+            # Verify index_tools_async was called
+            mock_tool_retriever.index_tools_async.assert_called_once()
 
     def test_indexing_tool_calls_config_provider_methods(self, client: TestClient, auth_token: str):
         """Test that indexing tool calls all required config provider methods."""
-        from unittest.mock import Mock, patch
+        from unittest.mock import AsyncMock, patch
 
-        mock_tool_retriever = Mock()
-        mock_tool_retriever.index_tools = Mock()
+        mock_tool_retriever = AsyncMock()
+        mock_tool_retriever.index_tools_async = AsyncMock()
 
-        with patch("fivccliche.modules.agent_configs.routers.create_tool_retriever") as mock_create:
+        with patch(
+            "fivccliche.modules.agent_configs.routers.create_tool_retriever_async"
+        ) as mock_create:
             mock_create.return_value = mock_tool_retriever
 
             response = client.post(
@@ -686,7 +743,7 @@ class TestToolConfigAPI:
             )
 
             assert response.status_code == 200
-            # Verify create_tool_retriever was called with all required parameters
+            # Verify create_tool_retriever_async was called with all required parameters
             call_kwargs = mock_create.call_args.kwargs
             assert "tool_backend" in call_kwargs
             assert "tool_repository" in call_kwargs
@@ -696,12 +753,14 @@ class TestToolConfigAPI:
 
     def test_indexing_tool_exception_handling(self, client: TestClient, auth_token: str):
         """Test indexing tool handles exceptions from index_tools."""
-        from unittest.mock import Mock, patch
+        from unittest.mock import AsyncMock, patch
 
-        mock_tool_retriever = Mock()
-        mock_tool_retriever.index_tools = Mock(side_effect=Exception("Indexing failed"))
+        mock_tool_retriever = AsyncMock()
+        mock_tool_retriever.index_tools_async = AsyncMock(side_effect=Exception("Indexing failed"))
 
-        with patch("fivccliche.modules.agent_configs.routers.create_tool_retriever") as mock_create:
+        with patch(
+            "fivccliche.modules.agent_configs.routers.create_tool_retriever_async"
+        ) as mock_create:
             mock_create.return_value = mock_tool_retriever
 
             # The endpoint doesn't explicitly handle exceptions, so it should raise
@@ -714,7 +773,7 @@ class TestToolConfigAPI:
 
     def test_indexing_tool_with_different_users(self, client: TestClient):
         """Test that indexing tool uses correct user context."""
-        from unittest.mock import Mock, patch
+        from unittest.mock import patch
 
         # Create two different users
         admin_token = client.post(
@@ -754,10 +813,14 @@ class TestToolConfigAPI:
             json={"username": "user2", "password": "password123"},
         ).json()["access_token"]
 
-        mock_tool_retriever = Mock()
-        mock_tool_retriever.index_tools = Mock()
+        from unittest.mock import AsyncMock
 
-        with patch("fivccliche.modules.agent_configs.routers.create_tool_retriever") as mock_create:
+        mock_tool_retriever = AsyncMock()
+        mock_tool_retriever.index_tools_async = AsyncMock()
+
+        with patch(
+            "fivccliche.modules.agent_configs.routers.create_tool_retriever_async"
+        ) as mock_create:
             mock_create.return_value = mock_tool_retriever
 
             # Call indexing for user1
@@ -1068,3 +1131,274 @@ class TestToolConfigAPI:
         # Command and args should remain unchanged
         assert data["command"] == "python"
         assert data["args"] == ["script.py"]
+
+
+class TestConfigsAuthorizationEmbedding:
+    """Test authorization for embedding config endpoints."""
+
+    def test_user_cannot_update_other_user_embedding_config(
+        self, client: TestClient, auth_token: str, other_user_token: str
+    ):
+        """Test that user cannot update another user's embedding config."""
+        # Create config as auth_token user
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "emb-auth-user",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Try to update as other_user_token - should get 404 because other user can't see it
+        response = client.patch(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {other_user_token}"},
+            json={
+                "id": "emb-auth-user",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+                "description": "Hacked",
+            },
+        )
+        # Other user shouldn't be able to find the config, so 404 is correct
+        assert response.status_code == 404
+
+    def test_user_cannot_delete_other_user_embedding_config(
+        self, client: TestClient, auth_token: str, other_user_token: str
+    ):
+        """Test that user cannot delete another user's embedding config."""
+        # Create config as auth_token user
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "emb-delete-auth",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Try to delete as other_user_token - should get 404 because other user can't see it
+        response = client.delete(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {other_user_token}"},
+        )
+        # Other user shouldn't be able to find the config, so 404 is correct
+        assert response.status_code == 404
+
+
+class TestConfigsAuthorizationLLM:
+    """Test authorization for LLM config endpoints."""
+
+    def test_user_cannot_update_other_user_llm_config(
+        self, client: TestClient, auth_token: str, other_user_token: str
+    ):
+        """Test that user cannot update another user's LLM config."""
+        # Create config as auth_token user
+        create_response = client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "llm-auth-user",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Try to update as other_user_token - should get 404 because other user can't see it
+        response = client.patch(
+            f"/configs/models/{config_uuid}",
+            headers={"Authorization": f"Bearer {other_user_token}"},
+            json={
+                "id": "llm-auth-user",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+                "description": "Hacked",
+            },
+        )
+        # Other user shouldn't be able to find the config, so 404 is correct
+        assert response.status_code == 404
+
+    def test_user_cannot_delete_other_user_llm_config(
+        self, client: TestClient, auth_token: str, other_user_token: str
+    ):
+        """Test that user cannot delete another user's LLM config."""
+        # Create config as auth_token user
+        create_response = client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "llm-delete-auth",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Try to delete as other_user_token - should get 404 because other user can't see it
+        response = client.delete(
+            f"/configs/models/{config_uuid}",
+            headers={"Authorization": f"Bearer {other_user_token}"},
+        )
+        # Other user shouldn't be able to find the config, so 404 is correct
+        assert response.status_code == 404
+
+
+class TestConfigsAuthorizationAgent:
+    """Test authorization for agent config endpoints."""
+
+    def test_user_cannot_update_other_user_agent_config(
+        self, client: TestClient, auth_token: str, other_user_token: str
+    ):
+        """Test that user cannot update another user's agent config."""
+        # First create an LLM config for the agent to reference
+        llm_response = client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "llm-for-agent",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+            },
+        )
+        assert llm_response.status_code == 201
+
+        # Create agent config as auth_token user
+        create_response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-auth-user",
+                "model_id": "llm-for-agent",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Try to update as other_user_token - should get 404 because other user can't see it
+        response = client.patch(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {other_user_token}"},
+            json={
+                "id": "agent-auth-user",
+                "model_id": "llm-for-agent",
+                "description": "Hacked",
+            },
+        )
+        # Other user shouldn't be able to find the config, so 404 is correct
+        assert response.status_code == 404
+
+    def test_user_cannot_delete_other_user_agent_config(
+        self, client: TestClient, auth_token: str, other_user_token: str
+    ):
+        """Test that user cannot delete another user's agent config."""
+        # First create an LLM config for the agent to reference
+        llm_response = client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "llm-for-agent-delete",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+            },
+        )
+        assert llm_response.status_code == 201
+
+        # Create agent config as auth_token user
+        create_response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-delete-auth",
+                "model_id": "llm-for-agent-delete",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Try to delete as other_user_token - should get 404 because other user can't see it
+        response = client.delete(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {other_user_token}"},
+        )
+        # Other user shouldn't be able to find the config, so 404 is correct
+        assert response.status_code == 404
+
+
+class TestConfigsAuthorizationTool:
+    """Test authorization for tool config endpoints."""
+
+    def test_user_cannot_update_other_user_tool_config(
+        self, client: TestClient, auth_token: str, other_user_token: str
+    ):
+        """Test that user cannot update another user's tool config."""
+        # Create config as auth_token user with all required fields
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-auth-user",
+                "transport": "stdio",
+                "description": "Test tool",
+                "command": "python",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Try to update as other_user_token - should get 404 because other user can't see it
+        response = client.patch(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {other_user_token}"},
+            json={
+                "id": "tool-auth-user",
+                "transport": "sse",
+                "description": "Hacked",
+                "command": "node",
+            },
+        )
+        # Other user shouldn't be able to find the config, so 404 is correct
+        assert response.status_code == 404
+
+    def test_user_cannot_delete_other_user_tool_config(
+        self, client: TestClient, auth_token: str, other_user_token: str
+    ):
+        """Test that user cannot delete another user's tool config."""
+        # Create config as auth_token user with all required fields
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-delete-auth",
+                "transport": "stdio",
+                "description": "Test tool",
+                "command": "python",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Try to delete as other_user_token - should get 404 because other user can't see it
+        response = client.delete(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {other_user_token}"},
+        )
+        # Other user shouldn't be able to find the config, so 404 is correct
+        assert response.status_code == 404

@@ -318,6 +318,13 @@ class TestTaskStreamingGenerator:
             assert generator.task == task
             assert generator.task_queue == queue
             assert hasattr(generator, "__call__")  # noqa
+
+            # Clean up the task
+            task.cancel()
+            try:
+                loop.run_until_complete(task)
+            except asyncio.CancelledError:
+                pass
         finally:
             loop.close()
 
@@ -341,6 +348,13 @@ class TestTaskStreamingGenerator:
             # Verify calling it returns an async generator
             result = generator()
             assert hasattr(result, "__aiter__")
+
+            # Clean up the task
+            task.cancel()
+            try:
+                loop.run_until_complete(task)
+            except asyncio.CancelledError:
+                pass
         finally:
             loop.close()
 
@@ -364,6 +378,13 @@ class TestTaskStreamingGenerator:
             assert hasattr(generator, "task_queue")
             assert generator.task is task
             assert generator.task_queue is queue
+
+            # Clean up the task
+            task.cancel()
+            try:
+                loop.run_until_complete(task)
+            except asyncio.CancelledError:
+                pass
         finally:
             loop.close()
 

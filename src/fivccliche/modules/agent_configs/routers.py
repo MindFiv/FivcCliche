@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fivcplayground.tools import create_tool_retriever
+from fivcplayground.tools import create_tool_retriever_async
 
 from fivccliche.utils.deps import (
     IUser,
@@ -9,10 +9,11 @@ from fivccliche.utils.deps import (
     get_db_session_async,
     get_config_provider_async,
 )
+from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.utils.schemas import PaginatedResponse
 
 from . import methods, schemas
-from ...services.interfaces.agent_configs import IUserConfigProvider
+
 
 # ============================================================================
 # Embedding Config Endpoints
@@ -119,6 +120,18 @@ async def update_embedding_config_async(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Embedding config not found",
         )
+    # Authorization check: users can only update their own configs
+    # Only superusers can update global configs (where user_uuid is None)
+    if config.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot update global configs",
+        )
+    if config.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot update configs belonging to other users",
+        )
     config = await methods.update_embedding_config_async(session, config, config_update)
     return config.to_schema()
 
@@ -144,6 +157,18 @@ async def delete_embedding_config_async(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Embedding config not found",
+        )
+    # Authorization check: users can only delete their own configs
+    # Only superusers can delete global configs (where user_uuid is None)
+    if config.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete global configs",
+        )
+    if config.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete configs belonging to other users",
         )
     await methods.delete_embedding_config_async(session, config)
 
@@ -250,6 +275,18 @@ async def update_llm_config_async(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="LLM config not found",
         )
+    # Authorization check: users can only update their own configs
+    # Only superusers can update global configs (where user_uuid is None)
+    if config.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot update global configs",
+        )
+    if config.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot update configs belonging to other users",
+        )
     config = await methods.update_llm_config_async(session, config, config_update)
     return config.to_schema()
 
@@ -275,6 +312,18 @@ async def delete_llm_config_async(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="LLM config not found",
+        )
+    # Authorization check: users can only delete their own configs
+    # Only superusers can delete global configs (where user_uuid is None)
+    if config.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete global configs",
+        )
+    if config.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete configs belonging to other users",
         )
     await methods.delete_llm_config_async(session, config)
 
@@ -380,6 +429,18 @@ async def update_agent_config_async(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Agent config not found",
         )
+    # Authorization check: users can only update their own configs
+    # Only superusers can update global configs (where user_uuid is None)
+    if config.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot update global configs",
+        )
+    if config.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot update configs belonging to other users",
+        )
     config = await methods.update_agent_config_async(session, config, config_update)
     return config.to_schema()
 
@@ -401,6 +462,18 @@ async def delete_agent_config_async(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Agent config not found",
+        )
+    # Authorization check: users can only delete their own configs
+    # Only superusers can delete global configs (where user_uuid is None)
+    if config.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete global configs",
+        )
+    if config.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete configs belonging to other users",
         )
     await methods.delete_agent_config_async(session, config)
 
@@ -428,14 +501,14 @@ async def indexing_tool_async(
             detail="Not authenticated",
         )
 
-    agent_tools = create_tool_retriever(
+    agent_tools = await create_tool_retriever_async(
         tool_backend=config_provider.get_tool_backend(),
         tool_repository=config_provider.get_tool_repository(user_uuid=user.uuid),
         embedding_backend=config_provider.get_embedding_backend(),
         embedding_repository=config_provider.get_embedding_repository(user_uuid=user.uuid),
         space_id=user.uuid,
     )
-    agent_tools.index_tools()
+    await agent_tools.index_tools_async()
 
 
 @router_tools.post(
@@ -532,6 +605,18 @@ async def update_tool_config_async(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Tool config not found",
         )
+    # Authorization check: users can only update their own configs
+    # Only superusers can update global configs (where user_uuid is None)
+    if config.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot update global configs",
+        )
+    if config.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot update configs belonging to other users",
+        )
     config = await methods.update_tool_config_async(session, config, config_update)
     return config.to_schema()
 
@@ -557,6 +642,18 @@ async def delete_tool_config_async(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Tool config not found",
+        )
+    # Authorization check: users can only delete their own configs
+    # Only superusers can delete global configs (where user_uuid is None)
+    if config.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete global configs",
+        )
+    if config.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete configs belonging to other users",
         )
     await methods.delete_tool_config_async(session, config)
 

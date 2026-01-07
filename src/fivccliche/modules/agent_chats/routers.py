@@ -60,8 +60,17 @@ class TaskStreamingGenerator:
                     continue
 
                 # Process the event
+                data_fields = {
+                    "id",
+                    "agent_id",
+                    "started_at",
+                    "completed_at",
+                    "query",
+                    "reply",
+                    "tool_calls",
+                }
                 if ev == AgentRunEvent.START:
-                    data = ev_run.model_dump(mode="json", include={"id", "agent_id", "started_at"})
+                    data = ev_run.model_dump(mode="json", include=data_fields)
                     # Add chat_uuid from the router context (for new chats)
                     data.update({"chat_uuid": self.chat_uuid})
                     data = {"event": "start", "info": data}
@@ -69,20 +78,27 @@ class TaskStreamingGenerator:
                     yield f"data: {data_json}\n\n"
 
                 elif ev == AgentRunEvent.FINISH:
-                    data = ev_run.model_dump(mode="json", exclude={"streaming_text"})
+                    data = ev_run.model_dump(mode="json", include=data_fields)
+                    data.update({"chat_uuid": self.chat_uuid})
                     data = {"event": "finish", "info": data}
                     data_json = json.dumps(data)
                     yield f"data: {data_json}\n\n"
 
                 elif ev == AgentRunEvent.STREAM:
-                    data = ev_run.model_dump(mode="json", include={"id", "agent_id"})
-                    data.update({"streaming_text": ev_run.streaming_text})
+                    data = ev_run.model_dump(mode="json", include=data_fields)
+                    data.update(
+                        {
+                            "chat_uuid": self.chat_uuid,
+                            "streaming_text": ev_run.streaming_text,
+                        }
+                    )
                     data = {"event": "stream", "info": data}
                     data = json.dumps(data)
                     yield f"data: {data}\n\n"
 
                 elif ev == AgentRunEvent.TOOL:
-                    data = ev_run.model_dump(mode="json", include={"id", "agent_id", "tool_calls"})
+                    data = ev_run.model_dump(mode="json", include=data_fields)
+                    data.update({"chat_uuid": self.chat_uuid})
                     data = {"event": "tool", "info": data}
                     data = json.dumps(data)
                     yield f"data: {data}\n\n"
