@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic_strict_partial import create_partial_model
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivcplayground.tools import create_tool_retriever_async
@@ -103,7 +104,7 @@ async def get_embedding_config_async(
 )
 async def update_embedding_config_async(
     config_uuid: str,
-    config_update: schemas.UserEmbeddingSchema,
+    config_update: create_partial_model(schemas.UserEmbeddingSchema),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserEmbeddingSchema:
@@ -258,7 +259,7 @@ async def get_llm_config_async(
 )
 async def update_llm_config_async(
     config_uuid: str,
-    config_update: schemas.UserLLMSchema,
+    config_update: create_partial_model(schemas.UserLLMSchema),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserLLMSchema:
@@ -412,7 +413,7 @@ async def get_agent_config_async(
 )
 async def update_agent_config_async(
     config_uuid: str,
-    config_update: schemas.UserAgentSchema,
+    config_update: create_partial_model(schemas.UserAgentSchema),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserAgentSchema:
@@ -625,7 +626,7 @@ async def get_tool_config_async(
 )
 async def update_tool_config_async(
     config_uuid: str,
-    config_update: schemas.UserToolSchema,
+    config_update: create_partial_model(schemas.UserToolSchema),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserToolSchema:

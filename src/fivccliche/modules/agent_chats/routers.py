@@ -109,6 +109,7 @@ class ChatStreamingGenerator:
             # Ensure any exception is properly handled
             data = {"event": "error", "info": {"message": str(e)}}
             data = json.dumps(data)
+            print(f"❌ [QUEUE] Error in chat queue: {e}")
             yield f"data: {data}\n\n"
 
 
