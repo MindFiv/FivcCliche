@@ -651,7 +651,7 @@ class TestToolConfigAPI:
 
     def test_indexing_tool_unauthorized(self, client: TestClient):
         """Test indexing tool without authentication."""
-        response = client.post("/configs/tools/indexing")
+        response = client.post("/configs/tools/index")
         assert response.status_code == 401
 
     def test_indexing_tool_success(self, client: TestClient, auth_token: str):
@@ -670,7 +670,7 @@ class TestToolConfigAPI:
             mock_create.return_value = mock_tool_retriever
 
             response = client.post(
-                "/configs/tools/indexing",
+                "/configs/tools/index",
                 headers={"Authorization": f"Bearer {auth_token}"},
             )
 
@@ -709,7 +709,7 @@ class TestToolConfigAPI:
             mock_create.return_value = mock_tool_retriever
 
             response = client.post(
-                "/configs/tools/indexing",
+                "/configs/tools/index",
                 headers={"Authorization": f"Bearer {auth_token}"},
             )
 
@@ -718,9 +718,9 @@ class TestToolConfigAPI:
             assert mock_create.called
             call_kwargs = mock_create.call_args.kwargs
             assert "tool_backend" in call_kwargs
-            assert "tool_repository" in call_kwargs
+            assert "tool_config_repository" in call_kwargs
             assert "embedding_backend" in call_kwargs
-            assert "embedding_repository" in call_kwargs
+            assert "embedding_config_repository" in call_kwargs
             assert "space_id" in call_kwargs
             # Verify index_tools_async was called
             mock_tool_retriever.index_tools_async.assert_called_once()
@@ -738,7 +738,7 @@ class TestToolConfigAPI:
             mock_create.return_value = mock_tool_retriever
 
             response = client.post(
-                "/configs/tools/indexing",
+                "/configs/tools/index",
                 headers={"Authorization": f"Bearer {auth_token}"},
             )
 
@@ -746,9 +746,9 @@ class TestToolConfigAPI:
             # Verify create_tool_retriever_async was called with all required parameters
             call_kwargs = mock_create.call_args.kwargs
             assert "tool_backend" in call_kwargs
-            assert "tool_repository" in call_kwargs
+            assert "tool_config_repository" in call_kwargs
             assert "embedding_backend" in call_kwargs
-            assert "embedding_repository" in call_kwargs
+            assert "embedding_config_repository" in call_kwargs
             assert "space_id" in call_kwargs
 
     def test_indexing_tool_exception_handling(self, client: TestClient, auth_token: str):
@@ -766,7 +766,7 @@ class TestToolConfigAPI:
             # The endpoint doesn't explicitly handle exceptions, so it should raise
             with pytest.raises(Exception) as exc_info:  # noqa
                 client.post(
-                    "/configs/tools/indexing",
+                    "/configs/tools/index",
                     headers={"Authorization": f"Bearer {auth_token}"},
                 )
             assert "Indexing failed" in str(exc_info.value)
@@ -825,7 +825,7 @@ class TestToolConfigAPI:
 
             # Call indexing for user1
             response1 = client.post(
-                "/configs/tools/indexing",
+                "/configs/tools/index",
                 headers={"Authorization": f"Bearer {user1_token}"},
             )
             assert response1.status_code == 200
@@ -836,7 +836,7 @@ class TestToolConfigAPI:
 
             # Call indexing for user2
             response2 = client.post(
-                "/configs/tools/indexing",
+                "/configs/tools/index",
                 headers={"Authorization": f"Bearer {user2_token}"},
             )
             assert response2.status_code == 200
@@ -879,6 +879,7 @@ class TestToolConfigAPI:
         assert data["transport"] == "stdio"
         assert data["command"] == "python"
         assert data["args"] == ["script.py"]
+        assert data["is_active"] is True  # Default value should be True
         assert "uuid" in data
         assert "user_uuid" in data
 
@@ -990,6 +991,50 @@ class TestToolConfigAPI:
         assert data["command"] == "node"
         assert data["url"] == "http://example.com"
 
+    def test_update_tool_config_is_active(self, client: TestClient, auth_token: str):
+        """Test updating the is_active field of a tool config."""
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-is-active",
+                "description": "Tool is active",
+                "transport": "stdio",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+        assert create_response.json()["is_active"] is True
+
+        # Update to deactivate
+        response = client.patch(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-is-active",
+                "description": "Tool is active",
+                "transport": "stdio",
+                "is_active": False,
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["is_active"] is False
+
+        # Update to reactivate
+        response = client.patch(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-is-active",
+                "description": "Tool is active",
+                "transport": "stdio",
+                "is_active": True,
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["is_active"] is True
+
     def test_delete_tool_config(self, client: TestClient, auth_token: str):
         """Test deleting a tool config."""
         create_response = client.post(
@@ -1028,6 +1073,7 @@ class TestToolConfigAPI:
                 "args": ["script.sh", "--verbose"],
                 "env": {"PATH": "/usr/bin", "DEBUG": "true"},
                 "url": "http://localhost:8000/tool",
+                "is_active": True,
             },
         )
         assert response.status_code == 201
@@ -1039,6 +1085,7 @@ class TestToolConfigAPI:
         assert data["args"] == ["script.sh", "--verbose"]
         assert data["env"] == {"PATH": "/usr/bin", "DEBUG": "true"}
         assert data["url"] == "http://localhost:8000/tool"
+        assert data["is_active"] is True
 
     def test_update_tool_config_via_repository(self, client: TestClient, auth_token: str):
         """Test updating a tool config via repository (create new)."""

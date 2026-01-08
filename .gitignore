@@ -117,6 +117,7 @@ nohup.out
 *.db
 
 # generated data
+.fivcplayground/
 .data/
 .logs/
 .static/

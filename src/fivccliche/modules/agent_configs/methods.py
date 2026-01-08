@@ -453,6 +453,7 @@ async def create_tool_config_async(
         args=config_create.args,
         env=config_create.env,
         url=config_create.url,
+        is_active=config_create.is_active if hasattr(config_create, "is_active") else True,
     )
     session.add(config)
     await session.commit()
@@ -560,6 +561,8 @@ async def update_tool_config_async(
         config.env = config_update.env
     if config_update.url is not None:
         config.url = config_update.url
+    if hasattr(config_update, "is_active") and config_update.is_active is not None:
+        config.is_active = config_update.is_active
     session.add(config)
     await session.commit()
     await session.refresh(config)

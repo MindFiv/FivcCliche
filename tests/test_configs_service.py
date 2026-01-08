@@ -156,6 +156,7 @@ async def session():
                     args JSON,
                     env JSON,
                     url VARCHAR,
+                    is_active BOOLEAN NOT NULL DEFAULT 1,
                     user_uuid VARCHAR,
                     PRIMARY KEY (uuid),
                     UNIQUE (id, user_uuid),
@@ -913,7 +914,7 @@ class TestEmbeddingRepositoryImpl:
             api_key="test",
         )
 
-        with pytest.raises(ValueError, match="Session and user_uuid are required"):
+        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
             await repo.update_embedding_config_async(config)
 
     async def test_embedding_repo_raises_error_without_user_id(self, session: AsyncSession):
@@ -927,7 +928,7 @@ class TestEmbeddingRepositoryImpl:
             api_key="test",
         )
 
-        with pytest.raises(ValueError, match="Session and user_uuid are required"):
+        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
             await repo.update_embedding_config_async(config)
 
 
@@ -1056,7 +1057,7 @@ class TestLLMRepositoryImpl:
             api_key="test",
         )
 
-        with pytest.raises(ValueError, match="Session and user_uuid are required"):
+        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
             await repo.update_model_config_async(config)
 
     async def test_llm_repo_raises_error_without_user_id(self, session: AsyncSession):
@@ -1070,7 +1071,7 @@ class TestLLMRepositoryImpl:
             api_key="test",
         )
 
-        with pytest.raises(ValueError, match="Session and user_uuid are required"):
+        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
             await repo.update_model_config_async(config)
 
 
@@ -1189,7 +1190,7 @@ class TestAgentRepositoryImpl:
             model_id="test",
         )
 
-        with pytest.raises(ValueError, match="Session and user_uuid are required"):
+        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
             await repo.update_agent_config_async(config)
 
     async def test_agent_repo_raises_error_without_user_id(self, session: AsyncSession):
@@ -1201,7 +1202,7 @@ class TestAgentRepositoryImpl:
             model_id="test",
         )
 
-        with pytest.raises(ValueError, match="Session and user_uuid are required"):
+        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
             await repo.update_agent_config_async(config)
 
 
@@ -1231,6 +1232,7 @@ class TestToolConfigMethods:
         assert config.command == "python"
         assert config.args == ["script.py"]
         assert config.uuid is not None
+        assert config.is_active is True  # Default value should be True
 
     async def test_get_tool_config_by_uuid(self, session: AsyncSession):
         """Test getting a tool config by UUID."""
@@ -1344,6 +1346,40 @@ class TestToolConfigMethods:
         assert updated.transport == "sse"
         assert updated.command == "node"
         assert updated.url == "http://example.com"
+
+    async def test_update_tool_config_is_active(self, session: AsyncSession):
+        """Test updating the is_active field of a tool config."""
+        config_create = ToolConfig(
+            id="tool-is-active",
+            description="Tool is active",
+            transport="stdio",
+        )
+        created = await methods.create_tool_config_async(session, "user123", config_create)
+        assert created.is_active is True
+
+        # Update to deactivate
+        from fivccliche.modules.agent_configs import schemas
+
+        config_update = schemas.UserToolSchema(
+            id="tool-is-active",
+            description="Tool is active",
+            transport="stdio",
+            is_active=False,
+        )
+        updated = await methods.update_tool_config_async(session, created, config_update)
+
+        assert updated.is_active is False
+
+        # Update to reactivate
+        config_update2 = schemas.UserToolSchema(
+            id="tool-is-active",
+            description="Tool is active",
+            transport="stdio",
+            is_active=True,
+        )
+        updated2 = await methods.update_tool_config_async(session, updated, config_update2)
+
+        assert updated2.is_active is True
 
     async def test_delete_tool_config(self, session: AsyncSession):
         """Test deleting a tool config."""
@@ -1479,7 +1515,7 @@ class TestToolConfigRepository:
             transport="stdio",
         )
 
-        with pytest.raises(ValueError, match="Session and user_uuid are required"):
+        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
             await repo.update_tool_config_async(config)
 
     async def test_tool_repo_raises_error_without_user_id(self, session: AsyncSession):
@@ -1492,7 +1528,7 @@ class TestToolConfigRepository:
             transport="stdio",
         )
 
-        with pytest.raises(ValueError, match="Session and user_uuid are required"):
+        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
             await repo.update_tool_config_async(config)
 
     async def test_update_tool_config_create_new(self, session: AsyncSession):
@@ -1575,7 +1611,7 @@ class TestToolConfigRepository:
             transport="stdio",
         )
 
-        with pytest.raises(ValueError, match="Session and user_uuid are required"):
+        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
             await repo.update_tool_config_async(config)
 
     async def test_update_tool_config_raises_error_without_user_id(self, session: AsyncSession):
@@ -1588,5 +1624,5 @@ class TestToolConfigRepository:
             transport="stdio",
         )
 
-        with pytest.raises(ValueError, match="Session and user_uuid are required"):
+        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
             await repo.update_tool_config_async(config)

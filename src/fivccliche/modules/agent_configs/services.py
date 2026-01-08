@@ -61,7 +61,7 @@ class UserEmbeddingRepositoryImpl(UserEmbeddingRepository):
     async def update_embedding_config_async(self, embedding_config: EmbeddingConfig) -> None:
         """Create or update an embedding configuration."""
         if not self.session or not self.user_uuid:
-            raise ValueError(
+            raise RuntimeError(
                 "Session and user_uuid are required for update_embedding_config operation"
             )
         # Check if config exists by ID
@@ -80,7 +80,7 @@ class UserEmbeddingRepositoryImpl(UserEmbeddingRepository):
     async def get_embedding_config_async(self, embedding_id: str) -> EmbeddingConfig | None:
         """Retrieve an embedding configuration by ID."""
         if not self.session or not self.user_uuid:
-            raise ValueError(
+            raise RuntimeError(
                 "Session and user_uuid are required for get_embedding_config operation"
             )
         config = await methods.get_embedding_config_async(
@@ -91,7 +91,7 @@ class UserEmbeddingRepositoryImpl(UserEmbeddingRepository):
     async def list_embedding_configs_async(self, **kwargs) -> list[EmbeddingConfig]:
         """List all embedding configurations in the repository."""
         if not self.session or not self.user_uuid:
-            raise ValueError(
+            raise RuntimeError(
                 "Session and user_uuid are required for list_embedding_configs operation"
             )
         skip = kwargs.get("skip", 0)
@@ -104,7 +104,7 @@ class UserEmbeddingRepositoryImpl(UserEmbeddingRepository):
     async def delete_embedding_config_async(self, embedding_id: str) -> None:
         """Delete an embedding configuration."""
         if not self.session or not self.user_uuid:
-            raise ValueError(
+            raise RuntimeError(
                 "Session and user_uuid are required for delete_embedding_config operation"
             )
         config = await methods.get_embedding_config_async(
@@ -141,7 +141,9 @@ class UserLLMRepositoryImpl(UserLLMRepository):
     async def update_model_config_async(self, model_config: ModelConfig) -> None:
         """Create or update a model configuration."""
         if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for update_model_config operation")
+            raise RuntimeError(
+                "Session and user_uuid are required for update_model_config operation"
+            )
         # Check if config exists by ID
         existing = await methods.get_llm_config_async(
             self.session, self.user_uuid, config_id=model_config.id
@@ -156,7 +158,7 @@ class UserLLMRepositoryImpl(UserLLMRepository):
     async def get_model_config_async(self, model_id: str) -> ModelConfig | None:
         """Retrieve a model configuration by ID."""
         if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for get_model_config operation")
+            raise RuntimeError("Session and user_uuid are required for get_model_config operation")
         config = await methods.get_llm_config_async(
             self.session, self.user_uuid, config_id=model_id
         )
@@ -165,7 +167,9 @@ class UserLLMRepositoryImpl(UserLLMRepository):
     async def list_model_configs_async(self, **kwargs) -> list[ModelConfig]:
         """List all model configurations in the repository."""
         if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for list_model_configs operation")
+            raise RuntimeError(
+                "Session and user_uuid are required for list_model_configs operation"
+            )
         skip = kwargs.get("skip", 0)
         limit = kwargs.get("limit", 100)
         configs = await methods.list_llm_configs_async(
@@ -176,7 +180,9 @@ class UserLLMRepositoryImpl(UserLLMRepository):
     async def delete_model_config_async(self, model_id: str) -> None:
         """Delete a model configuration."""
         if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for delete_model_config operation")
+            raise RuntimeError(
+                "Session and user_uuid are required for delete_model_config operation"
+            )
         config = await methods.get_llm_config_async(
             self.session, self.user_uuid, config_id=model_id
         )
@@ -210,11 +216,16 @@ class UserToolRepositoryImpl(UserToolRepository):
     async def update_tool_config_async(self, tool_config: ToolConfig) -> None:
         """Create or update a tool configuration."""
         if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for update_tool_config operation")
+            raise RuntimeError(
+                "Session and user_uuid are required for update_tool_config operation"
+            )
         # Check if config exists by ID
         existing = await methods.get_tool_config_async(
             self.session, self.user_uuid, config_id=tool_config.id
         )
+        if existing and not existing.is_active:
+            raise RuntimeError("Cannot update inactive tool config")
+
         if existing:
             # Update existing config
             await methods.update_tool_config_async(self.session, existing, tool_config)
@@ -225,30 +236,34 @@ class UserToolRepositoryImpl(UserToolRepository):
     async def get_tool_config_async(self, tool_id: str):
         """Retrieve a tool configuration by ID."""
         if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for get_tool_config operation")
+            raise RuntimeError("Session and user_uuid are required for get_tool_config operation")
         config = await methods.get_tool_config_async(
             self.session, self.user_uuid, config_id=tool_id
         )
-        return config.to_schema() if config else None
+        return config.to_schema() if config and config.is_active else None
 
     async def list_tool_configs_async(self, **kwargs) -> list:
         """List all tool configurations in the repository."""
         if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for list_tool_configs operation")
+            raise RuntimeError("Session and user_uuid are required for list_tool_configs operation")
         skip = kwargs.get("skip", 0)
-        limit = kwargs.get("limit", 100)
+        limit = kwargs.get("limit", 1000)
         configs = await methods.list_tool_configs_async(
             self.session, self.user_uuid, skip=skip, limit=limit
         )
-        return [config.to_schema() for config in configs]
+        return [config.to_schema() for config in configs if config.is_active]
 
     async def delete_tool_config_async(self, tool_id: str) -> None:
         """Delete a tool configuration."""
         if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for delete_tool_config operation")
+            raise RuntimeError(
+                "Session and user_uuid are required for delete_tool_config operation"
+            )
         config = await methods.get_tool_config_async(
             self.session, self.user_uuid, config_id=tool_id
         )
+        if config and not config.is_active:
+            raise RuntimeError("Cannot delete inactive tool config")
         if config:
             await methods.delete_tool_config_async(self.session, config)
 
@@ -280,7 +295,9 @@ class UserAgentRepositoryImpl(UserAgentRepository):
     async def update_agent_config_async(self, agent_config: AgentConfig) -> None:
         """Create or update an agent configuration."""
         if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for update_agent_config operation")
+            raise RuntimeError(
+                "Session and user_uuid are required for update_agent_config operation"
+            )
         # Check if config exists by ID
         existing = await methods.get_agent_config_async(
             self.session, self.user_uuid, config_id=agent_config.id
@@ -295,7 +312,7 @@ class UserAgentRepositoryImpl(UserAgentRepository):
     async def get_agent_config_async(self, agent_id: str) -> AgentConfig | None:
         """Retrieve an agent configuration by ID."""
         if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for get_agent_config operation")
+            raise RuntimeError("Session and user_uuid are required for get_agent_config operation")
         config = await methods.get_agent_config_async(
             self.session, self.user_uuid, config_id=agent_id
         )
@@ -304,14 +321,18 @@ class UserAgentRepositoryImpl(UserAgentRepository):
     async def list_agent_configs_async(self) -> list[AgentConfig]:
         """List all agent configurations in the repository."""
         if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for list_agent_configs operation")
+            raise RuntimeError(
+                "Session and user_uuid are required for list_agent_configs operation"
+            )
         configs = await methods.list_agent_configs_async(self.session, self.user_uuid)
         return [config.to_schema() for config in configs]
 
     async def delete_agent_config_async(self, agent_id: str) -> None:
         """Delete an agent configuration."""
         if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for delete_agent_config operation")
+            raise RuntimeError(
+                "Session and user_uuid are required for delete_agent_config operation"
+            )
         config = await methods.get_agent_config_async(
             self.session, self.user_uuid, config_id=agent_id
         )

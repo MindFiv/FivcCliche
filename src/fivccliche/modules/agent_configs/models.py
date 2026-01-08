@@ -168,6 +168,7 @@ class UserTool(SQLModel, table=True):
         description="Environment variables",
     )
     url: str | None = Field(default=None, description="URL for the tool")
+    is_active: bool = Field(default=True, description="Whether the tool is active")
     user_uuid: str | None = Field(
         default=None,
         foreign_key="user.uuid",
@@ -184,6 +185,7 @@ class UserTool(SQLModel, table=True):
             args=self.args,
             env=self.env,
             url=self.url,
+            is_active=self.is_active,
             user_uuid=self.user_uuid,
         )
 

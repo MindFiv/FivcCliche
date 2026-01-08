@@ -315,8 +315,8 @@ class TestTaskStreamingGenerator:
             queue = asyncio.Queue()
 
             generator = ChatStreamingGenerator(task, queue)
-            assert generator.task == task
-            assert generator.task_queue == queue
+            assert generator.chat_task == task
+            assert generator.chat_queue == queue
             assert hasattr(generator, "__call__")  # noqa
 
             # Clean up the task
@@ -374,10 +374,10 @@ class TestTaskStreamingGenerator:
 
             generator = ChatStreamingGenerator(task, queue)
             # Verify attributes
-            assert hasattr(generator, "task")
-            assert hasattr(generator, "task_queue")
-            assert generator.task is task
-            assert generator.task_queue is queue
+            assert hasattr(generator, "chat_task")
+            assert hasattr(generator, "chat_queue")
+            assert generator.chat_task is task
+            assert generator.chat_queue is queue
 
             # Clean up the task
             task.cancel()

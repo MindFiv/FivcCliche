@@ -6,7 +6,7 @@ __all__ = [
     "UserToolTransport",
 ]
 
-from pydantic import ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from fivcplayground.embeddings.types import EmbeddingConfig
 from fivcplayground.models.types import ModelConfig
@@ -44,9 +44,16 @@ class UserToolSchema(ToolConfig):
     """Schema for reading tool config data (response)."""
 
     uuid: str = Field(default=None, description="Tool config UUID (globally unique)")
+    is_active: bool = Field(default=True, description="Whether the tool is active")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserToolProbeSchema(BaseModel):
+    """Schema for reading tool config data (response)."""
+
+    tool_names: list[str] = Field(default=None, description="Tool names")
 
 
 class UserAgentSchema(AgentConfig):

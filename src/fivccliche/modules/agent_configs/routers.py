@@ -14,7 +14,6 @@ from fivccliche.utils.schemas import PaginatedResponse
 
 from . import methods, schemas
 
-
 # ============================================================================
 # Embedding Config Endpoints
 # ============================================================================
@@ -486,13 +485,13 @@ router_tools = APIRouter(prefix="/configs/tools", tags=["tool_configs"])
 
 
 @router_tools.post(
-    "/indexing",
-    summary="Indexing tool for the authenticated user.",
+    "/index",
+    summary="Index tool for the authenticated user.",
     status_code=status.HTTP_200_OK,
 )
-async def indexing_tool_async(
+async def index_tool_async(
     user: IUser = Depends(get_authenticated_user_async),
-    # session: AsyncSession = Depends(get_db_session_async),
+    session: AsyncSession = Depends(get_db_session_async),
     config_provider: IUserConfigProvider = Depends(get_config_provider_async),
 ):
     if not user:
@@ -503,12 +502,49 @@ async def indexing_tool_async(
 
     agent_tools = await create_tool_retriever_async(
         tool_backend=config_provider.get_tool_backend(),
-        tool_repository=config_provider.get_tool_repository(user_uuid=user.uuid),
+        tool_config_repository=config_provider.get_tool_repository(
+            user_uuid=user.uuid, session=session
+        ),
         embedding_backend=config_provider.get_embedding_backend(),
-        embedding_repository=config_provider.get_embedding_repository(user_uuid=user.uuid),
+        embedding_config_repository=config_provider.get_embedding_repository(
+            user_uuid=user.uuid, session=session
+        ),
         space_id=user.uuid,
     )
     await agent_tools.index_tools_async()
+
+
+@router_tools.post(
+    "/{config_uuid}/probe",
+    summary="Probe tool for the authenticated user.",
+    status_code=status.HTTP_200_OK,
+)
+async def probe_tool_async(
+    config_uuid: str,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+    config_provider: IUserConfigProvider = Depends(get_config_provider_async),
+) -> schemas.UserToolProbeSchema:
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    config = await methods.get_tool_config_async(session, user.uuid, config_uuid=config_uuid)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tool config not found",
+        )
+
+    tool_backend = config_provider.get_tool_backend()
+    tool_bundle = tool_backend.create_tool_bundle(config.to_schema())
+    tool_context = tool_bundle.setup()
+    async with tool_context as tools:
+        tool_names = [tool.name for tool in tools]
+
+    return schemas.UserToolProbeSchema(tool_names=tool_names)
 
 
 @router_tools.post(
