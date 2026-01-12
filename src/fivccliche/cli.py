@@ -206,7 +206,8 @@ async def _migrate_async() -> None:
         db_service = query_component(cast(IComponentSite, service_site), IDatabase)
 
         # Create all database tables
-        await db_service.setup_async()
+        async with db_service.get_engine().begin() as conn:
+            await conn.run_sync(db_service.get_metadata().create_all)
 
         console.print("\n" + "=" * 60)
         console.print("[bold green]✅ Database tables created successfully![/bold green]")
@@ -285,12 +286,8 @@ async def _create_superuser_async(username: str, email: str, password: str) -> N
         db_service = query_component(cast(IComponentSite, service_site), IDatabase)
         auth_service = query_component(cast(IComponentSite, service_site), IUserAuthenticator)
 
-        # Initialize database tables if they don't exist
-        console.print("[cyan]Initializing database...[/cyan]")
-        await db_service.setup_async()
-
         # Get a database session
-        session = await db_service.get_session_async()
+        session = db_service.create_session()
 
         try:
             # Check if user already exists

@@ -1,18 +1,51 @@
 from abc import abstractmethod
 
 from fivcglue import IComponent
+from sqlalchemy.ext.asyncio.engine import AsyncEngine
 from sqlalchemy.ext.asyncio.session import AsyncSession
+from sqlalchemy.sql.schema import MetaData
 
 
 class IDatabase(IComponent):
     """
-    IDatabase is an interface for defining database models in the Fivccliche framework.
+    IDatabase is an interface for database management in the Fivccliche framework.
+
+    This interface provides methods to access database metadata, configuration,
+    and create async database sessions for use throughout the application.
     """
 
     @abstractmethod
-    async def setup_async(self) -> None:
-        """Create all database tables."""
+    def get_metadata(self) -> MetaData:
+        """
+        Get the database metadata.
+
+        Returns:
+            MetaData: SQLAlchemy metadata object containing all registered models.
+        """
 
     @abstractmethod
-    async def get_session_async(self) -> AsyncSession:
-        """Get an async database session for dependency injection."""
+    def get_url(self) -> str:
+        """
+        Get the database URL.
+
+        Returns:
+            str: The database connection URL.
+        """
+
+    @abstractmethod
+    def get_engine(self) -> AsyncEngine:
+        """
+        Get the async database engine.
+
+        Returns:
+            AsyncEngine: SQLAlchemy async engine for database operations.
+        """
+
+    @abstractmethod
+    def create_session(self) -> AsyncSession:
+        """
+        Create an async database session for dependency injection.
+
+        Returns:
+            AsyncSession: A new async database session instance.
+        """

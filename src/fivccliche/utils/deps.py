@@ -23,6 +23,7 @@ default_config: LazyValue[configs.IConfig] = LazyValue(
 default_db: LazyValue[IDatabase] = LazyValue(
     lambda: query_component(cast(IComponentSite, service_site), IDatabase)
 )
+"""Lazy-loaded database service instance. Call default_db() to get the IDatabase instance."""
 
 default_auth: LazyValue[IUserAuthenticator] = LazyValue(
     lambda: query_component(cast(IComponentSite, service_site), IUserAuthenticator)
@@ -39,8 +40,8 @@ default_chat_provider: LazyValue[IUserChatProvider] = LazyValue(
 
 async def get_db_session_async() -> AsyncGenerator[AsyncSession, None]:
     """Get an async database session for dependency injection."""
-    db = default_db
-    async_session = await db.get_session_async()
+    db = default_db()
+    async_session = db.create_session()
     try:
         yield async_session
     finally:
