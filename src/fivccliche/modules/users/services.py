@@ -39,6 +39,12 @@ class UserImpl(IUser):
     def is_superuser(self) -> bool:
         return self.user.is_superuser
 
+    def check_password(self, password: str) -> bool:
+        return self.user.check_password(password)
+
+    def change_password(self, password: str) -> None:
+        self.user.change_password(password)
+
 
 class UserAuthenticatorImpl(IUserAuthenticator):
     """User authenticator implementation."""

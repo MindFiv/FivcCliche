@@ -37,6 +37,14 @@ class IUser(IComponent):
     def is_superuser(self) -> bool:
         """Whether the user is a superuser."""
 
+    @abstractmethod
+    def check_password(self, password: str) -> bool:
+        """Check if the password is correct."""
+
+    @abstractmethod
+    def change_password(self, password: str) -> None:
+        """Change the password."""
+
 
 class IUserAuthenticator(IComponent):
     """

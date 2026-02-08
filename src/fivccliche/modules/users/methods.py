@@ -3,26 +3,11 @@
 import uuid
 from datetime import datetime
 
-from passlib.context import CryptContext
-
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from . import models
-
-# Password hashing context - using argon2 for better security and no length limits
-pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
-
-
-def hash_user_password(password: str) -> str:
-    """Hash a password using argon2."""
-    return pwd_context.hash(password)
-
-
-def verify_user_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash."""
-    return pwd_context.verify(plain_password, hashed_password)
 
 
 async def create_user_async(
@@ -48,11 +33,12 @@ async def create_user_async(
         uuid=str(uuid.uuid4()),
         username=username,
         email=email,
-        hashed_password=hash_user_password(password) if password else None,
         created_at=datetime.now(),
         is_active=True,
         is_superuser=is_superuser,
     )
+    if password:
+        user.change_password(password)
     session.add(user)
     await session.commit()
     await session.refresh(user)
@@ -156,7 +142,7 @@ async def update_user_async(
     if email is not None:
         user.email = email
     if password is not None:
-        user.hashed_password = hash_user_password(password)
+        user.change_password(password)
     if is_active is not None:
         user.is_active = is_active
     if is_superuser is not None:
@@ -189,6 +175,6 @@ async def authenticate_user_async(
     user = await get_user_async(session, username=username)
     if not user:
         return None
-    if not verify_user_password(password, user.hashed_password):
+    if not user.check_password(password):
         return None
     return user

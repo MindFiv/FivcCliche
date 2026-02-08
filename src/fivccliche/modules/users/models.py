@@ -1,8 +1,11 @@
 from datetime import datetime
 from uuid import uuid1
 
+from passlib.context import CryptContext
 from sqlmodel import Field, SQLModel
 from pydantic import EmailStr
+
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 
 class User(SQLModel, table=True):
@@ -26,3 +29,10 @@ class User(SQLModel, table=True):
     signed_in_at: datetime | None = Field(default=None, description="User last sign in time.")
     is_active: bool = True
     is_superuser: bool = False
+
+    def check_password(self, password: str) -> bool:
+        result: bool = pwd_context.verify(password, self.hashed_password)
+        return result
+
+    def change_password(self, password: str) -> None:
+        self.hashed_password = pwd_context.hash(password)

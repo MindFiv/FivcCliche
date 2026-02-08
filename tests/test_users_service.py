@@ -12,6 +12,7 @@ from sqlalchemy.pool import NullPool
 from sqlmodel import SQLModel
 
 from fivccliche.modules.users import methods
+from fivccliche.modules.users.models import User
 from fivccliche.modules.users.services import UserAuthenticatorImpl, UserImpl
 
 
@@ -49,22 +50,25 @@ class TestUserService:
     def test_hash_password(self):
         """Test password hashing."""
         password = "test_password_123"
-        hashed = methods.hash_user_password(password)
-        assert hashed != password
-        assert len(hashed) > 0
+        user = User(username="testuser")
+        user.change_password(password)
+        assert user.hashed_password != password
+        assert len(user.hashed_password) > 0
 
     def test_verify_password_correct(self):
         """Test password verification with correct password."""
         password = "test_password_123"
-        hashed = methods.hash_user_password(password)
-        assert methods.verify_user_password(password, hashed) is True
+        user = User(username="testuser")
+        user.change_password(password)
+        assert user.check_password(password) is True
 
     def test_verify_password_incorrect(self):
         """Test password verification with incorrect password."""
         password = "test_password_123"
         wrong_password = "wrong_password"
-        hashed = methods.hash_user_password(password)
-        assert methods.verify_user_password(wrong_password, hashed) is False
+        user = User(username="testuser")
+        user.change_password(password)
+        assert user.check_password(wrong_password) is False
 
     async def test_create_user(self, session: AsyncSession):
         """Test creating a new user."""
