@@ -337,6 +337,95 @@ async def _create_superuser_async(username: str, email: str, password: str) -> N
         raise typer.Exit(1) from e
 
 
+@cli.command()
+def changepassword():
+    """
+    Change a user's password interactively.
+
+    This command prompts for a username and new password to update
+    an existing user's password.
+    """
+    console.print(
+        Panel.fit(
+            Text("Change Password", style="bold blue"),
+            subtitle="Update user password",
+        )
+    )
+
+    try:
+        # Prompt for username
+        username = typer.prompt("Username")
+        if not username or not username.strip():
+            console.print("[red]❌ Username cannot be empty[/red]")
+            raise typer.Exit(1)
+
+        # Prompt for new password with confirmation
+        new_password = typer.prompt("New password", hide_input=True)
+        if not new_password or not new_password.strip():
+            console.print("[red]❌ Password cannot be empty[/red]")
+            raise typer.Exit(1)
+
+        password_confirm = typer.prompt("Confirm new password", hide_input=True)
+        if new_password != password_confirm:
+            console.print("[red]❌ Passwords do not match[/red]")
+            raise typer.Exit(1)
+
+        # Run the async update
+        asyncio.run(_change_password_async(username, new_password))
+
+    except typer.Abort as e:
+        console.print("[yellow]Password change cancelled[/yellow]")
+        raise typer.Exit(0) from e
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[red]❌ Unexpected error: {e}[/red]")
+        raise typer.Exit(1) from e
+
+
+async def _change_password_async(username: str, new_password: str) -> None:
+    """
+    Async helper function to change a user's password.
+
+    Args:
+        username: Username of the user to update
+        new_password: New password to set
+    """
+    try:
+        # Get database service
+        db_service = query_component(cast(IComponentSite, service_site), IDatabase)
+
+        # Get a database session
+        session = db_service.create_session()
+
+        try:
+            from fivccliche.modules.users.methods import get_user_async, update_user_async
+
+            # Look up user
+            user = await get_user_async(session, username=username)
+            if not user:
+                console.print(f"[red]❌ User '{username}' not found[/red]")
+                raise typer.Exit(1)
+
+            # Update password
+            await update_user_async(session, user, password=new_password)
+
+            console.print("\n" + "=" * 60)
+            console.print("[bold green]✅ Password changed successfully![/bold green]")
+            console.print("=" * 60)
+            console.print(f"[cyan]Username:[/cyan] {user.username}")
+            console.print("=" * 60)
+
+        finally:
+            await session.close()
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[red]❌ Database error: {e}[/red]")
+        raise typer.Exit(1) from e
+
+
 def main():
     """
     Main entry point for the CLI
