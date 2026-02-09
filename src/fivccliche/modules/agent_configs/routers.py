@@ -75,7 +75,7 @@ async def list_embedding_configs_async(
 
 
 @router_embeddings.get(
-    "/{config_uuid}",
+    "/{config_uuid}/",
     summary="Get an embedding config by ID for the authenticated user.",
     response_model=schemas.UserEmbeddingSchema,
 )
@@ -100,7 +100,7 @@ async def get_embedding_config_async(
 
 
 @router_embeddings.patch(
-    "/{config_uuid}",
+    "/{config_uuid}/",
     summary="Update an embedding config by ID for the authenticated user.",
     response_model=schemas.UserEmbeddingSchema,
 )
@@ -139,7 +139,7 @@ async def update_embedding_config_async(
 
 
 @router_embeddings.delete(
-    "/{config_uuid}",
+    "/{config_uuid}/",
     summary="Delete an embedding config by ID for the authenticated user.",
     status_code=status.HTTP_204_NO_CONTENT,
 )
@@ -231,7 +231,7 @@ async def list_llm_configs_async(
 
 
 @router_models.get(
-    "/{config_uuid}",
+    "/{config_uuid}/",
     summary="Get an LLM config by ID for the authenticated user.",
     response_model=schemas.UserLLMSchema,
 )
@@ -257,7 +257,7 @@ async def get_llm_config_async(
 
 
 @router_models.patch(
-    "/{config_uuid}",
+    "/{config_uuid}/",
     summary="Update an LLM config by ID for the authenticated user.",
     response_model=schemas.UserLLMSchema,
 )
@@ -296,7 +296,7 @@ async def update_llm_config_async(
 
 
 @router_models.delete(
-    "/{config_uuid}",
+    "/{config_uuid}/",
     summary="Delete an LLM config by ID for the authenticated user.",
     status_code=status.HTTP_204_NO_CONTENT,
 )
@@ -388,7 +388,7 @@ async def list_agent_configs_async(
 
 
 @router_agents.get(
-    "/{config_uuid}",
+    "/{config_uuid}/",
     summary="Get an agent config by ID for the authenticated user.",
     response_model=schemas.UserAgentSchema,
 )
@@ -413,7 +413,7 @@ async def get_agent_config_async(
 
 
 @router_agents.patch(
-    "/{config_uuid}",
+    "/{config_uuid}/",
     summary="Update an agent config by ID for the authenticated user.",
     response_model=schemas.UserAgentSchema,
 )
@@ -451,7 +451,7 @@ async def update_agent_config_async(
     return config.to_schema()
 
 
-@router_agents.delete("/{config_uuid}", status_code=status.HTTP_204_NO_CONTENT)
+@router_agents.delete("/{config_uuid}/", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent_config_async(
     config_uuid: str,
     user: IUser = Depends(get_authenticated_user_async),
@@ -492,7 +492,7 @@ router_tools = APIRouter(prefix="/configs/tools", tags=["tool_configs"])
 
 
 @router_tools.post(
-    "/index",
+    "/index/",
     summary="Index tool for the authenticated user.",
     status_code=status.HTTP_200_OK,
 )
@@ -522,7 +522,7 @@ async def index_tool_async(
 
 
 @router_tools.post(
-    "/{config_uuid}/probe",
+    "/{config_uuid}/probe/",
     summary="Probe tool for the authenticated user.",
     status_code=status.HTTP_200_OK,
 )
@@ -603,7 +603,7 @@ async def list_tool_configs_async(
 
 
 @router_tools.get(
-    "/{config_uuid}",
+    "/{config_uuid}/",
     summary="Get a tool config by ID for the authenticated user.",
     response_model=schemas.UserToolSchema,
 )
@@ -628,7 +628,7 @@ async def get_tool_config_async(
 
 
 @router_tools.patch(
-    "/{config_uuid}",
+    "/{config_uuid}/",
     summary="Update a tool config by ID for the authenticated user.",
     response_model=schemas.UserToolSchema,
 )
@@ -667,7 +667,7 @@ async def update_tool_config_async(
 
 
 @router_tools.delete(
-    "/{config_uuid}",
+    "/{config_uuid}/",
     summary="Delete a tool config by ID for the authenticated user.",
     status_code=status.HTTP_204_NO_CONTENT,
 )

@@ -222,7 +222,7 @@ async def list_chats_async(
 
 
 @router_chats.get(
-    "/{chat_uuid}",
+    "/{chat_uuid}/",
     summary="Get a chat session by ID for the authenticated user.",
     response_model=schemas.UserChatSchema,
 )
@@ -247,7 +247,7 @@ async def get_chat_async(
 
 
 @router_chats.delete(
-    "/{chat_uuid}",
+    "/{chat_uuid}/",
     summary="Delete a chat session by ID for the authenticated user.",
     status_code=status.HTTP_204_NO_CONTENT,
 )
@@ -312,7 +312,7 @@ async def list_chat_messages_async(
 
 
 @router_messages.delete(
-    "/{chat_uuid}/messages/{message_uuid}",
+    "/{chat_uuid}/messages/{message_uuid}/",
     summary="Delete a chat message.",
     status_code=status.HTTP_204_NO_CONTENT,
 )

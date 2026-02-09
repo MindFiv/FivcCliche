@@ -58,7 +58,7 @@ async def create_user_async(
 
 
 @router.post(
-    "/login",
+    "/login/",
     summary="Authenticate a user and return JWT token.",
     response_model=schemas.UserLoginResponse,
 )
@@ -85,7 +85,7 @@ async def login_user_async(
 
 
 @router.get(
-    "/self",
+    "/self/",
     summary="Get the authenticated user's profile.",
     response_model=schemas.UserRead,
 )
@@ -128,7 +128,7 @@ async def list_users_async(
 
 
 @router.get(
-    "/{user_uuid}", summary="Get a user by ID (admin only).", response_model=schemas.UserRead
+    "/{user_uuid}/", summary="Get a user by ID (admin only).", response_model=schemas.UserRead
 )
 async def get_user_async(
     user_uuid: str,
@@ -152,7 +152,7 @@ async def get_user_async(
 
 
 @router.delete(
-    "/{user_uuid}",
+    "/{user_uuid}/",
     summary="Delete a user by ID (admin only).",
     status_code=status.HTTP_204_NO_CONTENT,
 )
