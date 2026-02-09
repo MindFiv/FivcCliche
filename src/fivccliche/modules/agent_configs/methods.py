@@ -14,7 +14,7 @@ from . import models, schemas
 
 async def create_embedding_config_async(
     session: AsyncSession,
-    user_uuid: str,
+    user_uuid: str | None,
     config_create: schemas.UserEmbeddingSchema,
     **kwargs,  # ignore additional arguments
 ) -> models.UserEmbedding:
@@ -157,7 +157,7 @@ async def delete_embedding_config_async(
 
 async def create_llm_config_async(
     session: AsyncSession,
-    user_uuid: str,
+    user_uuid: str | None,
     config_create: schemas.UserLLMSchema,
     **kwargs,  # ignore additional arguments
 ) -> models.UserLLM:
@@ -302,7 +302,7 @@ async def delete_llm_config_async(
 
 async def create_agent_config_async(
     session: AsyncSession,
-    user_uuid: str,
+    user_uuid: str | None,
     config_create: schemas.UserAgentSchema,
     **kwargs,  # ignore additional arguments
 ) -> models.UserAgent:
@@ -442,7 +442,7 @@ async def delete_agent_config_async(
 
 async def create_tool_config_async(
     session: AsyncSession,
-    user_uuid: str,
+    user_uuid: str | None,
     config_create: schemas.UserToolSchema,
     **kwargs,  # ignore additional arguments
 ) -> models.UserTool:

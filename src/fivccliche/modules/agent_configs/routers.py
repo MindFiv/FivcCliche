@@ -39,9 +39,11 @@ async def create_embedding_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
+    # Superusers create global configs (user_uuid=None), regular users create user-specific configs
+    owner_uuid = None if user.is_superuser else user.uuid
     config = await methods.create_embedding_config_async(
         session,
-        user.uuid,
+        owner_uuid,
         config_create,
     )
     return config.to_schema()
@@ -197,7 +199,9 @@ async def create_llm_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.create_llm_config_async(session, user.uuid, config_create)
+    # Superusers create global configs (user_uuid=None), regular users create user-specific configs
+    owner_uuid = None if user.is_superuser else user.uuid
+    config = await methods.create_llm_config_async(session, owner_uuid, config_create)
     return config.to_schema()
 
 
@@ -352,7 +356,9 @@ async def create_agent_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.create_agent_config_async(session, user.uuid, config_create)
+    # Superusers create global configs (user_uuid=None), regular users create user-specific configs
+    owner_uuid = None if user.is_superuser else user.uuid
+    config = await methods.create_agent_config_async(session, owner_uuid, config_create)
     return config.to_schema()
 
 
@@ -565,7 +571,9 @@ async def create_tool_config_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    config = await methods.create_tool_config_async(session, user.uuid, config_create)
+    # Superusers create global configs (user_uuid=None), regular users create user-specific configs
+    owner_uuid = None if user.is_superuser else user.uuid
+    config = await methods.create_tool_config_async(session, owner_uuid, config_create)
     return config.to_schema()
 
 
