@@ -840,7 +840,7 @@ wheels = [
 
 [[package]]
 name = "fivccliche"
-version = "0.1.15"
+version = "0.1.19"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -886,9 +886,9 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.104.0" },
     { name = "fastapi-cdn-host", specifier = ">=0.9.3" },
     { name = "fivcglue", specifier = ">=0.1.5" },
-    { name = "fivcplayground", specifier = ">=0.1.17" },
-    { name = "fivcplayground", extras = ["chroma"], specifier = ">=0.1.17" },
-    { name = "fivcplayground", extras = ["strands"], specifier = ">=0.1.17" },
+    { name = "fivcplayground", specifier = ">=0.1.19" },
+    { name = "fivcplayground", extras = ["chroma"], specifier = ">=0.1.19" },
+    { name = "fivcplayground", extras = ["strands"], specifier = ">=0.1.19" },
     { name = "greenlet", specifier = ">=3.2.4" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.25.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.5.0" },
@@ -925,11 +925,13 @@ wheels = [
 
 [[package]]
 name = "fivcplayground"
-version = "0.1.17"
+version = "0.1.19"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
+    { name = "jambo" },
     { name = "nest-asyncio" },
+    { name = "ollama" },
     { name = "openai" },
     { name = "pydantic" },
     { name = "python-dotenv" },
@@ -938,9 +940,9 @@ dependencies = [
     { name = "streamlit" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/79/1e/58c12b1c316ec92cd5f5da7174f5ad2711276c9cc960e36561ee1744c4d7/fivcplayground-0.1.17.tar.gz", hash = "sha256:7a644e1e35ca5f38e8ea37fe2bae40638d80a824762e08a13d5c2cb333c1855c", size = 112727 }
+sdist = { url = "https://files.pythonhosted.org/packages/85/0b/c973afdffc1269e2f6859d97b08526ddc2f471a8ee8ac05cc6d64b086bd3/fivcplayground-0.1.19.tar.gz", hash = "sha256:222c75b5c73907672db8ae0dce790e713199520a082f68d94851f571dde62cf4", size = 123002 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/84/22/28307e8e54577ea0086fe0a9400c780d2527515c92747cd009c8ca6c9899/fivcplayground-0.1.17-py3-none-any.whl", hash = "sha256:1b8cec9040dee64eb01bd9ddf29752c702a9bb44cc0474a6ea537f4efe606e4e", size = 87187 },
+    { url = "https://files.pythonhosted.org/packages/51/02/d799c17567361b07a1d0c3c9bfc0202a8283da6955ea0b949154282e69bc/fivcplayground-0.1.19-py3-none-any.whl", hash = "sha256:3a9bb9cf3af5622a4813c19bb4de535f884e58b95263e96c623e696d01d2ed64", size = 94065 },
 ]
 
 [package.optional-dependencies]
@@ -948,7 +950,7 @@ chroma = [
     { name = "chromadb" },
 ]
 strands = [
-    { name = "strands-agents" },
+    { name = "strands-agents", extra = ["ollama", "openai"] },
 ]
 
 [[package]]
@@ -1330,6 +1332,17 @@ sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484 },
 ]
+
+[[package]]
+name = "jambo"
+version = "0.1.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "email-validator" },
+    { name = "jsonschema" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/91/f5/74de157c7aece6a070f99f18201a0e2f46cdfd0f9e337efd411745ed9b22/jambo-0.1.7.tar.gz", hash = "sha256:df89ab8209ebdf7a6e92252ec925979cd3d32811bf4a8182a97dc35b7df58f74", size = 137822 }
 
 [[package]]
 name = "jinja2"
@@ -2107,6 +2120,19 @@ wheels = [
 ]
 
 [[package]]
+name = "ollama"
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9d/5a/652dac4b7affc2b37b95386f8ae78f22808af09d720689e3d7a86b6ed98e/ollama-0.6.1.tar.gz", hash = "sha256:478c67546836430034b415ed64fa890fd3d1ff91781a9d548b3325274e69d7c6", size = 51620 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/47/4f/4a617ee93d8208d2bcf26b2d8b9402ceaed03e3853c754940e2290fed063/ollama-0.6.1-py3-none-any.whl", hash = "sha256:fc4c984b345735c5486faeee67d8a265214a31cbb828167782dc642ce0a2bf8c", size = 14354 },
+]
+
+[[package]]
 name = "onnxruntime"
 version = "1.23.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2146,7 +2172,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "2.8.1"
+version = "1.109.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -2158,9 +2184,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d5/e4/42591e356f1d53c568418dc7e30dcda7be31dd5a4d570bca22acb0525862/openai-2.8.1.tar.gz", hash = "sha256:cb1b79eef6e809f6da326a7ef6038719e35aa944c42d081807bfa1be8060f15f", size = 602490 }
+sdist = { url = "https://files.pythonhosted.org/packages/c6/a1/a303104dc55fc546a3f6914c842d3da471c64eec92043aef8f652eb6c524/openai-1.109.1.tar.gz", hash = "sha256:d173ed8dbca665892a6db099b4a2dfac624f94d20a93f46eb0b56aae940ed869", size = 564133 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/55/4f/dbc0c124c40cb390508a82770fb9f6e3ed162560181a85089191a851c59a/openai-2.8.1-py3-none-any.whl", hash = "sha256:c6c3b5a04994734386e8dad3c00a393f56d3b68a27cd2e8acae91a59e4122463", size = 1022688 },
+    { url = "https://files.pythonhosted.org/packages/1d/2a/7dd3d207ec669cacc1f186fd856a0f61dbc255d24f6fdc1a6715d6051b0f/openai-1.109.1-py3-none-any.whl", hash = "sha256:6bcaf57086cf59159b8e27447e4e7dd019db5d29a438072fbd49c290c7e65315", size = 948627 },
 ]
 
 [[package]]
@@ -3628,6 +3654,14 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/26/84/0e165337971a9d7ea1ad850fc976f47b96c20535a4624b055d207c7fe519/strands_agents-1.20.0.tar.gz", hash = "sha256:3b2a2bbb01f65f32d3ce3520b4875d32bb69b1e1879e4e3af41f3019500028a4", size = 613629 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8a/9c/c23d87d1305e671a4281500d846b6b3e49649ec27d0dec2831bcdb58d704/strands_agents-1.20.0-py3-none-any.whl", hash = "sha256:f8d0c868867191e6a1eadf3c9b060b3719c79323b4a02dfd127e4b2c67e6fc63", size = 319068 },
+]
+
+[package.optional-dependencies]
+ollama = [
+    { name = "ollama" },
+]
+openai = [
+    { name = "openai" },
 ]
 
 [[package]]

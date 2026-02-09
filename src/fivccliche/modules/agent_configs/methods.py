@@ -314,6 +314,7 @@ async def create_agent_config_async(
         model_id=config_create.model_id,
         tools_ids=config_create.tool_ids,
         system_prompt=config_create.system_prompt,
+        response_format=config_create.response_format,
     )
     session.add(config)
     await session.commit()
@@ -418,6 +419,8 @@ async def update_agent_config_async(
         config.tools_ids = config_update.tool_ids
     if config_update.system_prompt is not None:
         config.system_prompt = config_update.system_prompt
+    if config_update.response_format is not None:
+        config.response_format = config_update.response_format
     session.add(config)
     await session.commit()
     await session.refresh(config)

@@ -1,3 +1,4 @@
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import Index
@@ -222,6 +223,11 @@ class UserAgent(SQLModel, table=True):
         max_length=1024,
         description="Agent system prompt.",
     )
+    response_format: dict[str, Any] | None = Field(
+        sa_type=JSON,
+        default=None,
+        description="Response format for the agent in JSON Schema format.",
+    )
     user_uuid: str | None = Field(
         default=None,
         foreign_key="user.uuid",
@@ -236,5 +242,6 @@ class UserAgent(SQLModel, table=True):
             model_id=self.model_id,
             tool_ids=self.tools_ids,
             system_prompt=self.system_prompt,
+            response_format=self.response_format,
             user_uuid=self.user_uuid,
         )

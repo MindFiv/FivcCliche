@@ -537,12 +537,20 @@ class TestAgentConfigAPI:
                 "description": "Test agent",
                 "model_id": "model123",
                 "system_prompt": "You are a helpful assistant",
+                "response_format": {
+                    "type": "object",
+                    "properties": {"answer": {"type": "string"}},
+                },
             },
         )
         assert response.status_code == 201
         data = response.json()
         assert data["id"] == "agent-1"
         assert data["model_id"] == "model123"
+        assert data["response_format"] == {
+            "type": "object",
+            "properties": {"answer": {"type": "string"}},
+        }
         assert "user_uuid" in data
 
     def test_list_agent_configs(self, client: TestClient, auth_token: str):
@@ -615,11 +623,19 @@ class TestAgentConfigAPI:
                 "id": "agent-update",
                 "model_id": "model123",
                 "system_prompt": "New prompt",
+                "response_format": {
+                    "type": "object",
+                    "properties": {"result": {"type": "integer"}},
+                },
             },
         )
         assert response.status_code == 200
         data = response.json()
         assert data["system_prompt"] == "New prompt"
+        assert data["response_format"] == {
+            "type": "object",
+            "properties": {"result": {"type": "integer"}},
+        }
 
     def test_delete_agent_config(self, client: TestClient, auth_token: str):
         """Test deleting an agent config."""

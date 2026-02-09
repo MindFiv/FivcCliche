@@ -133,6 +133,7 @@ async def session():
                     model_id VARCHAR NOT NULL,
                     tools_ids JSON,
                     system_prompt VARCHAR,
+                    response_format JSON,
                     user_uuid VARCHAR,
                     PRIMARY KEY (uuid),
                     UNIQUE (id, user_uuid),
@@ -615,12 +616,17 @@ class TestAgentConfigService:
             description="Test agent",
             model_id="model123",
             system_prompt="You are a helpful assistant",
+            response_format={"type": "object", "properties": {"answer": {"type": "string"}}},
         )
         config = await methods.create_agent_config_async(session, "user123", config_create)
 
         assert config.id is not None
         assert config.user_uuid == "user123"
         assert config.model_id == "model123"
+        assert config.response_format == {
+            "type": "object",
+            "properties": {"answer": {"type": "string"}},
+        }
 
     async def test_get_agent_config(self, session: AsyncSession):
         """Test getting an agent config by ID."""
@@ -661,11 +667,16 @@ class TestAgentConfigService:
             id="agent-3",
             model_id="model123",
             system_prompt="New prompt",
+            response_format={"type": "object", "properties": {"result": {"type": "integer"}}},
         )
         updated = await methods.update_agent_config_async(session, config, config_update)
 
         assert updated.system_prompt == "New prompt"
         assert updated.model_id == "model123"
+        assert updated.response_format == {
+            "type": "object",
+            "properties": {"result": {"type": "integer"}},
+        }
 
     async def test_delete_agent_config(self, session: AsyncSession):
         """Test deleting an agent config."""
@@ -1087,6 +1098,7 @@ class TestAgentRepositoryImpl:
             model_id="model123",
             description="Test agent",
             system_prompt="You are helpful",
+            response_format={"type": "object", "properties": {"name": {"type": "string"}}},
         )
 
         await repo.update_agent_config_async(config)
@@ -1097,6 +1109,10 @@ class TestAgentRepositoryImpl:
         )
         assert retrieved is not None
         assert retrieved.system_prompt == "You are helpful"
+        assert retrieved.response_format == {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+        }
 
     async def test_update_agent_config_update_existing(self, session: AsyncSession):
         """Test updating an existing agent config via update_agent_config."""
