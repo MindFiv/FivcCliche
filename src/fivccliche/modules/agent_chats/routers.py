@@ -89,7 +89,9 @@ class ChatStreamingGenerator:
                     data.update(
                         {
                             "chat_uuid": self.chat_uuid,
-                            "streaming_text": ev_run.streaming_text,
+                            "delta": (
+                                ev_run.delta.model_dump(mode="json") if ev_run.delta else None
+                            ),
                         }
                     )
                     data = {"event": "stream", "info": data}
