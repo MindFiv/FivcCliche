@@ -14,8 +14,8 @@ class IUserChatProvider(IComponent):
     @abstractmethod
     def get_chat_repository(
         self,
-        user_uuid: str | None = None,
-        session: AsyncSession | None = None,
+        user_uuid: str,
+        session: AsyncSession,
         **kwargs,  # ignore additional arguments
     ) -> UserChatRepository:
         """Get the chat repository."""

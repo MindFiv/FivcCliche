@@ -15,7 +15,7 @@ from . import methods, routers
 class UserChatRepositoryImpl(UserChatRepository):
     """Chat repository implementation."""
 
-    def __init__(self, user_uuid: str | None = None, session: AsyncSession | None = None):
+    def __init__(self, user_uuid: str, session: AsyncSession):
         self.user_uuid = user_uuid
         self.session = session
 
@@ -223,13 +223,7 @@ class UserChatRepositoryImpl(UserChatRepository):
 
         Returns:
             List of AgentRun objects
-
-        Raises:
-            ValueError: If session or user_uuid is not set
         """
-        if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for list_agent_runs operation")
-
         # Verify the chat exists and belongs to the user
         chat = await methods.get_chat_async(self.session, session_id, self.user_uuid)
         if not chat:
@@ -274,8 +268,8 @@ class UserChatProviderImpl(IUserChatProvider):
 
     def get_chat_repository(
         self,
-        user_uuid: str | None = None,
-        session: AsyncSession | None = None,
+        user_uuid: str,
+        session: AsyncSession,
         **kwargs,
     ) -> UserChatRepository:
         """Get the chat repository."""
