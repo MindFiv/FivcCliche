@@ -1465,3 +1465,289 @@ class TestConfigsAuthorizationTool:
         )
         # Other user shouldn't be able to find the config, so 404 is correct
         assert response.status_code == 404
+
+
+class TestGlobalConfigAuthorization:
+    """Test cases for global config authorization (superuser privileges)."""
+
+    def test_superuser_can_update_global_embedding_config(
+        self, client: TestClient, admin_token: str
+    ):
+        """Test that superuser can update global embedding configs."""
+        # Create global config as superuser
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-embedding-1",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+        assert create_response.json()["user_uuid"] is None  # Global config
+
+        # Update as superuser - should succeed
+        response = client.patch(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-embedding-1",
+                "model": "text-embedding-3-large",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["model"] == "text-embedding-3-large"
+
+    def test_superuser_can_delete_global_embedding_config(
+        self, client: TestClient, admin_token: str
+    ):
+        """Test that superuser can delete global embedding configs."""
+        # Create global config as superuser
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-embedding-2",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Delete as superuser - should succeed
+        response = client.delete(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert response.status_code == 204
+
+    def test_regular_user_cannot_update_global_embedding_config(
+        self, client: TestClient, admin_token: str, auth_token: str
+    ):
+        """Test that regular user cannot update global embedding configs."""
+        # Create global config as superuser
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-embedding-3",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Try to update as regular user - should fail with 403
+        response = client.patch(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "global-embedding-3",
+                "model": "text-embedding-3-large",
+            },
+        )
+        assert response.status_code == 403
+        assert "Cannot update global configs" in response.json()["detail"]
+
+    def test_regular_user_cannot_delete_global_embedding_config(
+        self, client: TestClient, admin_token: str, auth_token: str
+    ):
+        """Test that regular user cannot delete global embedding configs."""
+        # Create global config as superuser
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-embedding-4",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Try to delete as regular user - should fail with 403
+        response = client.delete(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 403
+        assert "Cannot delete global configs" in response.json()["detail"]
+
+    def test_superuser_cannot_update_other_user_config(
+        self, client: TestClient, admin_token: str, auth_token: str
+    ):
+        """Test that superuser cannot update another user's config.
+
+        Note: Superusers get 404 because they can't see other users' configs
+        (GET queries filter by user_uuid). This is the expected behavior.
+        """
+        # Create user-specific config as regular user
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "user-embedding-1",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+        assert create_response.json()["user_uuid"] is not None  # User-specific config
+
+        # Try to update as superuser - gets 404 because can't see other users' configs
+        response = client.patch(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "user-embedding-1",
+                "model": "text-embedding-3-large",
+            },
+        )
+        assert response.status_code == 404
+
+    def test_superuser_cannot_delete_other_user_config(
+        self, client: TestClient, admin_token: str, auth_token: str
+    ):
+        """Test that superuser cannot delete another user's config.
+
+        Note: Superusers get 404 because they can't see other users' configs
+        (GET queries filter by user_uuid). This is the expected behavior.
+        """
+        # Create user-specific config as regular user
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "user-embedding-2",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Try to delete as superuser - gets 404 because can't see other users' configs
+        response = client.delete(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert response.status_code == 404
+
+    def test_superuser_can_update_global_llm_config(self, client: TestClient, admin_token: str):
+        """Test that superuser can update global LLM configs."""
+        # Create global config as superuser
+        create_response = client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-llm-1",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Update as superuser - should succeed
+        response = client.patch(
+            f"/configs/models/{config_uuid}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-llm-1",
+                "model": "gpt-4-turbo",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["model"] == "gpt-4-turbo"
+
+    def test_superuser_can_delete_global_llm_config(self, client: TestClient, admin_token: str):
+        """Test that superuser can delete global LLM configs."""
+        # Create global config as superuser
+        create_response = client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-llm-2",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Delete as superuser - should succeed
+        response = client.delete(
+            f"/configs/models/{config_uuid}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert response.status_code == 204
+
+    def test_regular_user_cannot_update_global_llm_config(
+        self, client: TestClient, admin_token: str, auth_token: str
+    ):
+        """Test that regular user cannot update global LLM configs."""
+        # Create global config as superuser
+        create_response = client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-llm-3",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Try to update as regular user - should fail with 403
+        response = client.patch(
+            f"/configs/models/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "global-llm-3",
+                "model": "gpt-4-turbo",
+            },
+        )
+        assert response.status_code == 403
+        assert "Cannot update global configs" in response.json()["detail"]
+
+    def test_regular_user_cannot_delete_global_llm_config(
+        self, client: TestClient, admin_token: str, auth_token: str
+    ):
+        """Test that regular user cannot delete global LLM configs."""
+        # Create global config as superuser
+        create_response = client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-llm-4",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Try to delete as regular user - should fail with 403
+        response = client.delete(
+            f"/configs/models/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 403
+        assert "Cannot delete global configs" in response.json()["detail"]

@@ -14,7 +14,7 @@ from fivccliche.services.implements.modules import ModuleSiteImpl
 from fivcglue.implements.utils import load_component_site
 
 # Import models to ensure they're registered with SQLModel
-from fivccliche.modules.users.models import User  # noqa: F401
+from fivccliche.modules.users.models import User
 from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage  # noqa: F401
 
 
@@ -67,7 +67,7 @@ def client():
 
         client = TestClient(app)
 
-        # Create admin user
+        # Create admin user and regular test user
         loop.run_until_complete(
             methods.create_user_async(
                 async_session,
@@ -77,6 +77,19 @@ def client():
                 is_superuser=True,
             )
         )
+        loop.run_until_complete(
+            methods.create_user_async(
+                async_session,
+                username="testuser",
+                email="test@example.com",
+                password="password123",
+                is_superuser=False,
+            )
+        )
+
+        # Store loop and async_session in client for test access
+        client.loop = loop
+        client.async_session = async_session
 
         yield client
     finally:
@@ -93,6 +106,17 @@ def auth_token(client: TestClient):
         json={"username": "admin", "password": "admin123"},
     )
     return admin_response.json()["access_token"]
+
+
+@pytest.fixture
+def regular_user_token(client: TestClient):
+    """Generate a JWT token for a regular test user."""
+    # Login as testuser
+    response = client.post(
+        "/users/login",
+        json={"username": "testuser", "password": "password123"},
+    )
+    return response.json()["access_token"]
 
 
 class TestChatAPI:
@@ -264,18 +288,18 @@ class TestChatIntegration:
         assert response.status_code == 404
 
     def test_list_messages_for_nonexistent_chat_returns_404(
-        self, client: TestClient, auth_token: str
+        self, client: TestClient, regular_user_token: str
     ):
         """Test that listing messages for non-existent chat returns 404."""
-        headers = {"Authorization": f"Bearer {auth_token}"}
+        headers = {"Authorization": f"Bearer {regular_user_token}"}
         response = client.get("/chats/nonexistent-uuid/messages/", headers=headers)
         assert response.status_code == 404
 
     def test_delete_message_from_nonexistent_chat_returns_404(
-        self, client: TestClient, auth_token: str
+        self, client: TestClient, regular_user_token: str
     ):
         """Test that deleting a message from non-existent chat returns 404."""
-        headers = {"Authorization": f"Bearer {auth_token}"}
+        headers = {"Authorization": f"Bearer {regular_user_token}"}
         response = client.delete(
             "/chats/nonexistent-uuid/messages/nonexistent-message", headers=headers
         )
@@ -490,3 +514,224 @@ class TestChatEndpointValidation:
         )
         # Returns 404 because chat doesn't exist
         assert response.status_code == 404
+
+
+class TestGlobalChatAuthorization:
+    """Test cases for global chat authorization (superuser privileges)."""
+
+    def test_superuser_can_delete_global_chat(self, client: TestClient):
+        """Test that superuser can delete global chats."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        # Login as admin
+        admin_response = client.post(
+            "/users/login",
+            json={"username": "admin", "password": "admin123"},
+        )
+        admin_token = admin_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {admin_token}"}
+
+        # Create a global chat directly in DB
+        loop = client.loop
+
+        async def setup():
+            chat = await chat_methods.create_chat_async(
+                client.async_session,
+                user_uuid=None,  # Global chat
+                agent_id="test-agent",
+            )
+            return chat.uuid
+
+        chat_uuid = loop.run_until_complete(setup())
+
+        # Delete as superuser - should succeed
+        response = client.delete(f"/chats/{chat_uuid}", headers=headers)
+        assert response.status_code == 204
+
+    def test_regular_user_cannot_delete_global_chat(
+        self, client: TestClient, regular_user_token: str
+    ):
+        """Test that regular user cannot delete global chats."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        headers = {"Authorization": f"Bearer {regular_user_token}"}
+
+        # Create a global chat directly in DB
+        loop = client.loop
+
+        async def setup():
+            chat = await chat_methods.create_chat_async(
+                client.async_session,
+                user_uuid=None,  # Global chat
+                agent_id="test-agent",
+            )
+            return chat.uuid
+
+        chat_uuid = loop.run_until_complete(setup())
+
+        # Try to delete as regular user - should fail with 403
+        response = client.delete(f"/chats/{chat_uuid}", headers=headers)
+        assert response.status_code == 403
+        assert "Cannot delete global chats" in response.json()["detail"]
+
+    def test_superuser_cannot_delete_other_user_chat(
+        self, client: TestClient, regular_user_token: str
+    ):
+        """Test that superuser cannot delete another user's chat.
+
+        Note: Superusers get 404 because they can't see other users' chats
+        (GET queries filter by user_uuid). This is the expected behavior.
+        """
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        # Login as admin
+        admin_response = client.post(
+            "/users/login",
+            json={"username": "admin", "password": "admin123"},
+        )
+        admin_token = admin_response.json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        # Get testuser's UUID
+        loop = client.loop
+
+        async def get_user():
+            from sqlmodel import select
+
+            stmt = select(User).where(User.username == "testuser")
+            result = await client.async_session.execute(stmt)
+            user = result.scalars().first()
+            return user.uuid
+
+        user_uuid = loop.run_until_complete(get_user())
+
+        # Create a user-specific chat
+        async def setup():
+            chat = await chat_methods.create_chat_async(
+                client.async_session,
+                user_uuid=user_uuid,  # User-specific chat
+                agent_id="test-agent",
+            )
+            return chat.uuid
+
+        chat_uuid = loop.run_until_complete(setup())
+
+        # Try to delete as superuser - gets 404 because can't see other users' chats
+        response = client.delete(f"/chats/{chat_uuid}", headers=admin_headers)
+        assert response.status_code == 404
+
+    def test_regular_user_can_see_global_chats(self, client: TestClient, regular_user_token: str):
+        """Test that regular users can see global chats in their list."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        headers = {"Authorization": f"Bearer {regular_user_token}"}
+
+        # Get testuser's UUID
+        loop = client.loop
+
+        async def get_user():
+            from sqlmodel import select
+
+            stmt = select(User).where(User.username == "testuser")
+            result = await client.async_session.execute(stmt)
+            user = result.scalars().first()
+            return user.uuid
+
+        user_uuid = loop.run_until_complete(get_user())
+
+        # Create a global chat and a user-specific chat
+        async def setup():
+            global_chat = await chat_methods.create_chat_async(
+                client.async_session,
+                user_uuid=None,  # Global chat
+                agent_id="test-agent-global",
+            )
+            user_chat = await chat_methods.create_chat_async(
+                client.async_session,
+                user_uuid=user_uuid,  # User-specific chat
+                agent_id="test-agent-user",
+            )
+            return global_chat.uuid, user_chat.uuid
+
+        global_chat_uuid, user_chat_uuid = loop.run_until_complete(setup())
+
+        # List chats as regular user - should see both
+        response = client.get("/chats/", headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] >= 2
+
+        chat_uuids = [chat["uuid"] for chat in data["results"]]
+        assert global_chat_uuid in chat_uuids
+        assert user_chat_uuid in chat_uuids
+
+    def test_regular_user_cannot_delete_message_in_global_chat(
+        self, client: TestClient, regular_user_token: str
+    ):
+        """Test that regular user cannot delete messages in global chats."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        headers = {"Authorization": f"Bearer {regular_user_token}"}
+
+        # Create a global chat with a message
+        loop = client.loop
+
+        async def setup():
+            chat = await chat_methods.create_chat_async(
+                client.async_session,
+                user_uuid=None,  # Global chat
+                agent_id="test-agent",
+            )
+            message = await chat_methods.create_chat_message_async(
+                client.async_session,
+                chat_uuid=chat.uuid,
+                query={"text": "Hello"},
+            )
+            return chat.uuid, message.uuid
+
+        chat_uuid, message_uuid = loop.run_until_complete(setup())
+
+        # Try to delete message as regular user - should fail with 403
+        response = client.delete(
+            f"/chats/{chat_uuid}/messages/{message_uuid}",
+            headers=headers,
+        )
+        assert response.status_code == 403
+        assert "Cannot delete messages in global chats" in response.json()["detail"]
+
+    def test_superuser_can_delete_message_in_global_chat(self, client: TestClient):
+        """Test that superuser can delete messages in global chats."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        # Login as admin
+        admin_response = client.post(
+            "/users/login",
+            json={"username": "admin", "password": "admin123"},
+        )
+        admin_token = admin_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {admin_token}"}
+
+        # Create a global chat with a message
+        loop = client.loop
+
+        async def setup():
+            chat = await chat_methods.create_chat_async(
+                client.async_session,
+                user_uuid=None,  # Global chat
+                agent_id="test-agent",
+            )
+            message = await chat_methods.create_chat_message_async(
+                client.async_session,
+                chat_uuid=chat.uuid,
+                query={"text": "Hello"},
+            )
+            return chat.uuid, message.uuid
+
+        chat_uuid, message_uuid = loop.run_until_complete(setup())
+
+        # Delete message as superuser - should succeed
+        response = client.delete(
+            f"/chats/{chat_uuid}/messages/{message_uuid}",
+            headers=headers,
+        )
+        assert response.status_code == 204

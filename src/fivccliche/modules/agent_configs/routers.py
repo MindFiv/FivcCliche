@@ -129,7 +129,7 @@ async def update_embedding_config_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot update global configs",
         )
-    if config.user_uuid != user.uuid:
+    if config.user_uuid is not None and config.user_uuid != user.uuid:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot update configs belonging to other users",
@@ -167,7 +167,7 @@ async def delete_embedding_config_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot delete global configs",
         )
-    if config.user_uuid != user.uuid:
+    if config.user_uuid is not None and config.user_uuid != user.uuid:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot delete configs belonging to other users",
@@ -286,7 +286,7 @@ async def update_llm_config_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot update global configs",
         )
-    if config.user_uuid != user.uuid:
+    if config.user_uuid is not None and config.user_uuid != user.uuid:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot update configs belonging to other users",
@@ -324,7 +324,7 @@ async def delete_llm_config_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot delete global configs",
         )
-    if config.user_uuid != user.uuid:
+    if config.user_uuid is not None and config.user_uuid != user.uuid:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot delete configs belonging to other users",
@@ -442,7 +442,7 @@ async def update_agent_config_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot update global configs",
         )
-    if config.user_uuid != user.uuid:
+    if config.user_uuid is not None and config.user_uuid != user.uuid:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot update configs belonging to other users",
@@ -476,7 +476,7 @@ async def delete_agent_config_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot delete global configs",
         )
-    if config.user_uuid != user.uuid:
+    if config.user_uuid is not None and config.user_uuid != user.uuid:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot delete configs belonging to other users",
@@ -657,7 +657,7 @@ async def update_tool_config_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot update global configs",
         )
-    if config.user_uuid != user.uuid:
+    if config.user_uuid is not None and config.user_uuid != user.uuid:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot update configs belonging to other users",
@@ -695,7 +695,7 @@ async def delete_tool_config_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot delete global configs",
         )
-    if config.user_uuid != user.uuid:
+    if config.user_uuid is not None and config.user_uuid != user.uuid:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot delete configs belonging to other users",

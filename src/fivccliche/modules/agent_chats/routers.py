@@ -179,6 +179,9 @@ async def query_chat_async(
     chat_queue = asyncio.Queue()
     chat_uuid = chat.uuid if chat else str(uuid.uuid4())
 
+    # Determine owner_uuid: None for superusers (global chats), user.uuid for regular users
+    owner_uuid = None if user.is_superuser else user.uuid
+
     # Debug: Event callback wrapper
     def _event_callback(ev, run):
         chat_queue.put_nowait((ev, run))
@@ -188,7 +191,7 @@ async def query_chat_async(
             query=chat_query.query,
             tool_retriever=agent_tools,
             agent_run_repository=chat_provider.get_chat_repository(
-                user_uuid=user.uuid, session=session
+                user_uuid=owner_uuid, session=session
             ),
             agent_run_session_id=chat_uuid,
             event_callback=_event_callback,
@@ -270,6 +273,20 @@ async def delete_chat_async(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Chat not found",
         )
+
+    # Authorization check: users can only delete their own chats
+    # Only superusers can delete global chats (where user_uuid is None)
+    if chat.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete global chats",
+        )
+    if chat.user_uuid is not None and chat.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete other user's chats",
+        )
+
     await methods.delete_chat_async(session, chat)
 
 
@@ -330,6 +347,28 @@ async def delete_chat_message_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
+
+    # First verify the chat exists and user has access
+    chat = await methods.get_chat_async(session, chat_uuid, user.uuid)
+    if not chat:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat not found",
+        )
+
+    # Authorization check for chat ownership
+    if chat.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete messages in global chats",
+        )
+    if chat.user_uuid is not None and chat.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete messages in other user's chats",
+        )
+
+    # Now get and delete the message
     message = await methods.get_chat_message_async(
         session,
         message_uuid,

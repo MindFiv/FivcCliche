@@ -33,8 +33,8 @@ async def create_chat_async(
     Raises:
         ValueError: If required parameters are missing
     """
-    if not user_uuid or not agent_id:
-        raise ValueError("user_uuid and agent_id are required to create a chat")
+    if not agent_id:
+        raise ValueError("agent_id is required to create a chat")
 
     chat = models.UserChat(
         uuid=chat_uuid,  # Will use auto-generated UUID if None
@@ -53,7 +53,11 @@ async def get_chat_async(
 ) -> models.UserChat | None:
     """Get a chat session by UUID for a specific user."""
     statement = select(models.UserChat).where(
-        (models.UserChat.uuid == chat_uuid) & (models.UserChat.user_uuid == user_uuid)
+        (models.UserChat.uuid == chat_uuid)
+        & (
+            (models.UserChat.user_uuid == user_uuid)
+            | (models.UserChat.user_uuid == None)  # noqa: E711
+        )
     )
     result = await session.execute(statement)
     return result.scalars().first()
@@ -69,7 +73,10 @@ async def list_chats_async(
     """List all chat sessions for a user with pagination."""
     statement = (
         select(models.UserChat)
-        .where(models.UserChat.user_uuid == user_uuid)
+        .where(
+            (models.UserChat.user_uuid == user_uuid)
+            | (models.UserChat.user_uuid == None)  # noqa: E711
+        )
         .offset(skip)
         .limit(limit)
     )
@@ -84,7 +91,7 @@ async def count_chats_async(
 ) -> int:
     """Count the number of chat sessions for a user."""
     statement = select(func.count(models.UserChat.uuid)).where(
-        models.UserChat.user_uuid == user_uuid
+        (models.UserChat.user_uuid == user_uuid) | (models.UserChat.user_uuid == None)  # noqa: E711
     )
     result = await session.execute(statement)
     return result.scalar() or 0
