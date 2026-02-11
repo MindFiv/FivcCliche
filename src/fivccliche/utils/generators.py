@@ -1,7 +1,8 @@
 import asyncio
 import json
+from collections.abc import Callable
 
-from fivcplayground.agents import AgentRunEvent, create_agent_async
+from fivcplayground.agents import AgentRunEvent, AgentRun, create_agent_async
 from fivcplayground.tools import create_tool_retriever_async
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
@@ -18,10 +19,12 @@ class _ChatStreamingGenerator:
         chat_task: asyncio.Task,
         chat_queue: asyncio.Queue,
         chat_uuid: str | None = None,
+        chat_finish_callback: Callable[[AgentRun], None] | None = None,
     ):
         self.chat_task = chat_task
         self.chat_queue = chat_queue
         self.chat_uuid = chat_uuid
+        self.chat_finish_callback = chat_finish_callback
 
     async def __call__(self, *args, **kwargs):
         try:
@@ -66,6 +69,9 @@ class _ChatStreamingGenerator:
                     data_json = json.dumps(data)
                     yield f"data: {data_json}\n\n"
 
+                    if self.chat_finish_callback:
+                        self.chat_finish_callback(ev_run)
+
                 elif ev == AgentRunEvent.STREAM:
                     data = ev_run.model_dump(mode="json", include=data_fields)
                     data.update(
@@ -104,6 +110,7 @@ async def create_chat_streaming_generator_async(
     chat_query: str = "",
     chat_uuid: str | None = None,
     chat_agent_id: str = "default",
+    chat_finish_callback: Callable[[AgentRun], None] | None = None,
     session: AsyncSession | None = None,
     **kwargs,
 ):
@@ -148,4 +155,9 @@ async def create_chat_streaming_generator_async(
             event_callback=_event_callback,
         )
     )
-    return _ChatStreamingGenerator(chat_task, chat_queue, chat_uuid=chat_uuid)
+    return _ChatStreamingGenerator(
+        chat_task,
+        chat_queue,
+        chat_uuid=chat_uuid,
+        chat_finish_callback=chat_finish_callback,
+    )
