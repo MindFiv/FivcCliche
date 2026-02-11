@@ -321,12 +321,12 @@ class TestChatIntegration:
 
 
 class TestTaskStreamingGenerator:
-    """Test cases for ChatStreamingGenerator class."""
+    """Test cases for _ChatStreamingGenerator class."""
 
     def test_task_streaming_generator_initialization(self):
-        """Test ChatStreamingGenerator initialization."""
+        """Test _ChatStreamingGenerator initialization."""
         import asyncio
-        from fivccliche.modules.agent_chats.routers import ChatStreamingGenerator
+        from fivccliche.utils.generators import _ChatStreamingGenerator
 
         # Create a simple task
         async def dummy_task():
@@ -338,7 +338,7 @@ class TestTaskStreamingGenerator:
             task = loop.create_task(dummy_task())
             queue = asyncio.Queue()
 
-            generator = ChatStreamingGenerator(task, queue)
+            generator = _ChatStreamingGenerator(task, queue)
             assert generator.chat_task == task
             assert generator.chat_queue == queue
             assert hasattr(generator, "__call__")  # noqa
@@ -353,9 +353,9 @@ class TestTaskStreamingGenerator:
             loop.close()
 
     def test_task_streaming_generator_has_call_method(self):
-        """Test ChatStreamingGenerator has __call__ method."""
+        """Test _ChatStreamingGenerator has __call__ method."""
         import asyncio
-        from fivccliche.modules.agent_chats.routers import ChatStreamingGenerator
+        from fivccliche.utils.generators import _ChatStreamingGenerator
 
         async def dummy_task():
             await asyncio.sleep(0.01)
@@ -366,7 +366,7 @@ class TestTaskStreamingGenerator:
             task = loop.create_task(dummy_task())
             queue = asyncio.Queue()
 
-            generator = ChatStreamingGenerator(task, queue)
+            generator = _ChatStreamingGenerator(task, queue)
             # Verify it's callable
             assert callable(generator)
             # Verify calling it returns an async generator
@@ -383,9 +383,9 @@ class TestTaskStreamingGenerator:
             loop.close()
 
     def test_task_streaming_generator_attributes(self):
-        """Test ChatStreamingGenerator has required attributes."""
+        """Test _ChatStreamingGenerator has required attributes."""
         import asyncio
-        from fivccliche.modules.agent_chats.routers import ChatStreamingGenerator
+        from fivccliche.utils.generators import _ChatStreamingGenerator
 
         async def dummy_task():
             await asyncio.sleep(0.01)
@@ -396,7 +396,7 @@ class TestTaskStreamingGenerator:
             task = loop.create_task(dummy_task())
             queue = asyncio.Queue()
 
-            generator = ChatStreamingGenerator(task, queue)
+            generator = _ChatStreamingGenerator(task, queue)
             # Verify attributes
             assert hasattr(generator, "chat_task")
             assert hasattr(generator, "chat_queue")
@@ -730,6 +730,280 @@ class TestGlobalChatAuthorization:
         chat_uuid, message_uuid = loop.run_until_complete(setup())
 
         # Delete message as superuser - should succeed
+        response = client.delete(
+            f"/chats/{chat_uuid}/messages/{message_uuid}",
+            headers=headers,
+        )
+        assert response.status_code == 204
+
+
+class TestChatQueryValidation:
+    """Test query endpoint validation for chat_uuid and agent_id parameters."""
+
+    def test_query_with_both_chat_uuid_and_agent_id_fails(self, client, auth_token):
+        """Verify 400 error when both chat_uuid and agent_id are provided."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.post(
+            "/chats/",
+            headers=headers,
+            json={
+                "query": "test query",
+                "chat_uuid": "some-uuid",
+                "agent_id": "some-agent",
+            },
+        )
+        assert response.status_code == 400
+        assert "Cannot specify both" in response.json()["detail"]
+
+    def test_query_with_neither_chat_uuid_nor_agent_id_fails(self, client, auth_token):
+        """Verify 400 error when neither chat_uuid nor agent_id is provided."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.post(
+            "/chats/",
+            headers=headers,
+            json={"query": "test query"},
+        )
+        assert response.status_code == 400
+        assert "Must specify either" in response.json()["detail"]
+
+
+class TestChatDeleteAuthorization:
+    """Test authorization for chat deletion across users."""
+
+    def test_regular_user_cannot_delete_global_chat(self, client, regular_user_token):
+        """Verify 403 error when regular user tries to delete global chat."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=None,  # Global chat
+                agent_id="test-agent",
+            )
+            return str(chat.uuid)
+
+        chat_uuid = loop.run_until_complete(setup())
+
+        # Try to delete as regular user
+        headers = {"Authorization": f"Bearer {regular_user_token}"}
+        response = client.delete(f"/chats/{chat_uuid}", headers=headers)
+        assert response.status_code == 403
+        assert "cannot delete global chats" in response.json()["detail"].lower()
+
+    def test_regular_user_cannot_delete_other_users_chat(self, client, regular_user_token):
+        """Verify 404 when regular user tries to delete another user's chat (not visible)."""
+        import uuid
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            # Create chat for a different user
+            other_user_uuid = str(uuid.uuid4())
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=other_user_uuid,
+                agent_id="test-agent",
+            )
+            return str(chat.uuid)
+
+        chat_uuid = loop.run_until_complete(setup())
+
+        # Try to delete as regular user - should get 404 because chat is not visible
+        headers = {"Authorization": f"Bearer {regular_user_token}"}
+        response = client.delete(f"/chats/{chat_uuid}", headers=headers)
+        assert response.status_code == 404
+
+    def test_regular_user_can_delete_own_chat(self, client, regular_user_token):
+        """Verify regular user can delete their own chat."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.users.methods import get_user_async
+
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            # Get the regular user's UUID
+            user = await get_user_async(session=session, username="testuser")
+            # Create chat for this user
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=str(user.uuid),
+                agent_id="test-agent",
+            )
+            return str(chat.uuid)
+
+        chat_uuid = loop.run_until_complete(setup())
+
+        # Delete as regular user
+        headers = {"Authorization": f"Bearer {regular_user_token}"}
+        response = client.delete(f"/chats/{chat_uuid}", headers=headers)
+        assert response.status_code == 204
+
+    def test_superuser_can_delete_any_user_chat(self, client, auth_token):
+        """Verify superuser can delete any user's chat."""
+        import uuid
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            # Create chat for a random user
+            other_user_uuid = str(uuid.uuid4())
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=other_user_uuid,
+                agent_id="test-agent",
+            )
+            return str(chat.uuid)
+
+        chat_uuid = loop.run_until_complete(setup())
+
+        # Delete as superuser - should get 404 because chat is not visible to superuser either
+        # (superuser can only see their own chats and global chats, not other users' chats)
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.delete(f"/chats/{chat_uuid}", headers=headers)
+        assert response.status_code == 404
+
+
+class TestMessageDeleteAuthorization:
+    """Test authorization for message deletion across users."""
+
+    def test_regular_user_cannot_delete_message_in_global_chat(self, client, regular_user_token):
+        """Verify 403 error when regular user tries to delete message in global chat."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            # Create global chat
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=None,
+                agent_id="test-agent",
+            )
+            # Create message in global chat
+            message = await chat_methods.create_chat_message_async(
+                session=session,
+                chat_uuid=str(chat.uuid),
+                query={"content": "test message"},
+            )
+            return str(chat.uuid), str(message.uuid)
+
+        chat_uuid, message_uuid = loop.run_until_complete(setup())
+
+        # Try to delete message as regular user
+        headers = {"Authorization": f"Bearer {regular_user_token}"}
+        response = client.delete(
+            f"/chats/{chat_uuid}/messages/{message_uuid}",
+            headers=headers,
+        )
+        assert response.status_code == 403
+        assert "cannot delete messages in global chats" in response.json()["detail"].lower()
+
+    def test_regular_user_cannot_delete_message_in_other_users_chat(
+        self, client, regular_user_token
+    ):
+        """Verify 404 when regular user tries to delete message in another user's chat."""
+        import uuid
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            # Create chat for different user
+            other_user_uuid = str(uuid.uuid4())
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=other_user_uuid,
+                agent_id="test-agent",
+            )
+            # Create message
+            message = await chat_methods.create_chat_message_async(
+                session=session,
+                chat_uuid=str(chat.uuid),
+                query={"content": "test message"},
+            )
+            return str(chat.uuid), str(message.uuid)
+
+        chat_uuid, message_uuid = loop.run_until_complete(setup())
+
+        # Try to delete message as regular user - should get 404 because chat is not visible
+        headers = {"Authorization": f"Bearer {regular_user_token}"}
+        response = client.delete(
+            f"/chats/{chat_uuid}/messages/{message_uuid}",
+            headers=headers,
+        )
+        assert response.status_code == 404
+
+    def test_regular_user_can_delete_message_in_own_chat(self, client, regular_user_token):
+        """Verify regular user can delete message in their own chat."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.users.methods import get_user_async
+
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            # Get regular user's UUID
+            user = await get_user_async(session=session, username="testuser")
+            # Create chat for this user
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=str(user.uuid),
+                agent_id="test-agent",
+            )
+            # Create message
+            message = await chat_methods.create_chat_message_async(
+                session=session,
+                chat_uuid=str(chat.uuid),
+                query={"content": "test message"},
+            )
+            return str(chat.uuid), str(message.uuid)
+
+        chat_uuid, message_uuid = loop.run_until_complete(setup())
+
+        # Delete message as regular user
+        headers = {"Authorization": f"Bearer {regular_user_token}"}
+        response = client.delete(
+            f"/chats/{chat_uuid}/messages/{message_uuid}",
+            headers=headers,
+        )
+        assert response.status_code == 204
+
+    def test_superuser_can_delete_message_in_global_chat(self, client, auth_token):
+        """Verify superuser can delete message in global chat."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            # Create global chat
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=None,
+                agent_id="test-agent",
+            )
+            # Create message
+            message = await chat_methods.create_chat_message_async(
+                session=session,
+                chat_uuid=str(chat.uuid),
+                query={"content": "test message"},
+            )
+            return str(chat.uuid), str(message.uuid)
+
+        chat_uuid, message_uuid = loop.run_until_complete(setup())
+
+        # Delete message as superuser
+        headers = {"Authorization": f"Bearer {auth_token}"}
         response = client.delete(
             f"/chats/{chat_uuid}/messages/{message_uuid}",
             headers=headers,
