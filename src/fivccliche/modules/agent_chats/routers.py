@@ -75,7 +75,7 @@ async def query_chat_async(
         session=session,
     )
     return responses.StreamingResponse(
-        streaming_gen,
+        streaming_gen(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
