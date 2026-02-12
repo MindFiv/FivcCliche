@@ -1,6 +1,8 @@
 import asyncio
+import inspect
 import json
 from collections.abc import Callable
+from collections.abc import Awaitable
 
 from fivcplayground.agents import AgentRunEvent, AgentRun, create_agent_async
 from fivcplayground.tools import create_tool_retriever_async
@@ -19,7 +21,9 @@ class _ChatStreamingGenerator:
         chat_task: asyncio.Task,
         chat_queue: asyncio.Queue,
         chat_uuid: str | None = None,
-        chat_finish_callback: Callable[[AgentRun], None] | None = None,
+        chat_finish_callback: (
+            Callable[[AgentRun], None] | Callable[[AgentRun], Awaitable[None]] | None
+        ) = None,
     ):
         self.chat_task = chat_task
         self.chat_queue = chat_queue
@@ -70,7 +74,9 @@ class _ChatStreamingGenerator:
                     yield f"data: {data_json}\n\n"
 
                     if self.chat_finish_callback:
-                        self.chat_finish_callback(ev_run)
+                        result = self.chat_finish_callback(ev_run)
+                        if inspect.iscoroutine(result):
+                            await result
 
                 elif ev == AgentRunEvent.STREAM:
                     data = ev_run.model_dump(mode="json", include=data_fields)
@@ -110,7 +116,9 @@ async def create_chat_streaming_generator_async(
     chat_query: str = "",
     chat_uuid: str | None = None,
     chat_agent_id: str = "default",
-    chat_finish_callback: Callable[[AgentRun], None] | None = None,
+    chat_finish_callback: (
+        Callable[[AgentRun], None] | Callable[[AgentRun], Awaitable[None]] | None
+    ) = None,
     session: AsyncSession | None = None,
     **kwargs,
 ):
