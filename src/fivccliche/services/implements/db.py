@@ -23,7 +23,7 @@ class DatabaseImpl(IDatabase):
         """Initialize the database."""
         config = query_component(component_site, IConfig)
         config = config.get_session("database")
-        config_url = config.get_value("URL") or "sqlite:///./fivccliche.db"
+        config_url = config.get_value("DB_URL") or "sqlite:///./fivccliche.db"
         self.parsed_url = make_url(config_url)
         print(self.parsed_url)
 
