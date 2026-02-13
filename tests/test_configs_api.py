@@ -1751,3 +1751,517 @@ class TestGlobalConfigAuthorization:
         )
         assert response.status_code == 403
         assert "Cannot delete global configs" in response.json()["detail"]
+
+
+# ============================================================================
+# Regression Tests for Models Backward Compatibility
+# ============================================================================
+
+
+class TestConfigsBackwardCompatibilityEmbedding:
+    """Backward compatibility tests for embedding config API responses."""
+
+    def test_embedding_config_response_has_all_fields(self, client: TestClient, auth_token: str):
+        """Test that embedding config response includes all expected fields."""
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "embedding-bc-1",
+                "description": "Test embedding",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+                "base_url": "https://api.openai.com",
+                "dimension": 1536,
+            },
+        )
+        assert create_response.status_code == 201
+        data = create_response.json()
+
+        # Verify all fields are present
+        assert "uuid" in data
+        assert "id" in data
+        assert "description" in data
+        assert "provider" in data
+        assert "model" in data
+        assert "api_key" in data
+        assert "base_url" in data
+        assert "dimension" in data
+        assert "user_uuid" in data
+
+    def test_embedding_config_response_field_types(self, client: TestClient, auth_token: str):
+        """Test that embedding config response has correct field types."""
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "embedding-bc-2",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+                "dimension": 1536,
+            },
+        )
+        data = create_response.json()
+
+        assert isinstance(data["uuid"], str)
+        assert isinstance(data["id"], str)
+        assert isinstance(data["provider"], str)
+        assert isinstance(data["model"], str)
+        assert isinstance(data["api_key"], str)
+        assert isinstance(data["dimension"], int)
+        assert data["user_uuid"] is None or isinstance(data["user_uuid"], str)
+
+    def test_embedding_config_response_preserves_null_values(
+        self, client: TestClient, auth_token: str
+    ):
+        """Test that embedding config response preserves null/None values."""
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "embedding-bc-3",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        data = create_response.json()
+
+        # These should be null in the response
+        assert data["description"] is None
+        assert data["base_url"] is None
+
+
+class TestConfigsBackwardCompatibilityLLM:
+    """Backward compatibility tests for LLM config API responses."""
+
+    def test_llm_config_response_has_all_fields(self, client: TestClient, auth_token: str):
+        """Test that LLM config response includes all expected fields."""
+        create_response = client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "llm-bc-1",
+                "description": "Test LLM",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+                "base_url": "https://api.openai.com",
+                "temperature": 0.7,
+                "max_tokens": 2048,
+            },
+        )
+        assert create_response.status_code == 201
+        data = create_response.json()
+
+        # Verify all fields are present
+        assert "uuid" in data
+        assert "id" in data
+        assert "description" in data
+        assert "provider" in data
+        assert "model" in data
+        assert "api_key" in data
+        assert "base_url" in data
+        assert "temperature" in data
+        assert "max_tokens" in data
+        assert "user_uuid" in data
+
+    def test_llm_config_response_field_types(self, client: TestClient, auth_token: str):
+        """Test that LLM config response has correct field types."""
+        create_response = client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "llm-bc-2",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+                "temperature": 0.5,
+                "max_tokens": 4096,
+            },
+        )
+        data = create_response.json()
+
+        assert isinstance(data["uuid"], str)
+        assert isinstance(data["id"], str)
+        assert isinstance(data["provider"], str)
+        assert isinstance(data["model"], str)
+        assert isinstance(data["api_key"], str)
+        assert isinstance(data["temperature"], float)
+        assert isinstance(data["max_tokens"], int)
+
+
+class TestConfigsBackwardCompatibilityAgent:
+    """Backward compatibility tests for agent config API responses."""
+
+    def test_agent_config_response_has_all_fields(self, client: TestClient, auth_token: str):
+        """Test that agent config response includes all expected fields."""
+        create_response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-bc-1",
+                "description": "Test agent",
+                "model_id": "llm-1",
+                "tool_ids": ["tool1", "tool2"],
+                "system_prompt": "You are helpful",
+                "response_format": {"type": "object", "properties": {"answer": {"type": "string"}}},
+            },
+        )
+        assert create_response.status_code == 201
+        data = create_response.json()
+
+        # Verify all fields are present
+        assert "uuid" in data
+        assert "id" in data
+        assert "description" in data
+        assert "model_id" in data
+        assert "tool_ids" in data
+        assert "system_prompt" in data
+        assert "response_format" in data
+        assert "user_uuid" in data
+
+    def test_agent_config_response_json_field_preservation(
+        self, client: TestClient, auth_token: str
+    ):
+        """Test that agent config response preserves JSON field data."""
+        response_format = {"type": "object", "properties": {"answer": {"type": "string"}}}
+        create_response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-bc-2",
+                "model_id": "llm-1",
+                "tool_ids": ["tool1", "tool2"],
+                "response_format": response_format,
+            },
+        )
+        data = create_response.json()
+
+        assert data["tool_ids"] == ["tool1", "tool2"]
+        assert data["response_format"] == response_format
+
+
+class TestConfigsBackwardCompatibilityTool:
+    """Backward compatibility tests for tool config API responses."""
+
+    def test_tool_config_response_has_all_fields(self, client: TestClient, auth_token: str):
+        """Test that tool config response includes all expected fields."""
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-bc-1",
+                "description": "Test tool",
+                "transport": "stdio",
+                "command": "python",
+                "args": ["script.py"],
+                "env": {"VAR": "value"},
+                "url": "http://localhost:8000",
+                "is_active": True,
+            },
+        )
+        assert create_response.status_code == 201
+        data = create_response.json()
+
+        # Verify all fields are present
+        assert "uuid" in data
+        assert "id" in data
+        assert "description" in data
+        assert "transport" in data
+        assert "command" in data
+        assert "args" in data
+        assert "env" in data
+        assert "url" in data
+        assert "is_active" in data
+        assert "user_uuid" in data
+
+    def test_tool_config_response_json_field_preservation(
+        self, client: TestClient, auth_token: str
+    ):
+        """Test that tool config response preserves JSON field data."""
+        args = ["arg1", "arg2", "--verbose"]
+        env = {"PATH": "/usr/bin", "DEBUG": "true"}
+
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-bc-2",
+                "description": "Test tool with JSON fields",
+                "transport": "stdio",
+                "command": "bash",
+                "args": args,
+                "env": env,
+            },
+        )
+        assert create_response.status_code == 201
+        data = create_response.json()
+
+        # Tool response includes args and env
+        if "args" in data:
+            assert data["args"] == args
+        if "env" in data:
+            assert data["env"] == env
+
+    def test_tool_config_response_preserves_null_json_fields(
+        self, client: TestClient, auth_token: str
+    ):
+        """Test that tool config response preserves null JSON fields."""
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-bc-3",
+                "description": "Minimal tool",
+                "transport": "stdio",
+            },
+        )
+        assert create_response.status_code == 201
+        data = create_response.json()
+
+        # These should be null in the response if present
+        if "args" in data:
+            assert data["args"] is None
+        if "env" in data:
+            assert data["env"] is None
+
+
+class TestConfigsRegressionIntegrationEnd2End:
+    """End-to-end integration regression tests for config operations."""
+
+    def test_full_embedding_workflow(self, client: TestClient, auth_token: str):
+        """Test complete embedding config workflow: create, retrieve, update, delete."""
+        # Create
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "embedding-e2e-1",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+                "dimension": 1536,
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+        assert create_response.json()["dimension"] == 1536
+
+        # Retrieve
+        get_response = client.get(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert get_response.status_code == 200
+        assert get_response.json()["id"] == "embedding-e2e-1"
+
+        # Update
+        update_response = client.patch(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "embedding-e2e-1",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+                "dimension": 3072,
+            },
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["dimension"] == 3072
+
+        # Delete
+        delete_response = client.delete(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert delete_response.status_code == 204
+
+        # Verify deleted
+        get_response = client.get(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert get_response.status_code == 404
+
+    def test_full_llm_workflow(self, client: TestClient, auth_token: str):
+        """Test complete LLM config workflow: create, retrieve, update, delete."""
+        # Create
+        create_response = client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "llm-e2e-1",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+                "temperature": 0.5,
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Retrieve
+        get_response = client.get(
+            f"/configs/models/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert get_response.status_code == 200
+        assert get_response.json()["temperature"] == 0.5
+
+        # Update
+        update_response = client.patch(
+            f"/configs/models/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "llm-e2e-1",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+                "temperature": 0.8,
+            },
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["temperature"] == 0.8
+
+        # Delete
+        delete_response = client.delete(
+            f"/configs/models/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert delete_response.status_code == 204
+
+    def test_full_agent_workflow(self, client: TestClient, auth_token: str):
+        """Test complete agent config workflow: create, retrieve, update, delete."""
+        # Create
+        create_response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-e2e-1",
+                "model_id": "llm-1",
+                "system_prompt": "Old prompt",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Retrieve
+        get_response = client.get(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert get_response.status_code == 200
+        assert get_response.json()["system_prompt"] == "Old prompt"
+
+        # Update
+        update_response = client.patch(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-e2e-1",
+                "model_id": "llm-1",
+                "system_prompt": "New prompt",
+            },
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["system_prompt"] == "New prompt"
+
+        # Delete
+        delete_response = client.delete(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert delete_response.status_code == 204
+
+    def test_full_tool_workflow(self, client: TestClient, auth_token: str):
+        """Test complete tool config workflow: create, retrieve, update, delete."""
+        # Create
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-e2e-1",
+                "description": "Test tool",
+                "transport": "stdio",
+                "command": "python",
+                "is_active": True,
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        # Retrieve
+        get_response = client.get(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert get_response.status_code == 200
+        assert get_response.json()["is_active"] is True
+
+        # Update
+        update_response = client.patch(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-e2e-1",
+                "description": "Updated tool",
+                "transport": "sse",
+                "command": "node",
+                "is_active": False,
+            },
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["is_active"] is False
+
+        # Delete
+        delete_response = client.delete(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert delete_response.status_code == 204
+
+    def test_user_isolation_maintained_across_configs(
+        self, client: TestClient, auth_token: str, other_user_token: str
+    ):
+        """Test that user isolation is maintained across all config types."""
+        # Create multiple configs as auth_token user
+        emb_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "isolation-emb",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        llm_response = client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "isolation-llm",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+            },
+        )
+
+        # Verify other_user cannot see them
+        emb_uuid = emb_response.json()["uuid"]
+        llm_uuid = llm_response.json()["uuid"]
+
+        emb_get = client.get(
+            f"/configs/embeddings/{emb_uuid}",
+            headers={"Authorization": f"Bearer {other_user_token}"},
+        )
+        assert emb_get.status_code == 404
+
+        llm_get = client.get(
+            f"/configs/models/{llm_uuid}",
+            headers={"Authorization": f"Bearer {other_user_token}"},
+        )
+        assert llm_get.status_code == 404

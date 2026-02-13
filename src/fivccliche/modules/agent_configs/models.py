@@ -210,7 +210,7 @@ class UserAgent(SQLModel, table=True):
     )
     description: str | None = Field(default=None, max_length=1024, description="Agent description.")
     model_id: str = Field(
-        foreign_key="user_llm.id",
+        # foreign_key="user_llm.id",  # no foreign key because of different user_uuid
         description="LLM config ID.",
     )
     tools_ids: list[str] | None = Field(

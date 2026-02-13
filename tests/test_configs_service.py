@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -23,7 +24,13 @@ from fivccliche.modules.agent_configs.services import (
 
 # Import models to ensure they're registered with SQLModel
 from fivccliche.modules.users.models import User  # noqa: F401
-from fivccliche.modules.agent_configs.models import UserEmbedding, UserLLM, UserAgent
+from fivccliche.modules.agent_configs.models import (
+    UserEmbedding,
+    UserLLM,
+    UserAgent,
+    UserTool,
+)
+from fivccliche.modules.agent_configs import schemas
 
 
 @pytest.fixture
@@ -1642,3 +1649,818 @@ class TestToolConfigRepository:
 
         with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
             await repo.update_tool_config_async(config)
+
+
+# ============================================================================
+# Regression Tests for Agent Configs Models
+# ============================================================================
+
+
+class TestModelsRegressionUserEmbedding:
+    """Regression tests for UserEmbedding model structure and database constraints."""
+
+    async def test_user_embedding_model_has_required_fields(self, session: AsyncSession):
+        """Test that UserEmbedding model has all required field definitions."""
+        import uuid as uuid_lib
+
+        config = UserEmbedding(
+            uuid=str(uuid_lib.uuid4()),
+            id="test-embedding",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            dimension=1024,
+            user_uuid="user123",
+        )
+
+        assert config.uuid is not None
+        assert config.id == "test-embedding"
+        assert config.provider == "openai"
+        assert config.model == "text-embedding-3-small"
+        assert config.api_key == "test-key"
+        assert config.dimension == 1024
+        assert config.user_uuid == "user123"
+
+    async def test_user_embedding_model_field_defaults(self, session: AsyncSession):
+        """Test that UserEmbedding model has correct field defaults."""
+        import uuid as uuid_lib
+
+        config = UserEmbedding(
+            uuid=str(uuid_lib.uuid4()),
+            id="test-embedding",
+            model="text-embedding-3-small",
+            api_key="test-key",
+        )
+
+        assert config.provider == "openai"  # Default
+        assert config.dimension == 1024  # Default
+        assert config.description is None  # Default
+        assert config.base_url is None  # Default
+        assert config.user_uuid is None  # Default
+
+    async def test_user_embedding_composite_unique_index_prevents_duplicate(
+        self, session: AsyncSession
+    ):
+        """Test that composite unique index (id, user_uuid) prevents duplicates."""
+        import uuid as uuid_lib
+
+        config1_uuid = str(uuid_lib.uuid4())
+        config1 = UserEmbedding(
+            uuid=config1_uuid,
+            id="test-embedding",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            user_uuid="user123",
+        )
+        session.add(config1)
+        await session.commit()
+
+        # Try to create another with same id and user_uuid - should fail
+        config2_uuid = str(uuid_lib.uuid4())
+        config2 = UserEmbedding(
+            uuid=config2_uuid,
+            id="test-embedding",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            user_uuid="user123",
+        )
+        session.add(config2)
+
+        with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
+            await session.commit()
+
+    async def test_user_embedding_same_id_different_users_succeeds(self, session: AsyncSession):
+        """Test that same id with different user_uuid succeeds."""
+        import uuid as uuid_lib
+
+        config1_uuid = str(uuid_lib.uuid4())
+        config1 = UserEmbedding(
+            uuid=config1_uuid,
+            id="shared-id",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            user_uuid="user123",
+        )
+        session.add(config1)
+        await session.commit()
+
+        # Same id for different user should succeed
+        config2_uuid = str(uuid_lib.uuid4())
+        config2 = UserEmbedding(
+            uuid=config2_uuid,
+            id="shared-id",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            user_uuid="user456",
+        )
+        session.add(config2)
+        await session.commit()
+
+        assert config2.user_uuid == "user456"
+
+    async def test_user_embedding_global_config_allowed(self, session: AsyncSession):
+        """Test that global configs (user_uuid=None) are allowed."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        config = UserEmbedding(
+            uuid=config_uuid,
+            id="global-embedding",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            user_uuid=None,  # Global config
+        )
+        session.add(config)
+        await session.commit()
+
+        assert config.user_uuid is None
+
+    async def test_user_embedding_different_ids_same_global_succeeds(self, session: AsyncSession):
+        """Test that different ids for global configs succeed."""
+        import uuid as uuid_lib
+
+        config1_uuid = str(uuid_lib.uuid4())
+        config1 = UserEmbedding(
+            uuid=config1_uuid,
+            id="global-embedding-1",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            user_uuid=None,
+        )
+        session.add(config1)
+        await session.commit()
+
+        # Create another global with different id - should succeed
+        config2_uuid = str(uuid_lib.uuid4())
+        config2 = UserEmbedding(
+            uuid=config2_uuid,
+            id="global-embedding-2",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            user_uuid=None,
+        )
+        session.add(config2)
+        await session.commit()
+
+        assert config1.user_uuid is None
+        assert config2.user_uuid is None
+
+    async def test_user_embedding_to_schema_conversion(self, session: AsyncSession):
+        """Test that to_schema() method correctly converts model to schema."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        config = UserEmbedding(
+            uuid=config_uuid,
+            id="test-embedding",
+            description="Test description",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            base_url="https://api.openai.com",
+            dimension=1536,
+            user_uuid="user123",
+        )
+
+        schema = config.to_schema()
+
+        assert isinstance(schema, schemas.UserEmbeddingSchema)
+        assert schema.uuid == config_uuid
+        assert schema.id == "test-embedding"
+        assert schema.description == "Test description"
+        assert schema.provider == "openai"
+        assert schema.model == "text-embedding-3-small"
+        assert schema.api_key == "test-key"
+        assert schema.base_url == "https://api.openai.com"
+        assert schema.dimension == 1536
+        assert schema.user_uuid == "user123"
+
+    async def test_user_embedding_to_schema_with_none_values(self, session: AsyncSession):
+        """Test to_schema() preserves None values."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        config = UserEmbedding(
+            uuid=config_uuid,
+            id="test-embedding",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            description=None,
+            base_url=None,
+            user_uuid=None,
+        )
+
+        schema = config.to_schema()
+
+        assert schema.description is None
+        assert schema.base_url is None
+        assert schema.user_uuid is None
+
+
+class TestModelsRegressionUserLLM:
+    """Regression tests for UserLLM model structure and database constraints."""
+
+    async def test_user_llm_model_has_required_fields(self, session: AsyncSession):
+        """Test that UserLLM model has all required field definitions."""
+        import uuid as uuid_lib
+
+        config = UserLLM(
+            uuid=str(uuid_lib.uuid4()),
+            id="test-llm",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            temperature=0.7,
+            max_tokens=2048,
+            user_uuid="user123",
+        )
+
+        assert config.uuid is not None
+        assert config.id == "test-llm"
+        assert config.provider == "openai"
+        assert config.model == "gpt-4"
+        assert config.api_key == "test-key"
+        assert config.temperature == 0.7
+        assert config.max_tokens == 2048
+        assert config.user_uuid == "user123"
+
+    async def test_user_llm_model_field_defaults(self, session: AsyncSession):
+        """Test that UserLLM model has correct field defaults."""
+        import uuid as uuid_lib
+
+        config = UserLLM(
+            uuid=str(uuid_lib.uuid4()),
+            id="test-llm",
+            model="gpt-4",
+            api_key="test-key",
+        )
+
+        assert config.provider == "openai"  # Default
+        assert config.temperature == 0.5  # Default
+        assert config.max_tokens == 4096  # Default
+        assert config.description is None  # Default
+        assert config.base_url is None  # Default
+        assert config.user_uuid is None  # Default
+
+    async def test_user_llm_composite_unique_index_prevents_duplicate(self, session: AsyncSession):
+        """Test that composite unique index (id, user_uuid) prevents duplicates."""
+        import uuid as uuid_lib
+
+        config1_uuid = str(uuid_lib.uuid4())
+        config1 = UserLLM(
+            uuid=config1_uuid,
+            id="test-llm",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            user_uuid="user123",
+        )
+        session.add(config1)
+        await session.commit()
+
+        # Try to create another with same id and user_uuid - should fail
+        config2_uuid = str(uuid_lib.uuid4())
+        config2 = UserLLM(
+            uuid=config2_uuid,
+            id="test-llm",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            user_uuid="user123",
+        )
+        session.add(config2)
+
+        with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
+            await session.commit()
+
+    async def test_user_llm_same_id_different_users_succeeds(self, session: AsyncSession):
+        """Test that same id with different user_uuid succeeds."""
+        import uuid as uuid_lib
+
+        config1_uuid = str(uuid_lib.uuid4())
+        config1 = UserLLM(
+            uuid=config1_uuid,
+            id="shared-id",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            user_uuid="user123",
+        )
+        session.add(config1)
+        await session.commit()
+
+        # Same id for different user should succeed
+        config2_uuid = str(uuid_lib.uuid4())
+        config2 = UserLLM(
+            uuid=config2_uuid,
+            id="shared-id",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            user_uuid="user456",
+        )
+        session.add(config2)
+        await session.commit()
+
+        assert config2.user_uuid == "user456"
+
+    async def test_user_llm_global_config_allowed(self, session: AsyncSession):
+        """Test that global configs (user_uuid=None) are allowed."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        config = UserLLM(
+            uuid=config_uuid,
+            id="global-llm",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            user_uuid=None,  # Global config
+        )
+        session.add(config)
+        await session.commit()
+
+        assert config.user_uuid is None
+
+    async def test_user_llm_to_schema_conversion(self, session: AsyncSession):
+        """Test that to_schema() method correctly converts model to schema."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        config = UserLLM(
+            uuid=config_uuid,
+            id="test-llm",
+            description="Test LLM",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            base_url="https://api.openai.com",
+            temperature=0.8,
+            max_tokens=2048,
+            user_uuid="user123",
+        )
+
+        schema = config.to_schema()
+
+        assert isinstance(schema, schemas.UserLLMSchema)
+        assert schema.uuid == config_uuid
+        assert schema.id == "test-llm"
+        assert schema.description == "Test LLM"
+        assert schema.provider == "openai"
+        assert schema.model == "gpt-4"
+        assert schema.api_key == "test-key"
+        assert schema.base_url == "https://api.openai.com"
+        assert schema.temperature == 0.8
+        assert schema.max_tokens == 2048
+        assert schema.user_uuid == "user123"
+
+    async def test_user_llm_to_schema_with_none_values(self, session: AsyncSession):
+        """Test to_schema() preserves None values."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        config = UserLLM(
+            uuid=config_uuid,
+            id="test-llm",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            description=None,
+            base_url=None,
+            user_uuid=None,
+        )
+
+        schema = config.to_schema()
+
+        assert schema.description is None
+        assert schema.base_url is None
+        assert schema.user_uuid is None
+
+
+class TestModelsRegressionUserTool:
+    """Regression tests for UserTool model structure and database constraints."""
+
+    async def test_user_tool_model_has_required_fields(self, session: AsyncSession):
+        """Test that UserTool model has all required field definitions."""
+        import uuid as uuid_lib
+
+        config = UserTool(
+            uuid=str(uuid_lib.uuid4()),
+            id="test-tool",
+            transport=schemas.UserToolTransport.STDIO,
+            command="python",
+            args=["script.py"],
+            env={"VAR": "value"},
+            is_active=True,
+            user_uuid="user123",
+        )
+
+        assert config.uuid is not None
+        assert config.id == "test-tool"
+        assert config.transport == schemas.UserToolTransport.STDIO
+        assert config.command == "python"
+        assert config.args == ["script.py"]
+        assert config.env == {"VAR": "value"}
+        assert config.is_active is True
+        assert config.user_uuid == "user123"
+
+    async def test_user_tool_model_field_defaults(self, session: AsyncSession):
+        """Test that UserTool model has correct field defaults."""
+        import uuid as uuid_lib
+
+        config = UserTool(
+            uuid=str(uuid_lib.uuid4()),
+            id="test-tool",
+            transport=schemas.UserToolTransport.STDIO,
+        )
+
+        assert config.is_active is True  # Default
+        assert config.description is None  # Default
+        assert config.command is None  # Default
+        assert config.args is None  # Default
+        assert config.env is None  # Default
+        assert config.url is None  # Default
+        assert config.user_uuid is None  # Default
+
+    async def test_user_tool_composite_unique_index_prevents_duplicate(self, session: AsyncSession):
+        """Test that composite unique index (id, user_uuid) prevents duplicates."""
+        import uuid as uuid_lib
+
+        config1_uuid = str(uuid_lib.uuid4())
+        config1 = UserTool(
+            uuid=config1_uuid,
+            id="test-tool",
+            transport=schemas.UserToolTransport.STDIO,
+            user_uuid="user123",
+        )
+        session.add(config1)
+        await session.commit()
+
+        # Try to create another with same id and user_uuid - should fail
+        config2_uuid = str(uuid_lib.uuid4())
+        config2 = UserTool(
+            uuid=config2_uuid,
+            id="test-tool",
+            transport=schemas.UserToolTransport.STDIO,
+            user_uuid="user123",
+        )
+        session.add(config2)
+
+        with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
+            await session.commit()
+
+    async def test_user_tool_json_fields_serialization(self, session: AsyncSession):
+        """Test that JSON fields (args, env) are properly serialized."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        config = UserTool(
+            uuid=config_uuid,
+            id="test-tool",
+            transport=schemas.UserToolTransport.STDIO,
+            args=["arg1", "arg2"],
+            env={"VAR1": "value1", "VAR2": "value2"},
+            user_uuid="user123",
+        )
+        session.add(config)
+        await session.commit()
+
+        # Retrieve and verify
+        retrieved = await session.get(UserTool, config_uuid)
+        assert retrieved.args == ["arg1", "arg2"]
+        assert retrieved.env == {"VAR1": "value1", "VAR2": "value2"}
+
+    async def test_user_tool_to_schema_conversion(self, session: AsyncSession):
+        """Test that to_schema() method correctly converts model to schema."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        config = UserTool(
+            uuid=config_uuid,
+            id="test-tool",
+            description="Test tool",
+            transport=schemas.UserToolTransport.STDIO,
+            command="python",
+            args=["script.py"],
+            env={"VAR": "value"},
+            url="http://localhost:8000",
+            is_active=True,
+            user_uuid="user123",
+        )
+
+        schema = config.to_schema()
+
+        assert isinstance(schema, schemas.UserToolSchema)
+        assert schema.uuid == config_uuid
+        assert schema.id == "test-tool"
+        assert schema.description == "Test tool"
+        assert schema.transport == schemas.UserToolTransport.STDIO
+        assert schema.command == "python"
+        assert schema.args == ["script.py"]
+        assert schema.env == {"VAR": "value"}
+        assert schema.url == "http://localhost:8000"
+        assert schema.is_active is True
+        assert schema.user_uuid == "user123"
+
+    async def test_user_tool_json_serialization_round_trip(self, session: AsyncSession):
+        """Test that JSON fields can be stored and retrieved correctly."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        config = UserTool(
+            uuid=config_uuid,
+            id="test-tool",
+            description="Test tool",
+            transport=schemas.UserToolTransport.STDIO,
+            command="python",
+            args=["arg1", "arg2"],
+            env={"VAR1": "val1"},
+            user_uuid="user123",
+        )
+
+        schema = config.to_schema()
+
+        # Verify all JSON fields are preserved
+        assert schema.args == ["arg1", "arg2"]
+        assert schema.env == {"VAR1": "val1"}
+
+
+class TestModelsRegressionUserAgent:
+    """Regression tests for UserAgent model structure and database constraints."""
+
+    async def test_user_agent_model_has_required_fields(self, session: AsyncSession):
+        """Test that UserAgent model has all required field definitions."""
+        import uuid as uuid_lib
+
+        config = UserAgent(
+            uuid=str(uuid_lib.uuid4()),
+            id="test-agent",
+            model_id="llm-1",
+            tools_ids=["tool1", "tool2"],
+            system_prompt="You are helpful",
+            response_format={"type": "object"},
+            user_uuid="user123",
+        )
+
+        assert config.uuid is not None
+        assert config.id == "test-agent"
+        assert config.model_id == "llm-1"
+        assert config.tools_ids == ["tool1", "tool2"]
+        assert config.system_prompt == "You are helpful"
+        assert config.response_format == {"type": "object"}
+        assert config.user_uuid == "user123"
+
+    async def test_user_agent_model_field_defaults(self, session: AsyncSession):
+        """Test that UserAgent model has correct field defaults."""
+        import uuid as uuid_lib
+
+        config = UserAgent(
+            uuid=str(uuid_lib.uuid4()),
+            id="test-agent",
+            model_id="llm-1",
+        )
+
+        assert config.description is None  # Default
+        assert config.tools_ids is None  # Default
+        assert config.system_prompt is None  # Default
+        assert config.response_format is None  # Default
+        assert config.user_uuid is None  # Default
+
+    async def test_user_agent_composite_unique_index_prevents_duplicate(
+        self, session: AsyncSession
+    ):
+        """Test that composite unique index (id, user_uuid) prevents duplicates."""
+        import uuid as uuid_lib
+
+        config1_uuid = str(uuid_lib.uuid4())
+        config1 = UserAgent(
+            uuid=config1_uuid,
+            id="test-agent",
+            model_id="llm-1",
+            user_uuid="user123",
+        )
+        session.add(config1)
+        await session.commit()
+
+        # Try to create another with same id and user_uuid - should fail
+        config2_uuid = str(uuid_lib.uuid4())
+        config2 = UserAgent(
+            uuid=config2_uuid,
+            id="test-agent",
+            model_id="llm-1",
+            user_uuid="user123",
+        )
+        session.add(config2)
+
+        with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
+            await session.commit()
+
+    async def test_user_agent_json_fields_serialization(self, session: AsyncSession):
+        """Test that JSON fields (tools_ids, response_format) are properly serialized."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        response_format = {"type": "object", "properties": {"answer": {"type": "string"}}}
+        config = UserAgent(
+            uuid=config_uuid,
+            id="test-agent",
+            model_id="llm-1",
+            tools_ids=["tool1", "tool2"],
+            response_format=response_format,
+            user_uuid="user123",
+        )
+        session.add(config)
+        await session.commit()
+
+        # Retrieve and verify
+        retrieved = await session.get(UserAgent, config_uuid)
+        assert retrieved.tools_ids == ["tool1", "tool2"]
+        assert retrieved.response_format == response_format
+
+    async def test_user_agent_to_schema_conversion(self, session: AsyncSession):
+        """Test that to_schema() method correctly converts model to schema."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        response_format = {"type": "object", "properties": {"answer": {"type": "string"}}}
+        config = UserAgent(
+            uuid=config_uuid,
+            id="test-agent",
+            description="Test agent",
+            model_id="llm-1",
+            tools_ids=["tool1", "tool2"],
+            system_prompt="You are helpful",
+            response_format=response_format,
+            user_uuid="user123",
+        )
+
+        schema = config.to_schema()
+
+        assert isinstance(schema, schemas.UserAgentSchema)
+        assert schema.uuid == config_uuid
+        assert schema.id == "test-agent"
+        assert schema.description == "Test agent"
+        assert schema.model_id == "llm-1"
+        assert schema.tool_ids == ["tool1", "tool2"]  # Note: schema uses tool_ids
+        assert schema.system_prompt == "You are helpful"
+        assert schema.response_format == response_format
+        assert schema.user_uuid == "user123"
+
+    async def test_user_agent_to_schema_with_none_json_values(self, session: AsyncSession):
+        """Test to_schema() preserves None values in JSON fields."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        config = UserAgent(
+            uuid=config_uuid,
+            id="test-agent",
+            model_id="llm-1",
+            tools_ids=None,
+            response_format=None,
+            user_uuid="user123",
+        )
+
+        schema = config.to_schema()
+
+        assert schema.tool_ids is None
+        assert schema.response_format is None
+
+
+class TestModelsRegressionGlobalUserConfigs:
+    """Regression tests for global vs user-specific config patterns."""
+
+    async def test_global_and_user_specific_embeddings_coexist(self, session: AsyncSession):
+        """Test that global and user-specific embedding configs coexist with same id."""
+        import uuid as uuid_lib
+
+        global_config_uuid = str(uuid_lib.uuid4())
+        global_config = UserEmbedding(
+            uuid=global_config_uuid,
+            id="shared-embedding",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            user_uuid=None,  # Global
+        )
+        session.add(global_config)
+
+        user_config_uuid = str(uuid_lib.uuid4())
+        user_config = UserEmbedding(
+            uuid=user_config_uuid,
+            id="shared-embedding",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            user_uuid="user123",  # User-specific
+        )
+        session.add(user_config)
+        await session.commit()
+
+        # Verify both exist
+        retrieved_global = await session.get(UserEmbedding, global_config_uuid)
+        retrieved_user = await session.get(UserEmbedding, user_config_uuid)
+
+        assert retrieved_global.user_uuid is None
+        assert retrieved_user.user_uuid == "user123"
+
+    async def test_global_and_user_specific_llms_coexist(self, session: AsyncSession):
+        """Test that global and user-specific LLM configs coexist with same id."""
+        import uuid as uuid_lib
+
+        global_config_uuid = str(uuid_lib.uuid4())
+        global_config = UserLLM(
+            uuid=global_config_uuid,
+            id="shared-llm",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            user_uuid=None,  # Global
+        )
+        session.add(global_config)
+
+        user_config_uuid = str(uuid_lib.uuid4())
+        user_config = UserLLM(
+            uuid=user_config_uuid,
+            id="shared-llm",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            user_uuid="user123",  # User-specific
+        )
+        session.add(user_config)
+        await session.commit()
+
+        # Verify both exist
+        retrieved_global = await session.get(UserLLM, global_config_uuid)
+        retrieved_user = await session.get(UserLLM, user_config_uuid)
+
+        assert retrieved_global.user_uuid is None
+        assert retrieved_user.user_uuid == "user123"
+
+    async def test_global_and_user_specific_tools_coexist(self, session: AsyncSession):
+        """Test that global and user-specific tool configs coexist with same id."""
+        import uuid as uuid_lib
+
+        global_config_uuid = str(uuid_lib.uuid4())
+        global_config = UserTool(
+            uuid=global_config_uuid,
+            id="shared-tool",
+            transport=schemas.UserToolTransport.STDIO,
+            user_uuid=None,  # Global
+        )
+        session.add(global_config)
+
+        user_config_uuid = str(uuid_lib.uuid4())
+        user_config = UserTool(
+            uuid=user_config_uuid,
+            id="shared-tool",
+            transport=schemas.UserToolTransport.STDIO,
+            user_uuid="user123",  # User-specific
+        )
+        session.add(user_config)
+        await session.commit()
+
+        # Verify both exist
+        retrieved_global = await session.get(UserTool, global_config_uuid)
+        retrieved_user = await session.get(UserTool, user_config_uuid)
+
+        assert retrieved_global.user_uuid is None
+        assert retrieved_user.user_uuid == "user123"
+
+    async def test_global_and_user_specific_agents_coexist(self, session: AsyncSession):
+        """Test that global and user-specific agent configs coexist with same id."""
+        import uuid as uuid_lib
+
+        global_config_uuid = str(uuid_lib.uuid4())
+        global_config = UserAgent(
+            uuid=global_config_uuid,
+            id="shared-agent",
+            model_id="llm-1",
+            user_uuid=None,  # Global
+        )
+        session.add(global_config)
+
+        user_config_uuid = str(uuid_lib.uuid4())
+        user_config = UserAgent(
+            uuid=user_config_uuid,
+            id="shared-agent",
+            model_id="llm-1",
+            user_uuid="user123",  # User-specific
+        )
+        session.add(user_config)
+        await session.commit()
+
+        # Verify both exist
+        retrieved_global = await session.get(UserAgent, global_config_uuid)
+        retrieved_user = await session.get(UserAgent, user_config_uuid)
+
+        assert retrieved_global.user_uuid is None
+        assert retrieved_user.user_uuid == "user123"
