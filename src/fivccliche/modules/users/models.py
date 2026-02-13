@@ -16,7 +16,7 @@ class User(SQLModel, table=True):
     uuid: str = Field(
         default_factory=lambda: str(uuid1()),
         primary_key=True,
-        max_length=32,
+        max_length=36,
         description="User ID (UUID).",
     )
     username: str = Field(max_length=255, index=True, unique=True, description="User name.")

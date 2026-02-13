@@ -16,11 +16,11 @@ class UserEmbedding(SQLModel, table=True):
     uuid: str = Field(
         default_factory=lambda: str(uuid4()),
         primary_key=True,
-        max_length=32,
+        max_length=36,
         description="Embedding config UUID.",
     )
     id: str = Field(
-        max_length=32,
+        max_length=36,
         description="Embedding config ID (unique within user scope).",
         index=True,
     )
@@ -78,11 +78,11 @@ class UserLLM(SQLModel, table=True):
     uuid: str = Field(
         default_factory=lambda: str(uuid4()),
         primary_key=True,
-        max_length=32,
+        max_length=36,
         description="LLM config UUID.",
     )
     id: str = Field(
-        max_length=32,
+        max_length=36,
         description="LLM config ID (unique within user scope).",
         index=True,
     )
@@ -143,11 +143,11 @@ class UserTool(SQLModel, table=True):
     uuid: str = Field(
         default_factory=lambda: str(uuid4()),
         primary_key=True,
-        max_length=32,
+        max_length=36,
         description="Tool config UUID.",
     )
     id: str = Field(
-        max_length=32,
+        max_length=36,
         description="Tool config ID (unique within user scope).",
         index=True,
     )
@@ -200,11 +200,11 @@ class UserAgent(SQLModel, table=True):
     uuid: str = Field(
         default_factory=lambda: str(uuid4()),
         primary_key=True,
-        max_length=32,
+        max_length=36,
         description="Agent config UUID.",
     )
     id: str = Field(
-        max_length=32,
+        max_length=36,
         description="Agent config ID (unique within user scope).",
         index=True,
     )
