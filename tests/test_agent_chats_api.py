@@ -149,36 +149,40 @@ class TestChatAPI:
         assert response.status_code == 404
 
     def test_query_chat_unauthorized(self, client: TestClient):
-        """Test querying chat without authentication."""
+        """Test creating chat without authentication."""
         response = client.post(
             "/chats/",
-            json={"agent_id": "test_agent", "query": "Hello"},
+            json={"agent_id": "test_agent"},
         )
         assert response.status_code == 401
 
-    def test_query_chat_missing_both_params(self, client: TestClient, auth_token: str):
-        """Test querying chat without chat_uuid or agent_id."""
+    def test_create_chat_with_default_agent(self, client: TestClient, auth_token: str):
+        """Test creating chat with default agent_id."""
         headers = {"Authorization": f"Bearer {auth_token}"}
         response = client.post(
             "/chats/",
-            json={"query": "Hello"},
+            json={},
             headers=headers,
         )
-        assert response.status_code == 400
+        assert response.status_code == 201
         data = response.json()
-        assert "Must specify either chat_uuid or agent_id" in data["detail"]
+        assert "uuid" in data
+        assert data["agent_id"] == "default"
+        assert "created_at" in data or "started_at" in data
 
-    def test_query_chat_both_params(self, client: TestClient, auth_token: str):
-        """Test querying chat with both chat_uuid and agent_id."""
+    def test_create_chat_with_custom_agent(self, client: TestClient, auth_token: str):
+        """Test creating chat with custom agent_id."""
         headers = {"Authorization": f"Bearer {auth_token}"}
         response = client.post(
             "/chats/",
-            json={"chat_uuid": "test-uuid", "agent_id": "test_agent", "query": "Hello"},
+            json={"agent_id": "custom_agent"},
             headers=headers,
         )
-        assert response.status_code == 400
+        assert response.status_code == 201
         data = response.json()
-        assert "Cannot specify both chat_uuid and agent_id" in data["detail"]
+        assert "uuid" in data
+        assert data["agent_id"] == "custom_agent"
+        assert "created_at" in data or "started_at" in data
 
 
 class TestChatMessageAPI:
@@ -741,30 +745,37 @@ class TestChatQueryValidation:
     """Test query endpoint validation for chat_uuid and agent_id parameters."""
 
     def test_query_with_both_chat_uuid_and_agent_id_fails(self, client, auth_token):
-        """Verify 400 error when both chat_uuid and agent_id are provided."""
+        """Verify that extra fields are ignored in the new create endpoint.
+
+        The new endpoint only accepts agent_id, so other fields are ignored.
+        """
         headers = {"Authorization": f"Bearer {auth_token}"}
         response = client.post(
             "/chats/",
             headers=headers,
             json={
-                "query": "test query",
-                "chat_uuid": "some-uuid",
+                "query": "test query",  # ignored
+                "chat_uuid": "some-uuid",  # ignored
                 "agent_id": "some-agent",
             },
         )
-        assert response.status_code == 400
-        assert "Cannot specify both" in response.json()["detail"]
+        # Extra fields are ignored by Pydantic, so this succeeds
+        assert response.status_code == 201
+        data = response.json()
+        assert data["agent_id"] == "some-agent"
 
     def test_query_with_neither_chat_uuid_nor_agent_id_fails(self, client, auth_token):
-        """Verify 400 error when neither chat_uuid nor agent_id is provided."""
+        """Verify that agent_id defaults correctly when not provided."""
         headers = {"Authorization": f"Bearer {auth_token}"}
         response = client.post(
             "/chats/",
             headers=headers,
-            json={"query": "test query"},
+            json={"query": "test query"},  # query ignored, agent_id uses default
         )
-        assert response.status_code == 400
-        assert "Must specify either" in response.json()["detail"]
+        # query field is ignored, agent_id defaults to "default"
+        assert response.status_code == 201
+        data = response.json()
+        assert data["agent_id"] == "default"
 
 
 class TestChatDeleteAuthorization:
@@ -1009,3 +1020,136 @@ class TestMessageDeleteAuthorization:
             headers=headers,
         )
         assert response.status_code == 204
+
+
+class TestCreateChatMessages:
+    """Test cases for create_chat_messages_async endpoint."""
+
+    def test_create_message_unauthorized(self, client: TestClient):
+        """Test creating message without authentication."""
+        response = client.post(
+            "/chats/some-uuid/messages/",
+            json={"query": "Hello"},
+        )
+        assert response.status_code == 401
+        data = response.json()
+        assert "Not authenticated" in data["detail"]
+
+    def test_create_message_chat_not_found(self, client: TestClient, auth_token: str):
+        """Test creating message in non-existent chat."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.post(
+            "/chats/nonexistent/messages/",
+            json={"query": "Hello"},
+            headers=headers,
+        )
+        assert response.status_code == 404
+        data = response.json()
+        assert "Chat not found" in data["detail"]
+
+    def test_create_message_regular_user_cannot_access_other_user_chat(
+        self, client: TestClient, auth_token: str, regular_user_token: str
+    ):
+        """Test regular user cannot create message in another user's chat."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.users.methods import get_user_async
+
+        session = client.async_session
+        loop = client.loop
+
+        # Get the actual user UUID for the test user
+        async def setup():
+            test_user = await get_user_async(session, username="testuser")
+            # Create a chat for the test user
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=str(test_user.uuid),
+                agent_id="test-agent",
+            )
+            return str(chat.uuid)
+
+        chat_uuid = loop.run_until_complete(setup())
+
+        # Try to create message as admin (should fail - chat belongs to testuser)
+        # admin cannot see testuser's chat, so get_chat_async returns None -> 404
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.post(
+            f"/chats/{chat_uuid}/messages/",
+            json={"query": "Hello"},
+            headers=headers,
+        )
+        # Should get 404 because admin doesn't have access to testuser's chat
+        assert response.status_code == 404
+        data = response.json()
+        assert "Chat not found" in data["detail"]
+
+    def test_create_message_regular_user_cannot_message_global_chat(
+        self, client: TestClient, regular_user_token: str
+    ):
+        """Test regular user cannot create message in global chat."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        session = client.async_session
+        loop = client.loop
+
+        # Create a global chat
+        async def setup():
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=None,
+                agent_id="test-agent",
+            )
+            return str(chat.uuid)
+
+        chat_uuid = loop.run_until_complete(setup())
+
+        # Try to create message as regular user in global chat
+        headers = {"Authorization": f"Bearer {regular_user_token}"}
+        response = client.post(
+            f"/chats/{chat_uuid}/messages/",
+            json={"query": "Hello"},
+            headers=headers,
+        )
+        assert response.status_code == 403
+        data = response.json()
+        assert "Cannot message global chats" in data["detail"]
+
+    def test_create_message_missing_query_field(self, client: TestClient, auth_token: str):
+        """Test creating message without query field."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.users.methods import get_user_async
+
+        session = client.async_session
+        loop = client.loop
+
+        # Get admin user and create their chat
+        async def setup():
+            admin_user = await get_user_async(session, username="admin")
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=str(admin_user.uuid),
+                agent_id="test-agent",
+            )
+            return str(chat.uuid)
+
+        chat_uuid = loop.run_until_complete(setup())
+
+        # Try to create message without query field
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.post(
+            f"/chats/{chat_uuid}/messages/",
+            json={},
+            headers=headers,
+        )
+        assert response.status_code == 422  # Validation error
+
+    def test_create_message_post_method_required(self, client: TestClient, auth_token: str):
+        """Test that create message endpoint requires POST method."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        # GET should call list_chat_messages_async instead
+        response = client.get(
+            "/chats/some-uuid/messages/",
+            headers=headers,
+        )
+        # GET returns list response (200) or not found (404), not method not allowed
+        assert response.status_code in [200, 404]

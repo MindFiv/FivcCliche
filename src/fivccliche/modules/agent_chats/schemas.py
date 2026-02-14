@@ -2,6 +2,8 @@ __all__ = [
     "AgentRunContent",
     "AgentRunStatus",
     "AgentRunToolCall",
+    "UserChatCreateSchema",
+    "UserChatMessageCreateSchema",
     "UserChatMessageSchema",
     "UserChatSchema",
 ]
@@ -42,9 +44,19 @@ class UserChatMessageSchema(AgentRun):
     model_config = ConfigDict(from_attributes=True)
 
 
-class UserChatQuery(BaseModel):
-    """Schema for querying in chat."""
+class UserChatCreateSchema(BaseModel):
+    """Schema for creating a new chat session.
 
-    chat_uuid: str | None = Field(default=None, description="Chat UUID")
-    agent_id: str | None = Field(default=None, description="Agent ID")
-    query: str = Field(..., description="Chat query")
+    Only requires agent_id; chat_uuid is generated server-side.
+    """
+
+    agent_id: str = Field(default="default", description="Agent ID for the chat")
+
+
+class UserChatMessageCreateSchema(BaseModel):
+    """Schema for sending a message to an existing chat.
+
+    Simplified schema for messaging; agent_id is determined from the chat.
+    """
+
+    query: str = Field(..., description="Message query/content")

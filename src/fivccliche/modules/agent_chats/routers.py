@@ -24,7 +24,6 @@ from fivccliche.utils.schemas import PaginatedResponse
 
 from . import methods, schemas
 
-
 # ============================================================================
 # Chat Session Endpoints
 # ============================================================================
@@ -34,55 +33,24 @@ router_chats = APIRouter(tags=["chats"], prefix="/chats")
 
 @router_chats.post(
     "/",
-    summary="Query by the authenticated user.",
+    summary="Create a new chat session.",
     status_code=status.HTTP_201_CREATED,
+    response_model=schemas.UserChatSchema,
 )
-async def query_chat_async(
-    chat_query: schemas.UserChatQuery,
+async def create_chat_async(
+    chat_create: schemas.UserChatCreateSchema,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
-    config_provider: IUserConfigProvider = Depends(get_config_provider_async),
-    chat_provider: IUserChatProvider = Depends(get_chat_provider_async),
-) -> responses.StreamingResponse:
-    """Create a new chat session."""
-    if chat_query.chat_uuid and chat_query.agent_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot specify both chat_uuid and agent_id",
-        )
-    if not chat_query.chat_uuid and not chat_query.agent_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Must specify either chat_uuid or agent_id",
-        )
-
-    chat = (
-        await methods.get_chat_async(session, chat_query.chat_uuid, user.uuid)
-        if chat_query.chat_uuid
-        else None
-    )
-    chat_uuid = chat.uuid if chat else str(uuid.uuid4())
-    chat_agent_id = chat.agent_id if chat else chat_query.agent_id
-    print(f"🤖 [AGENT] Creating agent with ID: {chat_agent_id}")
-
-    streaming_gen = await create_chat_streaming_generator_async(
-        user,
-        config_provider,
-        chat_provider,
-        chat_uuid=chat_uuid,
-        chat_query=chat_query.query,
-        chat_agent_id=chat_agent_id,
+) -> schemas.UserChatSchema:
+    """Create a new chat session without processing."""
+    # Create new chat with specified agent_id
+    chat = await methods.create_chat_async(
         session=session,
+        uuid=str(uuid.uuid4()),
+        agent_id=chat_create.agent_id,
+        user_uuid=user.uuid,
     )
-    return responses.StreamingResponse(
-        streaming_gen(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return chat.to_schema()
 
 
 @router_chats.get(
@@ -93,6 +61,7 @@ async def query_chat_async(
 async def list_chats_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
+    agent_id: str | None = Query("default", description="Filter chats by agent ID"),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse[schemas.UserChatSchema]:
@@ -102,8 +71,10 @@ async def list_chats_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    sessions = await methods.list_chats_async(session, user.uuid, skip=skip, limit=limit)
-    total = await methods.count_chats_async(session, user.uuid)
+    sessions = await methods.list_chats_async(
+        session, user.uuid, skip=skip, limit=limit, agent_id=agent_id
+    )
+    total = await methods.count_chats_async(session, user.uuid, agent_id=agent_id)
     return PaginatedResponse[schemas.UserChatSchema](
         total=total,
         results=[s.to_schema() for s in sessions],
@@ -179,6 +150,71 @@ async def delete_chat_async(
 # ============================================================================
 
 router_messages = APIRouter(tags=["chat_messages"], prefix="/chats")
+
+
+@router_messages.post(
+    "/{chat_uuid}/messages/",
+    summary="Send a new message to an existing chat.",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_chat_messages_async(
+    chat_uuid: str,
+    chat_message: schemas.UserChatMessageCreateSchema,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+    config_provider: IUserConfigProvider = Depends(get_config_provider_async),
+    chat_provider: IUserChatProvider = Depends(get_chat_provider_async),
+) -> responses.StreamingResponse:
+    """Send a new message to an existing chat session."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    # Verify chat exists and user owns it
+    chat = await methods.get_chat_async(session, chat_uuid, user.uuid)
+    if not chat:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat not found",
+        )
+
+    # Authorization check: users can only message their own chats
+    # Only superusers can message global chats (where user_uuid is None)
+    if chat.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot message global chats",
+        )
+    if chat.user_uuid is not None and chat.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot message other user's chats",
+        )
+
+    # Use the chat's existing agent_id, not from query
+    chat_agent_id = chat.agent_id
+    print(f"🤖 [AGENT] Creating agent with ID: {chat_agent_id}")
+
+    streaming_gen = await create_chat_streaming_generator_async(
+        user,
+        config_provider,
+        chat_provider,
+        chat_uuid=chat_uuid,
+        chat_query=chat_message.query,
+        chat_agent_id=chat_agent_id,
+        session=session,
+    )
+    return responses.StreamingResponse(
+        streaming_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router_messages.get(

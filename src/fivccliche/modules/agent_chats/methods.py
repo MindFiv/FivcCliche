@@ -49,7 +49,11 @@ async def create_chat_async(
 
 
 async def get_chat_async(
-    session: AsyncSession, chat_uuid: str, user_uuid: str, **kwargs
+    session: AsyncSession,
+    chat_uuid: str,
+    user_uuid: str,
+    agent_id: str | None = None,
+    **kwargs,  # ignore additional arguments
 ) -> models.UserChat | None:
     """Get a chat session by UUID for a specific user."""
     statement = select(models.UserChat).where(
@@ -59,6 +63,9 @@ async def get_chat_async(
             | (models.UserChat.user_uuid == None)  # noqa: E711
         )
     )
+    if agent_id is not None:
+        statement = statement.where(models.UserChat.agent_id == agent_id)
+
     result = await session.execute(statement)
     return result.scalars().first()
 
@@ -68,6 +75,7 @@ async def list_chats_async(
     user_uuid: str,
     skip: int = 0,
     limit: int = 100,
+    agent_id: str | None = None,
     **kwargs,
 ) -> list[models.UserChat]:
     """List all chat sessions for a user with pagination."""
@@ -80,6 +88,9 @@ async def list_chats_async(
         .offset(skip)
         .limit(limit)
     )
+    if agent_id is not None:
+        statement = statement.where(models.UserChat.agent_id == agent_id)
+
     result = await session.execute(statement)
     return list(result.scalars().all())
 
@@ -87,12 +98,16 @@ async def list_chats_async(
 async def count_chats_async(
     session: AsyncSession,
     user_uuid: str,
+    agent_id: str | None = None,
     **kwargs,
 ) -> int:
     """Count the number of chat sessions for a user."""
     statement = select(func.count(models.UserChat.uuid)).where(
         (models.UserChat.user_uuid == user_uuid) | (models.UserChat.user_uuid == None)  # noqa: E711
     )
+    if agent_id is not None:
+        statement = statement.where(models.UserChat.agent_id == agent_id)
+
     result = await session.execute(statement)
     return result.scalar() or 0
 
