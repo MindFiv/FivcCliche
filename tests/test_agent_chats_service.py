@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 from sqlmodel import SQLModel
@@ -26,13 +27,21 @@ async def session():
 
         engine = create_async_engine(
             database_url,
-            connect_args={"check_same_thread": False},
+            connect_args={"check_same_thread": False, "timeout": 30},
             poolclass=NullPool,
             echo=False,
         )
 
+        # Add event listener to enable foreign keys on each connection
+        @event.listens_for(engine.sync_engine, "connect")
+        def set_sqlite_pragma(dbapi_conn, connection_record):
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
         # Create all tables
         async with engine.begin() as conn:
+            await conn.execute(text("PRAGMA foreign_keys = ON"))
             await conn.run_sync(SQLModel.metadata.create_all)
 
         # Create session
@@ -1058,3 +1067,90 @@ class TestUserChatRepositoryImpl:
         assert isinstance(updated_message.tool_calls, dict)
         assert "0" in updated_message.tool_calls
         assert updated_message.tool_calls["0"]["tool_id"] == "search"
+
+
+# ============================================================================
+# Cascade Delete Regression Tests
+# ============================================================================
+
+
+class TestCascadeDelete:
+    """Test cases for cascade delete behavior when UserChat is deleted."""
+
+    async def test_delete_chat_cascades_to_messages(self, session: AsyncSession, test_user):
+        """Verify cascade delete removes all UserChatMessages when UserChat is deleted."""
+        # Create a chat
+        chat = UserChat(user_uuid=test_user.uuid, agent_id="test_agent")
+        session.add(chat)
+        await session.commit()
+        await session.refresh(chat)
+
+        # Create multiple messages for that chat
+        msg1 = UserChatMessage(chat_uuid=chat.uuid, query={"text": "Query 1"})
+        msg2 = UserChatMessage(chat_uuid=chat.uuid, query={"text": "Query 2"})
+        msg3 = UserChatMessage(chat_uuid=chat.uuid, query={"text": "Query 3"})
+        session.add(msg1)
+        session.add(msg2)
+        session.add(msg3)
+        await session.commit()
+
+        # Verify messages exist
+        messages_before = await methods.list_chat_messages_async(session, chat.uuid)
+        assert len(messages_before) == 3
+
+        # Delete the chat
+        await methods.delete_chat_async(session, chat)
+
+        # Verify all messages are automatically deleted via cascade
+        messages_after = await methods.list_chat_messages_async(session, chat.uuid)
+        assert len(messages_after) == 0
+
+    async def test_delete_chat_cascades_preserves_other_chats_messages(
+        self, session: AsyncSession, test_user
+    ):
+        """Verify cascade delete only affects messages from the deleted chat."""
+        # Create two chats
+        chat1 = UserChat(user_uuid=test_user.uuid, agent_id="agent1")
+        chat2 = UserChat(user_uuid=test_user.uuid, agent_id="agent2")
+        session.add(chat1)
+        session.add(chat2)
+        await session.commit()
+
+        # Create messages for both chats
+        msg1_chat1 = UserChatMessage(chat_uuid=chat1.uuid, query={"text": "Chat1 Query1"})
+        msg2_chat1 = UserChatMessage(chat_uuid=chat1.uuid, query={"text": "Chat1 Query2"})
+        msg1_chat2 = UserChatMessage(chat_uuid=chat2.uuid, query={"text": "Chat2 Query1"})
+        session.add(msg1_chat1)
+        session.add(msg2_chat1)
+        session.add(msg1_chat2)
+        await session.commit()
+
+        # Verify messages exist in both chats
+        messages_chat1_before = await methods.list_chat_messages_async(session, chat1.uuid)
+        messages_chat2_before = await methods.list_chat_messages_async(session, chat2.uuid)
+        assert len(messages_chat1_before) == 2
+        assert len(messages_chat2_before) == 1
+
+        # Delete chat1
+        await methods.delete_chat_async(session, chat1)
+
+        # Verify chat1 messages are deleted but chat2 messages remain
+        messages_chat1_after = await methods.list_chat_messages_async(session, chat1.uuid)
+        messages_chat2_after = await methods.list_chat_messages_async(session, chat2.uuid)
+        assert len(messages_chat1_after) == 0
+        assert len(messages_chat2_after) == 1
+        assert messages_chat2_after[0].uuid == msg1_chat2.uuid
+
+    async def test_delete_chat_with_no_messages(self, session: AsyncSession, test_user):
+        """Verify deleting a chat with no messages works correctly."""
+        # Create a chat with no messages
+        chat = UserChat(user_uuid=test_user.uuid, agent_id="test_agent")
+        session.add(chat)
+        await session.commit()
+
+        # Delete the chat (should not raise any errors)
+        await methods.delete_chat_async(session, chat)
+
+        # Verify chat is deleted
+        deleted_chat = await methods.get_chat_async(session, chat.uuid, test_user.uuid)
+        assert deleted_chat is None

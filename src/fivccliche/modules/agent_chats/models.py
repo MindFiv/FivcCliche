@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-# from sqlalchemy import Index
+from sqlalchemy import Column, String, ForeignKey
 from sqlmodel import SQLModel, Field, JSON
 
 from . import schemas
@@ -65,7 +65,7 @@ class UserChatMessage(SQLModel, table=True):
         description="Chat message UUID (globally unique).",
     )
     chat_uuid: str = Field(
-        foreign_key="chat.uuid",
+        sa_column=Column(String(36), ForeignKey("chat.uuid", ondelete="CASCADE")),
         description="Chat UUID.",
     )
     status: schemas.AgentRunStatus = Field(
