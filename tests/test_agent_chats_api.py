@@ -648,12 +648,12 @@ class TestGlobalChatAuthorization:
             global_chat = await chat_methods.create_chat_async(
                 client.async_session,
                 user_uuid=None,  # Global chat
-                agent_id="test-agent-global",
+                agent_id="default",
             )
             user_chat = await chat_methods.create_chat_async(
                 client.async_session,
                 user_uuid=user_uuid,  # User-specific chat
-                agent_id="test-agent-user",
+                agent_id="default",
             )
             return global_chat.uuid, user_chat.uuid
 
