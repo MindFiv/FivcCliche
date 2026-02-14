@@ -184,6 +184,24 @@ class TestUsersAPI:
         assert response.status_code == 400
         assert "Email already registered" in response.json()["detail"]
 
+    def test_create_user_without_email(self, client: TestClient):
+        """Test creating a user without email (email is optional)."""
+        headers = self._get_admin_headers(client)
+        response = client.post(
+            "/users/",
+            json={
+                "username": "noemailuser",
+                "password": "password123",
+            },
+            headers=headers,
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["username"] == "noemailuser"
+        assert data["email"] is None
+        assert "uuid" in data
+        assert "hashed_password" not in data
+
     def test_list_users(self, client: TestClient):
         """Test listing users."""
         headers = self._get_admin_headers(client)

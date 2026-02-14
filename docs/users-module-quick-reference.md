@@ -53,7 +53,7 @@ UserService.authenticate_user(session, username, password)
 ### User
 - `id` (str, PK): Unique identifier (UUID string)
 - `username` (str, unique): User login name
-- `email` (str, unique): User email
+- `email` (str, unique, nullable): User email (optional)
 - `hashed_password` (str): Argon2 hash
 - `created_at` (datetime): Creation timestamp
 - `signed_in_at` (datetime, nullable): Last login
@@ -79,6 +79,28 @@ UserService.authenticate_user(session, username, password)
   "username": "john_doe",
   "email": "john@example.com",
   "created_at": "2024-01-15T10:30:00",
+  "signed_in_at": null,
+  "is_active": true,
+  "is_superuser": false
+}
+```
+
+### Create User Without Email
+**Request:**
+```json
+{
+  "username": "jane_doe",
+  "password": "SecurePass123!"
+}
+```
+
+**Response (201):**
+```json
+{
+  "id": "660f9500-f39c-52e5-b827-557766551111",
+  "username": "jane_doe",
+  "email": null,
+  "created_at": "2024-01-15T10:35:00",
   "signed_in_at": null,
   "is_active": true,
   "is_superuser": false
@@ -139,7 +161,8 @@ export DATABASE_URL="postgresql://user:pass@localhost/dbname"
 ## Security Notes
 - Passwords hashed with Argon2 (resistant to GPU attacks)
 - No password in API responses
-- Email validation enforced
+- Email validation enforced when provided
+- Email is optional (users can be created without email)
 - Unique constraints on username/email
 - Proper HTTP status codes for errors
 

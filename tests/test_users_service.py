@@ -86,6 +86,22 @@ class TestUserService:
         assert user.is_active is True
         assert user.is_superuser is False
 
+    async def test_create_user_without_email(self, session: AsyncSession):
+        """Test creating a new user without email."""
+        user = await methods.create_user_async(
+            session,
+            username="testuser",
+            email=None,
+            password="password123",
+        )
+
+        assert user.uuid is not None
+        assert user.username == "testuser"
+        assert user.email is None
+        assert user.hashed_password != "password123"
+        assert user.is_active is True
+        assert user.is_superuser is False
+
     async def test_get_user_by_uuid(self, session: AsyncSession):
         """Test getting a user by ID."""
         created_user = await methods.create_user_async(

@@ -7,7 +7,7 @@ class UserBase(BaseModel):
     """Base user schema with common fields."""
 
     username: str = Field(..., min_length=3, max_length=255, description="Username")
-    email: EmailStr = Field(..., description="User email address")
+    email: EmailStr | None = Field(None, description="User email address")
 
 
 class UserCreate(UserBase):

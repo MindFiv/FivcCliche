@@ -40,18 +40,19 @@ async def create_user_async(
             detail="Username already registered",
         )
 
-    # Check if email already exists
-    existing_email = await methods.get_user_async(session, email=str(user_create.email))
-    if existing_email:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered",
-        )
+    # Check if email already exists (only if email is provided)
+    if user_create.email:
+        existing_email = await methods.get_user_async(session, email=str(user_create.email))
+        if existing_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered",
+            )
 
     user = await methods.create_user_async(
         session,
         username=user_create.username,
-        email=str(user_create.email),
+        email=str(user_create.email) if user_create.email else None,
         password=user_create.password,
     )
     return user
