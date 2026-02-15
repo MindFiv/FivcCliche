@@ -204,7 +204,7 @@ async def create_chat_messages_async(
         session=session,
         **chat_kwargs,
     )
-    chat_tools = await chat_context.get_tools_async() if chat_context else None
+    chat_tool_funcs = await chat_context.get_tool_funcs_async() if chat_context else None
     chat_gen = await create_chat_streaming_generator_async(
         user,
         config_provider,
@@ -212,7 +212,7 @@ async def create_chat_messages_async(
         chat_uuid=chat_uuid,
         chat_query=chat_message.query,
         chat_agent_id=chat_agent_id,
-        chat_tools=chat_tools,
+        chat_tool_funcs=chat_tool_funcs,
         session=session,
     )
     return responses.StreamingResponse(

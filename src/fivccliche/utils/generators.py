@@ -5,7 +5,7 @@ from collections.abc import Callable
 from collections.abc import Awaitable
 
 from fivcplayground.agents import AgentRunEvent, AgentRun, create_agent_async
-from fivcplayground.tools import create_tool_retriever_async, Tool
+from fivcplayground.tools import create_tool_retriever_async
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider
@@ -116,14 +116,20 @@ async def create_chat_streaming_generator_async(
     chat_query: str = "",
     chat_uuid: str | None = None,
     chat_agent_id: str = "default",
-    chat_tools: list[Tool] | None = None,
+    chat_tool_funcs: list[Callable] | None = None,
     chat_finish_callback: (
         Callable[[AgentRun], None] | Callable[[AgentRun], Awaitable[None]] | None
     ) = None,
     session: AsyncSession | None = None,
     **kwargs,
 ):
-    chat_tool_ids = [tool.name for tool in chat_tools] if chat_tools else []
+    tool_backend = user_config_provider.get_tool_backend()
+    chat_tools = (
+        [tool_backend.create_tool(tool_func) for tool_func in chat_tool_funcs]
+        if chat_tool_funcs
+        else []
+    )
+    chat_tool_ids = [tool.name for tool in chat_tools]
     agent = await create_agent_async(
         model_backend=user_config_provider.get_model_backend(),
         model_config_repository=user_config_provider.get_model_repository(
@@ -136,7 +142,7 @@ async def create_chat_streaming_generator_async(
         agent_config_id=chat_agent_id,
     )
     agent_tools = await create_tool_retriever_async(
-        tool_backend=user_config_provider.get_tool_backend(),
+        tool_backend=tool_backend,
         tools=chat_tools,
         tool_config_repository=user_config_provider.get_tool_repository(
             user_uuid=user.uuid, session=session

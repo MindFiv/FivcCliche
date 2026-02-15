@@ -1,11 +1,11 @@
 from abc import abstractmethod
+from collections.abc import Callable
 
 from fivcglue import IComponent
 
 from fivcplayground.agents import (
     AgentRunRepository as UserChatRepository,
 )
-from fivcplayground.tools import Tool
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 
@@ -13,7 +13,7 @@ class IUserChatContext(IComponent):
     """IUserChatContext is an interface for defining user chat context."""
 
     @abstractmethod
-    async def get_tools_async(self, **kwargs) -> list[Tool]:
+    async def get_tool_funcs_async(self, **kwargs) -> list[Callable]:
         """Get the chat tools."""
 
 

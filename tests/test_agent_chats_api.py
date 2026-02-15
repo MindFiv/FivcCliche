@@ -2,7 +2,7 @@
 
 import os
 import tempfile
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -1325,7 +1325,6 @@ class TestChatContextFlow:
         """Test that get_chat_context can be called on the provider."""
         from fivccliche.modules.agent_chats.services import UserChatProviderImpl
         from fivccliche.modules.users.methods import get_user_async
-        from unittest.mock import Mock
 
         session = client.async_session
         loop = client.loop

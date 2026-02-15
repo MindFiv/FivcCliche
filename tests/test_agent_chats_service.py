@@ -3,6 +3,7 @@
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 import pytest
 from sqlalchemy import event, text
@@ -14,7 +15,6 @@ from fivccliche.modules.agent_chats import methods
 from fivccliche.modules.users.models import User  # noqa: F401
 from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage
 from fivccliche.services.interfaces.agent_chats import IUserChatContext
-from fivcplayground.tools import Tool
 
 if TYPE_CHECKING:
     from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
@@ -1226,16 +1226,16 @@ class TestCascadeDelete:
 class MockUserChatContext(IUserChatContext):
     """Mock chat context for testing."""
 
-    def __init__(self, tools: list[Tool] | None = None):
-        self.tools = tools or []
+    def __init__(self, tool_funcs: list[Callable] | None = None):
+        self.tool_funcs = tool_funcs or []
         self.get_tools_called = False
         self.get_tools_kwargs = {}
 
-    async def get_tools_async(self, **kwargs) -> list[Tool]:
-        """Return mock tools."""
+    async def get_tool_funcs_async(self, **kwargs) -> list[Callable]:
+        """Return mock tool functions."""
         self.get_tools_called = True
         self.get_tools_kwargs = kwargs
-        return self.tools
+        return self.tool_funcs
 
 
 # ============================================================================
@@ -1314,59 +1314,60 @@ class TestUserChatContextProvider:
 class TestUserChatContextInterface:
     """Test cases for IUserChatContext interface using mock implementation."""
 
-    async def test_mock_chat_context_get_tools_async(self):
-        """Test that MockUserChatContext implements get_tools_async."""
+    async def test_mock_chat_context_get_tool_funcs_async(self):
+        """Test that MockUserChatContext implements get_tool_funcs_async."""
         mock_context = MockUserChatContext()
-        tools = await mock_context.get_tools_async()
-        assert isinstance(tools, list)
-        assert tools == []
+        tool_funcs = await mock_context.get_tool_funcs_async()
+        assert isinstance(tool_funcs, list)
+        assert tool_funcs == []
         assert mock_context.get_tools_called is True
 
-    async def test_chat_context_returns_empty_tools(self):
-        """Test that chat context can return empty tool list."""
-        mock_context = MockUserChatContext(tools=[])
-        tools = await mock_context.get_tools_async()
-        assert isinstance(tools, list)
-        assert len(tools) == 0
+    async def test_chat_context_returns_empty_tool_funcs(self):
+        """Test that chat context can return empty tool function list."""
+        mock_context = MockUserChatContext(tool_funcs=[])
+        tool_funcs = await mock_context.get_tool_funcs_async()
+        assert isinstance(tool_funcs, list)
+        assert len(tool_funcs) == 0
 
-    async def test_chat_context_returns_tool_list(self):
-        """Test that chat context can return a list of Tool objects."""
-        # Create mock tool objects (Tool is an abstract class, so we use mocks)
-        from unittest.mock import Mock
+    async def test_chat_context_returns_tool_func_list(self):
+        """Test that chat context can return a list of Callable objects."""
 
-        tool1 = Mock(spec=Tool)
-        tool1.name = "test_tool_1"
-        tool1.description = "Test tool 1"
+        # Create mock callable functions
+        def test_tool_1():
+            """Test tool 1"""
+            return "result1"
 
-        tool2 = Mock(spec=Tool)
-        tool2.name = "test_tool_2"
-        tool2.description = "Test tool 2"
+        def test_tool_2():
+            """Test tool 2"""
+            return "result2"
 
-        mock_tools = [tool1, tool2]
+        mock_tool_funcs = [test_tool_1, test_tool_2]
 
-        mock_context = MockUserChatContext(tools=mock_tools)
-        tools = await mock_context.get_tools_async()
+        mock_context = MockUserChatContext(tool_funcs=mock_tool_funcs)
+        tool_funcs = await mock_context.get_tool_funcs_async()
 
-        assert isinstance(tools, list)
-        assert len(tools) == 2
-        assert tools[0].name == "test_tool_1"
-        assert tools[1].name == "test_tool_2"
+        assert isinstance(tool_funcs, list)
+        assert len(tool_funcs) == 2
+        assert callable(tool_funcs[0])
+        assert callable(tool_funcs[1])
+        assert tool_funcs[0].__name__ == "test_tool_1"
+        assert tool_funcs[1].__name__ == "test_tool_2"
 
-    async def test_chat_context_get_tools_async_called(self):
-        """Test that get_tools_async is actually called and awaitable."""
+    async def test_chat_context_get_tool_funcs_async_called(self):
+        """Test that get_tool_funcs_async is actually called and awaitable."""
         mock_context = MockUserChatContext()
         assert mock_context.get_tools_called is False
 
         # Call the async method
-        await mock_context.get_tools_async()
+        await mock_context.get_tool_funcs_async()
 
         assert mock_context.get_tools_called is True
 
-    async def test_chat_context_get_tools_async_with_kwargs(self):
-        """Test that get_tools_async can receive kwargs."""
+    async def test_chat_context_get_tool_funcs_async_with_kwargs(self):
+        """Test that get_tool_funcs_async can receive kwargs."""
         mock_context = MockUserChatContext()
 
-        await mock_context.get_tools_async(key1="value1", key2=123)
+        await mock_context.get_tool_funcs_async(key1="value1", key2=123)
 
         assert mock_context.get_tools_called is True
         assert mock_context.get_tools_kwargs == {"key1": "value1", "key2": 123}
@@ -1376,8 +1377,8 @@ class TestUserChatContextInterface:
         mock_context = MockUserChatContext()
 
         # Check that it has the required method
-        assert hasattr(mock_context, "get_tools_async")
-        assert callable(mock_context.get_tools_async)
+        assert hasattr(mock_context, "get_tool_funcs_async")
+        assert callable(mock_context.get_tool_funcs_async)
 
         # Check that it's an instance of IUserChatContext
         assert isinstance(mock_context, IUserChatContext)
