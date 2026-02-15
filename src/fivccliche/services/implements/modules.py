@@ -29,12 +29,14 @@ class ModuleSiteImpl(IModuleSite):
         name: str = "FivcCliche",
         description: str = "A production-ready, multi-user backend framework for AI agents.",
         prefix: str = "",
+        docs_prefix: str = "",
         modules: list[str] | None = None,
         **kwargs,  # ignore additional arguments
     ):
         self._name = name
         self._description = description
         self._prefix = prefix
+        self._docs_prefix = docs_prefix
         self._modules = {}
 
         for mod in modules or []:
@@ -55,12 +57,11 @@ class ModuleSiteImpl(IModuleSite):
     def list_modules(self, **kwargs) -> list[IModule]:
         return list(self._modules.values())
 
-    def create_application(
-        self, docs_url: str | None = None, redoc_url: str | None = None, **kwargs
-    ) -> FastAPI:
+    def create_application(self, **kwargs) -> FastAPI:
         app_kwargs = {
-            "docs_url": docs_url,
-            "redoc_url": redoc_url,
+            "docs_url": f"{self._docs_prefix}/docs",
+            "redoc_url": f"{self._docs_prefix}/redoc",
+            "openapi_url": f"{self._docs_prefix}/openapi.json",
             "title": self._name,
             "description": self._description,
             "version": __version__,
