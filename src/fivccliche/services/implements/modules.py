@@ -55,13 +55,19 @@ class ModuleSiteImpl(IModuleSite):
     def list_modules(self, **kwargs) -> list[IModule]:
         return list(self._modules.values())
 
-    def create_application(self, **kwargs) -> FastAPI:
-        app = FastAPI(
-            title=self._name,
-            description=self._description,
-            version=__version__,
-            lifespan=_lifespan,
-        )
+    def create_application(
+        self, docs_url: str | None = None, redoc_url: str | None = None, **kwargs
+    ) -> FastAPI:
+        app_kwargs = {
+            "docs_url": docs_url,
+            "redoc_url": redoc_url,
+            "title": self._name,
+            "description": self._description,
+            "version": __version__,
+            "lifespan": _lifespan,
+        }
+        app_kwargs = {k: v for k, v in app_kwargs.items() if v is not None}
+        app = FastAPI(**app_kwargs)
         # add CORS middleware
         app.add_middleware(
             CORSMiddleware,
