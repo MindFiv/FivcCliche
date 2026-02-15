@@ -15,6 +15,7 @@ async def create_chat_async(
     agent_id: str,
     chat_uuid: str | None = None,
     description: str | None = None,
+    context: dict | None = None,
     **kwargs,
 ) -> models.UserChat:
     """Create a new chat session asynchronously.
@@ -25,6 +26,7 @@ async def create_chat_async(
         agent_id: Agent config ID (required)
         chat_uuid: Optional chat UUID (will be auto-generated if not provided)
         description: Optional chat description
+        context: Optional chat context (arbitrary JSON data)
         **kwargs: Additional arguments (ignored)
 
     Returns:
@@ -41,6 +43,7 @@ async def create_chat_async(
         user_uuid=user_uuid,
         agent_id=agent_id,
         description=description,
+        context=context,
     )
     session.add(chat)
     await session.commit()

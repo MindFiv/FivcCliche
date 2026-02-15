@@ -32,6 +32,11 @@ class UserChat(SQLModel, table=True):
         max_length=255,
         description="Agent config ID.",
     )
+    context: dict | None = Field(
+        sa_type=JSON,
+        default=None,
+        description="Chat context.",
+    )
     description: str | None = Field(
         default=None,
         max_length=1024,
@@ -49,6 +54,7 @@ class UserChat(SQLModel, table=True):
             id=self.uuid,
             agent_id=self.agent_id,
             description=self.description,
+            context=self.context,
             started_at=self.created_at,
         )
 

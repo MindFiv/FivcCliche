@@ -7,7 +7,11 @@ from fivcplayground.agents import AgentRunSession, AgentRun
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from fivccliche.services.interfaces.modules import IModule
-from fivccliche.services.interfaces.agent_chats import IUserChatProvider, UserChatRepository
+from fivccliche.services.interfaces.agent_chats import (
+    IUserChatContext,
+    IUserChatProvider,
+    UserChatRepository,
+)
 
 from . import methods, routers
 
@@ -79,17 +83,21 @@ class UserChatRepositoryImpl(UserChatRepository):
             # Update existing chat
             if session.description is not None:
                 existing.description = session.description
+            if hasattr(session, "context") and session.context is not None:
+                existing.context = session.context
             self.session.add(existing)
             await self.session.commit()
             await self.session.refresh(existing)
         else:
             # Create new chat using create_chat_async
+            context = getattr(session, "context", None)
             await methods.create_chat_async(
                 self.session,
                 user_uuid=self.user_uuid,
                 agent_id=session.agent_id,
                 chat_uuid=session.id,
                 description=session.description,
+                context=context,
             )
 
     async def get_agent_run_session_async(self, session_id: str) -> AgentRunSession | None:
@@ -274,6 +282,15 @@ class UserChatProviderImpl(IUserChatProvider):
     ) -> UserChatRepository:
         """Get the chat repository."""
         return UserChatRepositoryImpl(user_uuid=user_uuid, session=session)
+
+    def get_chat_context(
+        self,
+        user_uuid: str,
+        session: AsyncSession,
+        **kwargs,
+    ) -> IUserChatContext | None:
+        """Get the chat context for providing chat-specific tools."""
+        return None
 
 
 class ModuleImpl(IModule):

@@ -13,6 +13,8 @@ from sqlmodel import SQLModel
 from fivccliche.modules.agent_chats import methods
 from fivccliche.modules.users.models import User  # noqa: F401
 from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage
+from fivccliche.services.interfaces.agent_chats import IUserChatContext
+from fivcplayground.tools import Tool
 
 if TYPE_CHECKING:
     from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
@@ -179,6 +181,66 @@ class TestChatMethods:
         await methods.delete_chat_async(session, test_chat)
         chat = await methods.get_chat_async(session, test_chat.uuid, test_chat.user_uuid)
         assert chat is None
+
+    async def test_create_chat_with_context_async(self, session: AsyncSession, test_user):
+        """Test creating a chat with context data."""
+        context = {"session_type": "debug", "environment": "test"}
+        chat = await methods.create_chat_async(
+            session,
+            user_uuid=test_user.uuid,
+            agent_id="test_agent",
+            description="Test chat with context",
+            context=context,
+        )
+        assert chat is not None
+        assert chat.context == context
+        assert chat.context["session_type"] == "debug"
+
+    async def test_create_chat_without_context_async(self, session: AsyncSession, test_user):
+        """Test creating a chat without context (defaults to None)."""
+        chat = await methods.create_chat_async(
+            session,
+            user_uuid=test_user.uuid,
+            agent_id="test_agent",
+            description="Test chat without context",
+        )
+        assert chat is not None
+        assert chat.context is None
+
+    async def test_get_chat_returns_context(self, session: AsyncSession, test_user):
+        """Test that get_chat returns the context field."""
+        context = {"key": "value", "number": 123}
+        chat = await methods.create_chat_async(
+            session,
+            user_uuid=test_user.uuid,
+            agent_id="test_agent",
+            context=context,
+        )
+        retrieved = await methods.get_chat_async(session, chat.uuid, test_user.uuid)
+        assert retrieved is not None
+        assert retrieved.context == context
+
+    async def test_chat_to_schema_includes_context(self, session: AsyncSession, test_user):
+        """Test that to_schema() includes context field."""
+        context = {"test": "data"}
+        chat = await methods.create_chat_async(
+            session,
+            user_uuid=test_user.uuid,
+            agent_id="test_agent",
+            context=context,
+        )
+        schema = chat.to_schema()
+        assert schema.context == context
+
+    async def test_chat_to_schema_with_none_context(self, session: AsyncSession, test_user):
+        """Test that to_schema() handles None context correctly."""
+        chat = await methods.create_chat_async(
+            session,
+            user_uuid=test_user.uuid,
+            agent_id="test_agent",
+        )
+        schema = chat.to_schema()
+        assert schema.context is None
 
 
 class TestChatMessageMethods:
@@ -1154,3 +1216,168 @@ class TestCascadeDelete:
         # Verify chat is deleted
         deleted_chat = await methods.get_chat_async(session, chat.uuid, test_user.uuid)
         assert deleted_chat is None
+
+
+# ============================================================================
+# Mock Implementation for IUserChatContext
+# ============================================================================
+
+
+class MockUserChatContext(IUserChatContext):
+    """Mock chat context for testing."""
+
+    def __init__(self, tools: list[Tool] | None = None):
+        self.tools = tools or []
+        self.get_tools_called = False
+        self.get_tools_kwargs = {}
+
+    async def get_tools_async(self, **kwargs) -> list[Tool]:
+        """Return mock tools."""
+        self.get_tools_called = True
+        self.get_tools_kwargs = kwargs
+        return self.tools
+
+
+# ============================================================================
+# UserChatContextProvider Tests
+# ============================================================================
+
+
+class TestUserChatContextProvider:
+    """Test cases for UserChatProviderImpl.get_chat_context()."""
+
+    @pytest.fixture
+    def provider(self):
+        """Create a provider instance for testing."""
+        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
+        from unittest.mock import Mock
+
+        component_site = Mock()
+        return UserChatProviderImpl(component_site)
+
+    async def test_get_chat_context_returns_none_by_default(
+        self, provider, session: AsyncSession, test_user
+    ):
+        """Test that get_chat_context returns None by default (stub implementation)."""
+        context = provider.get_chat_context(
+            user_uuid=test_user.uuid,
+            session=session,
+        )
+        assert context is None
+
+    async def test_get_chat_context_with_user_uuid(
+        self, provider, session: AsyncSession, test_user
+    ):
+        """Test that get_chat_context accepts user_uuid parameter."""
+        # Should not raise an error
+        context = provider.get_chat_context(
+            user_uuid=test_user.uuid,
+            session=session,
+        )
+        assert context is None
+
+    async def test_get_chat_context_with_session(self, provider, session: AsyncSession, test_user):
+        """Test that get_chat_context accepts session parameter."""
+        # Should not raise an error
+        context = provider.get_chat_context(
+            user_uuid=test_user.uuid,
+            session=session,
+        )
+        assert context is None
+
+    async def test_get_chat_context_with_kwargs(self, provider, session: AsyncSession, test_user):
+        """Test that get_chat_context accepts additional kwargs."""
+        # Should not raise an error
+        context = provider.get_chat_context(
+            user_uuid=test_user.uuid,
+            session=session,
+            custom_key="custom_value",
+            another_key=123,
+        )
+        assert context is None
+
+    async def test_get_chat_context_return_type(self, provider, session: AsyncSession, test_user):
+        """Test that get_chat_context return type is IUserChatContext | None."""
+        context = provider.get_chat_context(
+            user_uuid=test_user.uuid,
+            session=session,
+        )
+        # Should be None or implement IUserChatContext
+        assert context is None or isinstance(context, IUserChatContext)
+
+
+# ============================================================================
+# UserChatContextInterface Tests
+# ============================================================================
+
+
+class TestUserChatContextInterface:
+    """Test cases for IUserChatContext interface using mock implementation."""
+
+    async def test_mock_chat_context_get_tools_async(self):
+        """Test that MockUserChatContext implements get_tools_async."""
+        mock_context = MockUserChatContext()
+        tools = await mock_context.get_tools_async()
+        assert isinstance(tools, list)
+        assert tools == []
+        assert mock_context.get_tools_called is True
+
+    async def test_chat_context_returns_empty_tools(self):
+        """Test that chat context can return empty tool list."""
+        mock_context = MockUserChatContext(tools=[])
+        tools = await mock_context.get_tools_async()
+        assert isinstance(tools, list)
+        assert len(tools) == 0
+
+    async def test_chat_context_returns_tool_list(self):
+        """Test that chat context can return a list of Tool objects."""
+        # Create mock tool objects (Tool is an abstract class, so we use mocks)
+        from unittest.mock import Mock
+
+        tool1 = Mock(spec=Tool)
+        tool1.name = "test_tool_1"
+        tool1.description = "Test tool 1"
+
+        tool2 = Mock(spec=Tool)
+        tool2.name = "test_tool_2"
+        tool2.description = "Test tool 2"
+
+        mock_tools = [tool1, tool2]
+
+        mock_context = MockUserChatContext(tools=mock_tools)
+        tools = await mock_context.get_tools_async()
+
+        assert isinstance(tools, list)
+        assert len(tools) == 2
+        assert tools[0].name == "test_tool_1"
+        assert tools[1].name == "test_tool_2"
+
+    async def test_chat_context_get_tools_async_called(self):
+        """Test that get_tools_async is actually called and awaitable."""
+        mock_context = MockUserChatContext()
+        assert mock_context.get_tools_called is False
+
+        # Call the async method
+        await mock_context.get_tools_async()
+
+        assert mock_context.get_tools_called is True
+
+    async def test_chat_context_get_tools_async_with_kwargs(self):
+        """Test that get_tools_async can receive kwargs."""
+        mock_context = MockUserChatContext()
+
+        await mock_context.get_tools_async(key1="value1", key2=123)
+
+        assert mock_context.get_tools_called is True
+        assert mock_context.get_tools_kwargs == {"key1": "value1", "key2": 123}
+
+    async def test_chat_context_interface_compliance(self):
+        """Test that MockUserChatContext complies with IUserChatContext interface."""
+        mock_context = MockUserChatContext()
+
+        # Check that it has the required method
+        assert hasattr(mock_context, "get_tools_async")
+        assert callable(mock_context.get_tools_async)
+
+        # Check that it's an instance of IUserChatContext
+        assert isinstance(mock_context, IUserChatContext)

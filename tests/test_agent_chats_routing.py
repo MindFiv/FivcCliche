@@ -345,6 +345,41 @@ class TestChatEndpointResponseStructure:
         assert response.status_code == 200
         assert "application/json" in response.headers.get("content-type", "")
 
+    def test_chat_response_includes_context_field(self, client: TestClient, auth_token: str):
+        """Test that chat response includes context field."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        # Create a chat with context
+        context_data = {"test": "data", "value": 123}
+        create_response = client.post(
+            "/chats/",
+            json={"agent_id": "test_agent", "context": context_data},
+            headers=headers,
+        )
+        assert create_response.status_code == 201
+        response_json = create_response.json()
+
+        # Verify context field exists and has correct structure
+        assert "context" in response_json
+        assert response_json["context"] is not None
+        assert isinstance(response_json["context"], dict)
+        assert response_json["context"] == context_data
+
+    def test_chat_response_context_nullable(self, client: TestClient, auth_token: str):
+        """Test that context field can be None."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        # Create a chat without context
+        create_response = client.post(
+            "/chats/",
+            json={"agent_id": "test_agent"},
+            headers=headers,
+        )
+        assert create_response.status_code == 201
+        response_json = create_response.json()
+
+        # Verify context field exists but is None
+        assert "context" in response_json
+        assert response_json["context"] is None
+
 
 class TestChatEndpointPagination:
     """Test pagination behavior on list endpoints."""

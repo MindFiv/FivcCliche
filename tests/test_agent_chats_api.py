@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+from unittest.mock import Mock, AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -183,6 +184,87 @@ class TestChatAPI:
         assert "uuid" in data
         assert data["agent_id"] == "custom_agent"
         assert "created_at" in data or "started_at" in data
+
+
+class TestChatContextAPI:
+    """Test cases for context field handling in chat API."""
+
+    def test_create_chat_with_context(self, client: TestClient, auth_token: str):
+        """Test creating a chat with initial context."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        context_data = {"session_type": "debug", "environment": "test", "user_id": 123}
+        response = client.post(
+            "/chats/",
+            json={"agent_id": "test_agent", "context": context_data},
+            headers=headers,
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert "uuid" in data
+        assert "context" in data
+        assert data["context"] == context_data
+        assert data["context"]["session_type"] == "debug"
+
+    def test_create_chat_without_context(self, client: TestClient, auth_token: str):
+        """Test creating a chat without context (should default to None)."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.post(
+            "/chats/",
+            json={"agent_id": "test_agent"},
+            headers=headers,
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert "uuid" in data
+        assert "context" in data
+        assert data["context"] is None
+
+    def test_get_chat_includes_context(self, client: TestClient, auth_token: str):
+        """Test that GET endpoint returns context field."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        context_data = {"key": "value", "number": 42}
+
+        # Create chat with context
+        create_response = client.post(
+            "/chats/",
+            json={"agent_id": "test_agent", "context": context_data},
+            headers=headers,
+        )
+        assert create_response.status_code == 201
+        chat_uuid = create_response.json()["uuid"]
+
+        # Get the chat
+        get_response = client.get(f"/chats/{chat_uuid}/", headers=headers)
+        assert get_response.status_code == 200
+        data = get_response.json()
+        assert "context" in data
+        assert data["context"] == context_data
+
+    def test_list_chats_includes_context(self, client: TestClient, auth_token: str):
+        """Test that list endpoint returns context in results."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        context_data = {"test": "list_context"}
+
+        # Create chat with context (using default agent_id to match list filter)
+        create_response = client.post(
+            "/chats/",
+            json={"agent_id": "default", "context": context_data},
+            headers=headers,
+        )
+        assert create_response.status_code == 201
+
+        # List chats
+        list_response = client.get("/chats/", headers=headers)
+        assert list_response.status_code == 200
+        data = list_response.json()
+        assert data["total"] > 0
+        assert len(data["results"]) > 0
+
+        # Check that at least one result has context
+        chat_with_context = next(
+            (chat for chat in data["results"] if chat.get("context") == context_data), None
+        )
+        assert chat_with_context is not None
 
 
 class TestChatMessageAPI:
@@ -1153,3 +1235,139 @@ class TestCreateChatMessages:
         )
         # GET returns list response (200) or not found (404), not method not allowed
         assert response.status_code in [200, 404]
+
+
+class TestChatContextFlow:
+    """Test cases for chat context flow through the API."""
+
+    def test_chat_creation_with_context_stored_correctly(self, client: TestClient, auth_token: str):
+        """Test that creating a chat with context stores it correctly."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        context_data = {"session_type": "debug", "environment": "test", "user_id": 123}
+
+        # Create chat with context
+        response = client.post(
+            "/chats/",
+            json={"agent_id": "test-agent", "context": context_data},
+            headers=headers,
+        )
+        assert response.status_code == 201
+        chat_data = response.json()
+        assert chat_data["context"] == context_data
+
+        # Retrieve the chat and verify context persists
+        chat_uuid = chat_data["uuid"]
+        get_response = client.get(f"/chats/{chat_uuid}/", headers=headers)
+        assert get_response.status_code == 200
+        retrieved_chat = get_response.json()
+        assert retrieved_chat["context"] == context_data
+
+    def test_chat_creation_with_none_context(self, client: TestClient, auth_token: str):
+        """Test that creating a chat with None context works correctly."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+
+        # Create chat without context
+        response = client.post(
+            "/chats/",
+            json={"agent_id": "test-agent"},
+            headers=headers,
+        )
+        assert response.status_code == 201
+        chat_data = response.json()
+        assert chat_data["context"] is None
+
+    def test_chat_creation_with_empty_context(self, client: TestClient, auth_token: str):
+        """Test that creating a chat with empty context dict works correctly."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+
+        # Create chat with empty context
+        response = client.post(
+            "/chats/",
+            json={"agent_id": "test-agent", "context": {}},
+            headers=headers,
+        )
+        assert response.status_code == 201
+        chat_data = response.json()
+        assert chat_data["context"] == {}
+
+    def test_chat_context_retrieved_in_service_layer(self, client: TestClient, auth_token: str):
+        """Test that context can be retrieved in the service layer."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.users.methods import get_user_async
+
+        session = client.async_session
+        loop = client.loop
+
+        # Create chat with context
+        context_data = {"key1": "value1", "key2": 123}
+
+        async def test_flow():
+            admin_user = await get_user_async(session, username="admin")
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=str(admin_user.uuid),
+                agent_id="test-agent",
+                context=context_data,
+            )
+
+            # Retrieve the chat
+            retrieved_chat = await chat_methods.get_chat_async(
+                session, chat.uuid, str(admin_user.uuid)
+            )
+            assert retrieved_chat is not None
+            assert retrieved_chat.context == context_data
+
+        loop.run_until_complete(test_flow())
+
+    def test_chat_provider_get_chat_context_can_be_called(
+        self, client: TestClient, auth_token: str
+    ):
+        """Test that get_chat_context can be called on the provider."""
+        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
+        from fivccliche.modules.users.methods import get_user_async
+        from unittest.mock import Mock
+
+        session = client.async_session
+        loop = client.loop
+
+        async def test_provider():
+            admin_user = await get_user_async(session, username="admin")
+            component_site = Mock()
+            provider = UserChatProviderImpl(component_site)
+
+            # Call get_chat_context - should return None (stub implementation)
+            context = provider.get_chat_context(
+                user_uuid=str(admin_user.uuid),
+                session=session,
+                custom_kwarg="test_value",
+            )
+            assert context is None
+
+        loop.run_until_complete(test_provider())
+
+    def test_chat_context_with_complex_nested_data(self, client: TestClient, auth_token: str):
+        """Test that complex nested context data is stored and retrieved correctly."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        complex_context = {
+            "session": {
+                "type": "debug",
+                "environment": "test",
+                "features": ["feature1", "feature2"],
+            },
+            "user": {"id": 123, "preferences": {"theme": "dark", "lang": "en"}},
+            "metadata": {"version": "1.0", "timestamp": 1234567890},
+        }
+
+        # Create chat with complex context
+        response = client.post(
+            "/chats/",
+            json={"agent_id": "test-agent", "context": complex_context},
+            headers=headers,
+        )
+        assert response.status_code == 201
+        chat_data = response.json()
+        assert chat_data["context"] == complex_context
+
+        # Verify nested access works
+        assert chat_data["context"]["session"]["type"] == "debug"
+        assert chat_data["context"]["user"]["preferences"]["theme"] == "dark"

@@ -27,6 +27,7 @@ class UserChatSchema(AgentRunSession):
     """
 
     uuid: str = Field(default=None, description="Chat UUID (globally unique)")
+    context: dict | None = Field(default=None, description="Chat context")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -51,6 +52,7 @@ class UserChatCreateSchema(BaseModel):
     """
 
     agent_id: str = Field(default="default", description="Agent ID for the chat")
+    context: dict | None = Field(default=None, description="Initial chat context")
 
 
 class UserChatMessageCreateSchema(BaseModel):

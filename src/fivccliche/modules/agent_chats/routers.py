@@ -46,9 +46,10 @@ async def create_chat_async(
     # Create new chat with specified agent_id
     chat = await methods.create_chat_async(
         session=session,
-        uuid=str(uuid.uuid4()),
+        chat_uuid=str(uuid.uuid4()),
         agent_id=chat_create.agent_id,
         user_uuid=user.uuid,
+        context=chat_create.context,
     )
     return chat.to_schema()
 
@@ -197,17 +198,25 @@ async def create_chat_messages_async(
     chat_agent_id = chat.agent_id
     print(f"🤖 [AGENT] Creating agent with ID: {chat_agent_id}")
 
-    streaming_gen = await create_chat_streaming_generator_async(
+    chat_kwargs = {**chat.context} if chat.context else {}
+    chat_context = chat_provider.get_chat_context(
+        user_uuid=user.uuid,
+        session=session,
+        **chat_kwargs,
+    )
+    chat_tools = await chat_context.get_tools_async() if chat_context else None
+    chat_gen = await create_chat_streaming_generator_async(
         user,
         config_provider,
         chat_provider,
         chat_uuid=chat_uuid,
         chat_query=chat_message.query,
         chat_agent_id=chat_agent_id,
+        chat_tools=chat_tools,
         session=session,
     )
     return responses.StreamingResponse(
-        streaming_gen(),
+        chat_gen(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
