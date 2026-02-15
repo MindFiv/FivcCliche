@@ -62,7 +62,7 @@ async def create_chat_async(
 async def list_chats_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    agent_id: str | None = Query("default", description="Filter chats by agent ID"),
+    agent_id: str | None = Query(None, description="Filter chats by agent ID"),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse[schemas.UserChatSchema]:
