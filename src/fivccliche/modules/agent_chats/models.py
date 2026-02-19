@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Column, String, ForeignKey
+from sqlalchemy import Column, DateTime, String, ForeignKey
 from sqlmodel import SQLModel, Field, JSON
 
 from . import schemas
@@ -43,7 +43,8 @@ class UserChat(SQLModel, table=True):
         description="Chat description.",
     )
     created_at: datetime = Field(
-        default_factory=datetime.now,
+        sa_type=DateTime(timezone=True),
+        default_factory=lambda: datetime.now(timezone.utc),
         description="Chat creation time.",
     )
 
@@ -97,10 +98,12 @@ class UserChatMessage(SQLModel, table=True):
         description="Tool calls (agent response).",
     )
     created_at: datetime = Field(
-        default_factory=datetime.now,
+        sa_type=DateTime(timezone=True),
+        default_factory=lambda: datetime.now(timezone.utc),
         description="Message creation time.",
     )
     completed_at: datetime | None = Field(
+        sa_type=DateTime(timezone=True),
         default=None,
         description="Message completion time.",
     )

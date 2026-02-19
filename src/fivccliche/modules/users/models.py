@@ -1,7 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid1
 
 from passlib.context import CryptContext
+from sqlalchemy import DateTime
 from sqlmodel import Field, SQLModel
 from pydantic import EmailStr
 
@@ -25,8 +26,16 @@ class User(SQLModel, table=True):
     )
     full_name: str | None = Field(default=None, max_length=1024, description="User full name.")
     hashed_password: str | None = Field(default=None, max_length=255, description="User password.")
-    created_at: datetime = Field(default_factory=datetime.now, description="User creation time.")
-    signed_in_at: datetime | None = Field(default=None, description="User last sign in time.")
+    created_at: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="User creation time.",
+    )
+    signed_in_at: datetime | None = Field(
+        sa_type=DateTime(timezone=True),
+        default=None,
+        description="User last sign in time.",
+    )
     is_active: bool = True
     is_superuser: bool = False
 

@@ -1,7 +1,7 @@
 """User service module with functions for user operations."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,7 +33,7 @@ async def create_user_async(
         uuid=str(uuid.uuid4()),
         username=username,
         email=email,
-        created_at=datetime.now(),
+        created_at=datetime.now(timezone.utc),
         is_active=True,
         is_superuser=is_superuser,
     )
