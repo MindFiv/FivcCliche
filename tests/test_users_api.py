@@ -777,3 +777,58 @@ class TestAuthenticationCaching:
 
         # Both should return the same user data
         assert response1.json() == response2.json()
+
+
+class TestImpersonateUser:
+    """Test cases for the impersonate user endpoint."""
+
+    def _get_admin_headers(self, client: TestClient) -> dict:
+        response = client.post("/users/login", json={"username": "admin", "password": "admin123"})
+        return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+    def _create_regular_user(self, client: TestClient, admin_headers: dict) -> dict:
+        response = client.post(
+            "/users/",
+            json={"username": "imptest", "email": "imptest@example.com", "password": "pass12345"},
+            headers=admin_headers,
+        )
+        return response.json()
+
+    def test_impersonate_success(self, client: TestClient):
+        admin_headers = self._get_admin_headers(client)
+        user = self._create_regular_user(client, admin_headers)
+        response = client.get(f"/users/{user['uuid']}/impersonate/", headers=admin_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert "access_token" in data
+        assert "expires_in" in data
+
+    def test_impersonate_token_authenticates_as_target(self, client: TestClient):
+        admin_headers = self._get_admin_headers(client)
+        user = self._create_regular_user(client, admin_headers)
+        imp_response = client.get(f"/users/{user['uuid']}/impersonate/", headers=admin_headers)
+        token = imp_response.json()["access_token"]
+        self_response = client.get("/users/self", headers={"Authorization": f"Bearer {token}"})
+        assert self_response.status_code == 200
+        assert self_response.json()["uuid"] == user["uuid"]
+
+    def test_impersonate_user_not_found(self, client: TestClient):
+        admin_headers = self._get_admin_headers(client)
+        response = client.get(
+            "/users/00000000-0000-0000-0000-000000000000/impersonate/", headers=admin_headers
+        )
+        assert response.status_code == 404
+
+    def test_impersonate_requires_admin(self, client: TestClient):
+        admin_headers = self._get_admin_headers(client)
+        user = self._create_regular_user(client, admin_headers)
+        login = client.post("/users/login", json={"username": "imptest", "password": "pass12345"})
+        user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        response = client.get(f"/users/{user['uuid']}/impersonate/", headers=user_headers)
+        assert response.status_code == 403
+
+    def test_impersonate_unauthenticated(self, client: TestClient):
+        admin_headers = self._get_admin_headers(client)
+        user = self._create_regular_user(client, admin_headers)
+        response = client.get(f"/users/{user['uuid']}/impersonate/")
+        assert response.status_code == 401

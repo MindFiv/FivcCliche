@@ -13,7 +13,7 @@ from fivccliche.services.interfaces.modules import IModule
 from fivccliche.utils.deps import get_db_session_async
 
 from .models import User
-from .methods import create_user_async, get_user_async, authenticate_user_async
+from .methods import create_user_async, get_user_async
 from .routers import router
 
 
@@ -123,15 +123,20 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         username: str,
         password: str,
         session: AsyncSession | None = None,
+        ignore_password: bool = False,
         **kwargs,
     ) -> UserCredential | None:
         """Login a user and return a credential."""
         if session:
-            user = await authenticate_user_async(session, username, password)
+            user = await get_user_async(session, username=username)
+            if user and not ignore_password and not user.check_password(password):
+                user = None
             return self._create_access_token(user.uuid) if user else None
 
         async with get_db_session_async() as session:
-            user = await authenticate_user_async(session, username, password)
+            user = await get_user_async(session, username=username)
+            if user and not ignore_password and not user.check_password(password):
+                user = None
             return self._create_access_token(user.uuid) if user else None
 
     async def create_sso_credential_async(

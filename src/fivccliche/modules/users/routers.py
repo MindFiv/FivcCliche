@@ -175,3 +175,37 @@ async def delete_user_async(
             detail="User not found",
         )
     await methods.delete_user_async(session, user)
+
+
+@router.get(
+    "/{user_uuid}/impersonate/",
+    summary="Impersonate a user (admin only).",
+    response_model=schemas.UserLoginResponse,
+)
+async def impersonate_user_async(
+    user_uuid: str,
+    admin_user: IUser = Depends(get_admin_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> schemas.UserLoginResponse:
+    if not admin_user:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a admin",
+        )
+    user = await methods.get_user_async(session, user_uuid=user_uuid)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    credential = await default_auth.create_credential_async(
+        user.username,
+        "",
+        session=session,
+        ignore_password=True,
+    )
+    return schemas.UserLoginResponse(
+        access_token=credential.access_token,
+        expires_in=credential.expires_in,
+    )
