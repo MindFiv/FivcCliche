@@ -1195,6 +1195,79 @@ class TestToolConfigAPI:
         assert data["command"] == "python"
         assert data["args"] == ["script.py"]
 
+    def test_create_tool_config_with_functions(self, client: TestClient, auth_token: str):
+        """Test creating a tool config with functions field set."""
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-with-functions",
+                "description": "Builtin tool",
+                "transport": "function",
+                "functions": ["read_file", "write_file"],
+            },
+        )
+        assert create_response.status_code == 201
+        data = create_response.json()
+        assert data["functions"] == ["read_file", "write_file"]
+        assert data["transport"] == "function"
+
+    def test_update_tool_config_functions(self, client: TestClient, auth_token: str):
+        """Test PATCH to set functions field on a tool config."""
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-update-functions",
+                "description": "Tool",
+                "transport": "stdio",
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+        assert create_response.json()["functions"] is None
+
+        update_response = client.patch(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-update-functions",
+                "functions": ["my_fn"],
+            },
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["functions"] == ["my_fn"]
+
+    def test_create_tool_config_with_function_transport(self, client: TestClient, auth_token: str):
+        """Test that transport='function' is accepted when creating a tool config."""
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-function-transport",
+                "description": "Function transport tool",
+                "transport": "function",
+            },
+        )
+        assert create_response.status_code == 201
+        assert create_response.json()["transport"] == "function"
+
+    def test_tool_config_functions_none_by_default(self, client: TestClient, auth_token: str):
+        """Test that tool configs return functions: null when functions is not set."""
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-no-functions",
+                "description": "Tool without functions",
+                "transport": "stdio",
+            },
+        )
+        assert create_response.status_code == 201
+        data = create_response.json()
+        assert "functions" in data
+        assert data["functions"] is None
+
 
 class TestConfigsAuthorizationEmbedding:
     """Test authorization for embedding config endpoints."""
@@ -2027,6 +2100,25 @@ class TestConfigsBackwardCompatibilityTool:
             assert data["args"] is None
         if "env" in data:
             assert data["env"] is None
+
+    def test_tool_config_response_includes_functions_field(
+        self, client: TestClient, auth_token: str
+    ):
+        """Test that functions key is always present in tool config responses (null when not set)."""
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-bc-fn-null",
+                "description": "Minimal tool",
+                "transport": "stdio",
+            },
+        )
+        assert create_response.status_code == 201
+        data = create_response.json()
+
+        assert "functions" in data
+        assert data["functions"] is None
 
 
 class TestConfigsRegressionIntegrationEnd2End:

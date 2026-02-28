@@ -456,6 +456,7 @@ async def create_tool_config_async(
         args=config_create.args,
         env=config_create.env,
         url=config_create.url,
+        functions=config_create.functions,
         is_active=config_create.is_active if hasattr(config_create, "is_active") else True,
     )
     session.add(config)
@@ -564,6 +565,8 @@ async def update_tool_config_async(
         config.env = config_update.env
     if config_update.url is not None:
         config.url = config_update.url
+    if config_update.functions is not None:
+        config.functions = config_update.functions
     if hasattr(config_update, "is_active") and config_update.is_active is not None:
         config.is_active = config_update.is_active
     session.add(config)

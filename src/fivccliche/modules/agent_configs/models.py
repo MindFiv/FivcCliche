@@ -155,7 +155,7 @@ class UserTool(SQLModel, table=True):
     transport: schemas.UserToolTransport = Field(
         default=schemas.UserToolTransport.STDIO,
         max_length=16,
-        description="Transport protocol for the tool (stdio, sse, or streamable_http)",
+        description="Transport protocol for the tool (function, stdio, sse, or streamable_http)",
     )
     command: str | None = Field(default=None, description="Command to run the tool")
     args: list | None = Field(
@@ -169,6 +169,11 @@ class UserTool(SQLModel, table=True):
         description="Environment variables",
     )
     url: str | None = Field(default=None, description="URL for the tool")
+    functions: list | None = Field(
+        sa_type=JSON,
+        default=None,
+        description="Tool functions for builtin tools, ignored following MCP settings if set",
+    )
     is_active: bool = Field(default=True, description="Whether the tool is active")
     user_uuid: str | None = Field(
         default=None,
@@ -186,6 +191,7 @@ class UserTool(SQLModel, table=True):
             args=self.args,
             env=self.env,
             url=self.url,
+            functions=self.functions,
             is_active=self.is_active,
             user_uuid=self.user_uuid,
         )

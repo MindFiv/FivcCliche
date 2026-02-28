@@ -164,6 +164,7 @@ async def session():
                     args JSON,
                     env JSON,
                     url VARCHAR,
+                    functions JSON,
                     is_active BOOLEAN NOT NULL DEFAULT 1,
                     user_uuid VARCHAR,
                     PRIMARY KEY (uuid),
@@ -2191,6 +2192,60 @@ class TestModelsRegressionUserTool:
         # Verify all JSON fields are preserved
         assert schema.args == ["arg1", "arg2"]
         assert schema.env == {"VAR1": "val1"}
+
+    async def test_user_tool_model_has_functions_field(self, session: AsyncSession):
+        """Test that UserTool model has a functions field with correct type and default."""
+        import uuid as uuid_lib
+
+        config = UserTool(
+            uuid=str(uuid_lib.uuid4()),
+            id="test-tool-fn",
+            transport=schemas.UserToolTransport.STDIO,
+        )
+
+        assert hasattr(config, "functions")
+        assert config.functions is None  # Default is None
+
+    async def test_user_tool_functions_json_serialization(self, session: AsyncSession):
+        """Test that functions field is properly stored and retrieved via DB."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        config = UserTool(
+            uuid=config_uuid,
+            id="test-tool-fn-db",
+            transport=schemas.UserToolTransport.STDIO,
+            functions=["read_file", "write_file"],
+            user_uuid="user123",
+        )
+        session.add(config)
+        await session.commit()
+
+        retrieved = await session.get(UserTool, config_uuid)
+        assert retrieved.functions == ["read_file", "write_file"]
+
+    async def test_user_tool_transport_function_enum(self, session: AsyncSession):
+        """Test that UserToolTransport.FUNCTION enum value equals 'function'."""
+        assert schemas.UserToolTransport.FUNCTION == "function"
+
+    async def test_user_tool_to_schema_includes_functions(self, session: AsyncSession):
+        """Test that to_schema() passes functions field through."""
+        import uuid as uuid_lib
+
+        config = UserTool(
+            uuid=str(uuid_lib.uuid4()),
+            id="test-tool-schema-fn",
+            description="Builtin function tool",
+            transport=schemas.UserToolTransport.FUNCTION,
+            functions=["my_fn", "other_fn"],
+            user_uuid="user123",
+        )
+
+        schema = config.to_schema()
+
+        assert isinstance(schema, schemas.UserToolSchema)
+        assert schema.functions == ["my_fn", "other_fn"]
+        assert schema.transport == schemas.UserToolTransport.FUNCTION
 
 
 class TestModelsRegressionUserAgent:
