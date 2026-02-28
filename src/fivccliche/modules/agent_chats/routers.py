@@ -198,13 +198,14 @@ async def create_chat_messages_async(
     chat_agent_id = chat.agent_id
     print(f"🤖 [AGENT] Creating agent with ID: {chat_agent_id}")
 
-    chat_kwargs = {**chat.context} if chat.context else {}
+    chat_context = {**chat.context} if chat.context else {}
     chat_context = chat_provider.get_chat_context(
         user_uuid=user.uuid,
         session=session,
-        **chat_kwargs,
+        context=chat_context,
+        config_provider=config_provider,
     )
-    chat_tool_funcs = await chat_context.get_tool_funcs_async() if chat_context else None
+    chat_tools = await chat_context.get_tools_async() if chat_context else None
     chat_gen = await create_chat_streaming_generator_async(
         user,
         config_provider,
@@ -212,7 +213,7 @@ async def create_chat_messages_async(
         chat_uuid=chat_uuid,
         chat_query=chat_message.query,
         chat_agent_id=chat_agent_id,
-        chat_tool_funcs=chat_tool_funcs,
+        chat_tools=chat_tools,
         session=session,
     )
     return responses.StreamingResponse(

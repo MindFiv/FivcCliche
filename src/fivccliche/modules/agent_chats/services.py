@@ -287,6 +287,7 @@ class UserChatProviderImpl(IUserChatProvider):
         self,
         user_uuid: str,
         session: AsyncSession,
+        context: dict | None = None,
         **kwargs,
     ) -> IUserChatContext | None:
         """Get the chat context for providing chat-specific tools."""
