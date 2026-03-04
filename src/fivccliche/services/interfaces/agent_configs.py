@@ -14,6 +14,9 @@ from fivcplayground.tools import (
     ToolBackend as UserToolBackend,
     ToolConfigRepository as UserToolRepository,
 )
+from fivcplayground.skills import (
+    SkillConfigRepository as UserSkillRepository,
+)
 from fivcplayground.agents import (
     AgentBackend as UserAgentBackend,
     AgentConfigRepository as UserAgentRepository,
@@ -70,6 +73,14 @@ class IUserConfigProvider(IComponent):
         **kwargs,  # ignore additional arguments
     ) -> UserToolBackend:
         """Get the tool backend."""
+
+    @abstractmethod
+    def get_skill_repository(
+        self,
+        user_uuid: str | None = None,
+        **kwargs,  # ignore additional arguments
+    ) -> UserSkillRepository:
+        """Get the skill config repository."""
 
     @abstractmethod
     def get_agent_repository(

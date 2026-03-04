@@ -2,12 +2,14 @@ import asyncio
 from fastapi import FastAPI
 
 from fivcglue import IComponentSite
+from fivcplayground.skills import SkillConfigRepository as UserSkillRepository
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from fivcplayground.embeddings.types import EmbeddingConfig
 from fivcplayground.tools.types import ToolConfig
 from fivcplayground.models.types import ModelConfig
 from fivcplayground.agents.types import AgentConfig
+from fivcplayground.skills.types import SkillConfig
 
 from fivcplayground.backends.chroma import (
     ChromaEmbeddingBackend,
@@ -268,6 +270,86 @@ class UserToolRepositoryImpl(UserToolRepository):
             await methods.delete_tool_config_async(self.session, config)
 
 
+class UserSkillRepositoryImpl(UserSkillRepository):
+    """Skill config repository implementation."""
+
+    def __init__(self, user_uuid: str | None = None, session: AsyncSession | None = None):
+        self.user_uuid = user_uuid
+        self.session = session
+
+    def update_skill_config(self, skill_config: SkillConfig) -> None:
+        """Create or update a skill configuration."""
+        asyncio.run(self.update_skill_config_async(skill_config))
+
+    def get_skill_config(self, skill_id: str) -> SkillConfig | None:
+        """Retrieve a skill configuration by ID."""
+        return asyncio.run(self.get_skill_config_async(skill_id))
+
+    def list_skill_configs(self, **kwargs) -> list[SkillConfig]:
+        """List all skill configurations in the repository."""
+        return asyncio.run(self.list_skill_configs_async(**kwargs))
+
+    def delete_skill_config(self, skill_id: str) -> None:
+        """Delete a skill configuration."""
+        asyncio.run(self.delete_skill_config_async(skill_id))
+
+    async def update_skill_config_async(self, skill_config: SkillConfig) -> None:
+        """Create or update a skill configuration."""
+        if not self.session or not self.user_uuid:
+            raise RuntimeError(
+                "Session and user_uuid are required for update_skill_config operation"
+            )
+        # Check if config exists by ID
+        existing = await methods.get_skill_config_async(
+            self.session, self.user_uuid, config_id=skill_config.id
+        )
+        if existing and not existing.is_active:
+            raise RuntimeError("Cannot update inactive skill config")
+
+        if existing:
+            # Update existing config
+            await methods.update_skill_config_async(self.session, existing, skill_config)
+        else:
+            # Create new config
+            await methods.create_skill_config_async(self.session, self.user_uuid, skill_config)
+
+    async def get_skill_config_async(self, skill_id: str) -> SkillConfig | None:
+        """Retrieve a skill configuration by ID."""
+        if not self.session or not self.user_uuid:
+            raise RuntimeError("Session and user_uuid are required for get_skill_config operation")
+        config = await methods.get_skill_config_async(
+            self.session, self.user_uuid, config_id=skill_id
+        )
+        return config.to_schema() if config and config.is_active else None
+
+    async def list_skill_configs_async(self, **kwargs) -> list[SkillConfig]:
+        """List all skill configurations in the repository."""
+        if not self.session or not self.user_uuid:
+            raise RuntimeError(
+                "Session and user_uuid are required for list_skill_configs operation"
+            )
+        skip = kwargs.get("skip", 0)
+        limit = kwargs.get("limit", 1000)
+        configs = await methods.list_skill_configs_async(
+            self.session, self.user_uuid, skip=skip, limit=limit
+        )
+        return [config.to_schema() for config in configs if config.is_active]
+
+    async def delete_skill_config_async(self, skill_id: str) -> None:
+        """Delete a skill configuration."""
+        if not self.session or not self.user_uuid:
+            raise RuntimeError(
+                "Session and user_uuid are required for delete_skill_config operation"
+            )
+        config = await methods.get_skill_config_async(
+            self.session, self.user_uuid, config_id=skill_id
+        )
+        if config and not config.is_active:
+            raise RuntimeError("Cannot delete inactive skill config")
+        if config:
+            await methods.delete_skill_config_async(self.session, config)
+
+
 class UserAgentRepositoryImpl(UserAgentRepository):
     """Agent config repository implementation."""
 
@@ -398,6 +480,15 @@ class UserConfigProviderImpl(IUserConfigProvider):
         """Get the tool backend."""
         return StrandsToolBackend()
 
+    def get_skill_repository(
+        self,
+        user_uuid: str | None = None,
+        session: AsyncSession | None = None,
+        **kwargs,  # ignore additional arguments
+    ) -> UserSkillRepository:
+        """Get the skill config repository."""
+        return UserSkillRepositoryImpl(user_uuid=user_uuid, session=session)
+
     def get_agent_repository(
         self,
         user_uuid: str | None = None,
@@ -436,3 +527,4 @@ class ModuleImpl(IModule):
         app.include_router(routers.router_models, **kwargs)
         app.include_router(routers.router_agents, **kwargs)
         app.include_router(routers.router_tools, **kwargs)
+        app.include_router(routers.router_skills, **kwargs)

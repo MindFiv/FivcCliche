@@ -139,6 +139,7 @@ async def session():
                     description VARCHAR,
                     model_id VARCHAR NOT NULL,
                     tools_ids JSON,
+                    skill_ids JSON,
                     system_prompt VARCHAR,
                     response_format JSON,
                     user_uuid VARCHAR,
@@ -165,6 +166,27 @@ async def session():
                     env JSON,
                     url VARCHAR,
                     functions JSON,
+                    is_active BOOLEAN NOT NULL DEFAULT 1,
+                    user_uuid VARCHAR,
+                    PRIMARY KEY (uuid),
+                    UNIQUE (id, user_uuid),
+                    FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
+                )
+            """
+                )
+            )
+
+            # Create user_skill table
+            await conn.execute(
+                text(
+                    """
+                CREATE TABLE user_skill (
+                    uuid VARCHAR NOT NULL,
+                    id VARCHAR NOT NULL,
+                    description VARCHAR NOT NULL,
+                    instructions VARCHAR,
+                    tool_ids JSON,
+                    resources JSON,
                     is_active BOOLEAN NOT NULL DEFAULT 1,
                     user_uuid VARCHAR,
                     PRIMARY KEY (uuid),

@@ -840,7 +840,7 @@ wheels = [
 
 [[package]]
 name = "fivccliche"
-version = "0.1.37"
+version = "0.1.45"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -886,9 +886,9 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.104.0" },
     { name = "fastapi-cdn-host", specifier = ">=0.9.3" },
     { name = "fivcglue", specifier = ">=0.1.5" },
-    { name = "fivcplayground", specifier = ">=0.1.20" },
-    { name = "fivcplayground", extras = ["chroma"], specifier = ">=0.1.20" },
-    { name = "fivcplayground", extras = ["strands"], specifier = ">=0.1.20" },
+    { name = "fivcplayground", specifier = ">=0.1.23" },
+    { name = "fivcplayground", extras = ["chroma"], specifier = ">=0.1.23" },
+    { name = "fivcplayground", extras = ["strands"], specifier = ">=0.1.23" },
     { name = "greenlet", specifier = ">=3.2.4" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.25.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.5.0" },
@@ -925,7 +925,7 @@ wheels = [
 
 [[package]]
 name = "fivcplayground"
-version = "0.1.21"
+version = "0.1.23"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -940,9 +940,9 @@ dependencies = [
     { name = "streamlit" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8e/c6/7dfd30a140c01e72bcccd29506968ba6cd88037bfc61ec0d3e2d92e592e8/fivcplayground-0.1.21.tar.gz", hash = "sha256:eea625341277a273f4453c2ebd6fea90cb24579b8d4841f3e307749424f215d3", size = 126681 }
+sdist = { url = "https://files.pythonhosted.org/packages/6d/65/6cc7b6b0e55e2cf00620c16b5be07710b977bdd1579c4b3a6c340d1d077b/fivcplayground-0.1.23.tar.gz", hash = "sha256:5ed1dd3db44341eca449d56200800e7bd92ffdc9235a3706f983aeefd54b83b2", size = 119890 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/1a/d8c4ec4347978fb26d1be9a57954a164d12a053cc50a00cc6fa47a990a06/fivcplayground-0.1.21-py3-none-any.whl", hash = "sha256:4ac922d58a7305b020ad3f261e2bf38632c9cf5d0003fc489ee3194487a4ea21", size = 95000 },
+    { url = "https://files.pythonhosted.org/packages/6b/1d/1d55768ef1c570a1f16dc0e67905608873d33368620c2b68de05326f07c0/fivcplayground-0.1.23-py3-none-any.whl", hash = "sha256:934b23fdc5ee7f133180c55ca9c927befb17104bae4477c8c8766ebdeafb2f96", size = 87638 },
 ]
 
 [package.optional-dependencies]

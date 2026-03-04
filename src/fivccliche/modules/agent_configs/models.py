@@ -197,6 +197,61 @@ class UserTool(SQLModel, table=True):
         )
 
 
+class UserSkill(SQLModel, table=True):
+    """Skill configuration model."""
+
+    __tablename__ = "user_skill"
+    __table_args__ = (Index("ix_user_skill_id_user_uuid", "id", "user_uuid", unique=True),)
+
+    uuid: str = Field(
+        default_factory=lambda: str(uuid4()),
+        primary_key=True,
+        max_length=36,
+        description="Skill config UUID.",
+    )
+    id: str = Field(
+        max_length=36,
+        description="Skill config ID (unique within user scope).",
+        index=True,
+    )
+    description: str = Field(
+        max_length=1024,
+        description="Skill description.",
+    )
+    instructions: str | None = Field(
+        default=None,
+        description="Skill instructions/system context for agents.",
+    )
+    tool_ids: list[str] | None = Field(
+        sa_type=JSON,
+        default=None,
+        description="List of tool config IDs to merge into agent.",
+    )
+    resources: dict | None = Field(
+        sa_type=JSON,
+        default=None,
+        description="Reference materials (markdown) for the skill.",
+    )
+    is_active: bool = Field(default=True, description="Whether the skill is active")
+    user_uuid: str | None = Field(
+        default=None,
+        foreign_key="user.uuid",
+        description="User ID.",
+    )
+
+    def to_schema(self) -> schemas.UserSkillSchema:
+        return schemas.UserSkillSchema(
+            uuid=self.uuid,
+            id=self.id,
+            description=self.description,
+            instructions=self.instructions,
+            tool_ids=self.tool_ids,
+            resources=self.resources,
+            is_active=self.is_active,
+            user_uuid=self.user_uuid,
+        )
+
+
 class UserAgent(SQLModel, table=True):
     """Agent configuration model."""
 
@@ -224,9 +279,14 @@ class UserAgent(SQLModel, table=True):
         default=None,
         description="List of tool config IDs.",
     )
+    skill_ids: list[str] | None = Field(
+        sa_type=JSON,
+        default=None,
+        description="List of skill config IDs.",
+    )
     system_prompt: str | None = Field(
         default=None,
-        max_length=1024,
+        # max_length=1024,  # no max length
         description="Agent system prompt.",
     )
     response_format: dict[str, Any] | None = Field(
@@ -247,6 +307,7 @@ class UserAgent(SQLModel, table=True):
             description=self.description,
             model_id=self.model_id,
             tool_ids=self.tools_ids,
+            skill_ids=self.skill_ids,
             system_prompt=self.system_prompt,
             response_format=self.response_format,
             user_uuid=self.user_uuid,

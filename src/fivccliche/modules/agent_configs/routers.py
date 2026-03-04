@@ -704,6 +704,162 @@ async def delete_tool_config_async(
 
 
 # ============================================================================
+# Skill Config Endpoints
+# ============================================================================
+
+router_skills = APIRouter(prefix="/configs/skills", tags=["skill_configs"])
+
+
+@router_skills.post(
+    "/",
+    summary="Create a new skill config for the authenticated user.",
+    response_model=schemas.UserSkillSchema,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_skill_config_async(
+    config_create: schemas.UserSkillSchema,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> schemas.UserSkillSchema:
+    """Create a new skill config."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    # Superusers create global configs (user_uuid=None), regular users create user-specific configs
+    owner_uuid = None if user.is_superuser else user.uuid
+    config = await methods.create_skill_config_async(session, owner_uuid, config_create)
+    return config.to_schema()
+
+
+@router_skills.get(
+    "/",
+    summary="List all skill configs for the authenticated user.",
+    response_model=PaginatedResponse[schemas.UserSkillSchema],
+)
+async def list_skill_configs_async(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> PaginatedResponse[schemas.UserSkillSchema]:
+    """List all skill configs for the authenticated user."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    configs = await methods.list_skill_configs_async(session, user.uuid, skip=skip, limit=limit)
+    total = await methods.count_skill_configs_async(session, user.uuid)
+    return PaginatedResponse[schemas.UserSkillSchema](
+        total=total,
+        results=[config.to_schema() for config in configs],
+    )
+
+
+@router_skills.get(
+    "/{config_uuid}/",
+    summary="Get a skill config by ID for the authenticated user.",
+    response_model=schemas.UserSkillSchema,
+)
+async def get_skill_config_async(
+    config_uuid: str,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> schemas.UserSkillSchema:
+    """Get a skill config by ID."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    config = await methods.get_skill_config_async(session, user.uuid, config_uuid=config_uuid)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Skill config not found",
+        )
+    return config.to_schema()
+
+
+@router_skills.patch(
+    "/{config_uuid}/",
+    summary="Update a skill config by ID for the authenticated user.",
+    response_model=schemas.UserSkillSchema,
+)
+async def update_skill_config_async(
+    config_uuid: str,
+    config_update: create_partial_model(schemas.UserSkillSchema),
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> schemas.UserSkillSchema:
+    """Update a skill config."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    config = await methods.get_skill_config_async(session, user.uuid, config_uuid=config_uuid)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Skill config not found",
+        )
+    # Authorization check: users can only update their own configs
+    # Only superusers can update global configs (where user_uuid is None)
+    if config.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot update global configs",
+        )
+    if config.user_uuid is not None and config.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot update configs belonging to other users",
+        )
+    config = await methods.update_skill_config_async(session, config, config_update)
+    return config.to_schema()
+
+
+@router_skills.delete(
+    "/{config_uuid}/",
+    summary="Delete a skill config by ID for the authenticated user.",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_skill_config_async(
+    config_uuid: str,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> None:
+    """Delete a skill config."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    config = await methods.get_skill_config_async(session, user.uuid, config_uuid=config_uuid)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Skill config not found",
+        )
+    # Authorization check: users can only delete their own configs
+    # Only superusers can delete global configs (where user_uuid is None)
+    if config.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete global configs",
+        )
+    if config.user_uuid is not None and config.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete configs belonging to other users",
+        )
+    await methods.delete_skill_config_async(session, config)
+
+
+# ============================================================================
 # Main Router
 # ============================================================================
 

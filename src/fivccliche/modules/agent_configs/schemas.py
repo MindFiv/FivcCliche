@@ -2,6 +2,7 @@ __all__ = [
     "UserAgentSchema",
     "UserEmbeddingSchema",
     "UserLLMSchema",
+    "UserSkillSchema",
     "UserToolSchema",
     "UserToolTransport",
 ]
@@ -15,6 +16,7 @@ from fivcplayground.tools.types import (
     ToolConfigTransport as UserToolTransport,
 )
 from fivcplayground.agents.types import AgentConfig
+from fivcplayground.skills.types import SkillConfig
 
 
 # ============================================================================
@@ -56,10 +58,21 @@ class UserToolProbeSchema(BaseModel):
     tool_names: list[str] = Field(default=None, description="Tool names")
 
 
+class UserSkillSchema(SkillConfig):
+    """Schema for reading skill config data (response)."""
+
+    uuid: str = Field(default=None, description="Skill config UUID (globally unique)")
+    is_active: bool = Field(default=True, description="Whether the skill is active")
+    user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class UserAgentSchema(AgentConfig):
     """Schema for reading agent config data (response)."""
 
     uuid: str = Field(default=None, description="Agent config UUID (globally unique)")
+    skill_ids: list[str] | None = Field(default=None, description="List of skill config IDs.")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
 
     model_config = ConfigDict(from_attributes=True)

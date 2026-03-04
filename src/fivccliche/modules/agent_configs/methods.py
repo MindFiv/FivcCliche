@@ -581,3 +581,143 @@ async def delete_tool_config_async(
     """Delete a tool config."""
     await session.delete(config)
     await session.commit()
+
+
+# ============================================================================
+# Skill Config Operations
+# ============================================================================
+
+
+async def create_skill_config_async(
+    session: AsyncSession,
+    user_uuid: str | None,
+    config_create: schemas.UserSkillSchema,
+    **kwargs,  # ignore additional arguments
+) -> models.UserSkill:
+    """Create a new skill config."""
+    config = models.UserSkill(
+        id=config_create.id,
+        user_uuid=user_uuid,
+        description=config_create.description,
+        instructions=config_create.instructions,
+        tool_ids=config_create.tool_ids,
+        resources=config_create.resources,
+        is_active=config_create.is_active if hasattr(config_create, "is_active") else True,
+    )
+    session.add(config)
+    await session.commit()
+    await session.refresh(config)
+    return config
+
+
+async def get_skill_config_async(
+    session: AsyncSession,
+    user_uuid: str,
+    config_uuid: str | None = None,
+    config_id: str | None = None,
+    **kwargs,  # ignore additional arguments
+) -> models.UserSkill | None:
+    """Get a skill config by UUID or ID for a specific user.
+
+    Args:
+        session: Database session
+        user_uuid: User UUID for filtering
+        config_uuid: Global unique identifier (optional)
+        config_id: User-scoped identifier (optional)
+
+    Returns:
+        UserSkill config or None if not found
+
+    Raises:
+        ValueError: If both or neither config_uuid and config_id are provided
+    """
+    if (config_uuid is None and config_id is None) or (
+        config_uuid is not None and config_id is not None
+    ):
+        raise ValueError("Exactly one of config_uuid or config_id must be provided")
+
+    if config_uuid is not None:
+        # Query by global unique identifier
+        statement = select(models.UserSkill).where(
+            (models.UserSkill.uuid == config_uuid)
+            & (
+                (models.UserSkill.user_uuid == user_uuid)
+                | (models.UserSkill.user_uuid == None)  # noqa E711
+            )
+        )
+    else:
+        # Query by user-scoped identifier
+        statement = select(models.UserSkill).where(
+            (models.UserSkill.id == config_id)
+            & (
+                (models.UserSkill.user_uuid == user_uuid)
+                | (models.UserSkill.user_uuid == None)  # noqa E711
+            )
+        )
+
+    result = await session.execute(statement)
+    return result.scalars().first()
+
+
+async def list_skill_configs_async(
+    session: AsyncSession,
+    user_uuid: str,
+    skip: int = 0,
+    limit: int = 100,
+    **kwargs,  # ignore additional arguments
+) -> list[models.UserSkill]:
+    """List all skill configs for a user with pagination."""
+    statement = (
+        select(models.UserSkill)
+        .where(
+            (models.UserSkill.user_uuid == user_uuid)
+            | (models.UserSkill.user_uuid == None)  # noqa E711
+        )
+        .offset(skip)
+        .limit(limit)
+    )
+    result = await session.execute(statement)
+    return list(result.scalars().all())
+
+
+async def count_skill_configs_async(
+    session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
+) -> int:
+    """Count the number of skill configs for a user."""
+    statement = select(func.count(models.UserSkill.uuid)).where(
+        (models.UserSkill.user_uuid == user_uuid)
+        | (models.UserSkill.user_uuid == None)  # noqa E711
+    )
+    result = await session.execute(statement)
+    return result.scalar() or 0
+
+
+async def update_skill_config_async(
+    session: AsyncSession,
+    config: models.UserSkill,
+    config_update: schemas.UserSkillSchema,
+    **kwargs,  # ignore additional arguments
+) -> models.UserSkill:
+    """Update a skill config."""
+    if config_update.description is not None:
+        config.description = config_update.description
+    if config_update.instructions is not None:
+        config.instructions = config_update.instructions
+    if config_update.tool_ids is not None:
+        config.tool_ids = config_update.tool_ids
+    if config_update.resources is not None:
+        config.resources = config_update.resources
+    if hasattr(config_update, "is_active") and config_update.is_active is not None:
+        config.is_active = config_update.is_active
+    session.add(config)
+    await session.commit()
+    await session.refresh(config)
+    return config
+
+
+async def delete_skill_config_async(
+    session: AsyncSession, config: models.UserSkill, **kwargs  # ignore additional arguments
+) -> None:
+    """Delete a skill config."""
+    await session.delete(config)
+    await session.commit()
