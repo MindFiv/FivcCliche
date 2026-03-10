@@ -72,7 +72,6 @@ class UserAgentSchema(AgentConfig):
     """Schema for reading agent config data (response)."""
 
     uuid: str = Field(default=None, description="Agent config UUID (globally unique)")
-    skill_ids: list[str] | None = Field(default=None, description="List of skill config IDs.")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
 
     model_config = ConfigDict(from_attributes=True)

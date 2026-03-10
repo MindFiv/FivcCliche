@@ -15,6 +15,10 @@ class IUserChatContext(IComponent):
     async def get_tools_async(self, **kwargs) -> list[Tool]:
         """Get the chat tools."""
 
+    @abstractmethod
+    async def get_is_skills_enabled(self, **kwargs) -> bool:
+        """Get if skills are enabled."""
+
 
 class IUserChatProvider(IComponent):
     """IUserChatProvider is an interface for defining user chat providers."""

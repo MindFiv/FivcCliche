@@ -2,12 +2,15 @@
 
 import asyncio
 import json
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from fivcplayground.agents import AgentRunEvent
 
-from fivccliche.utils.generators import _ChatStreamingGenerator
+from fivccliche.utils.generators import (
+    _ChatStreamingGenerator,
+    create_chat_streaming_generator_async,
+)
 
 
 class TestChatStreamingGenerator:
@@ -336,3 +339,124 @@ class TestChatStreamingGenerator:
 
         assert len(results) == 0
         mock_task.result.assert_called_once()  # Should check for exceptions
+
+
+class TestCreateChatStreamingGenerator:
+    """Test the create_chat_streaming_generator_async factory function."""
+
+    def _make_mock_user(self):
+        user = Mock()
+        user.uuid = "user-uuid-123"
+        return user
+
+    def _make_mock_config_provider(self):
+        provider = Mock()
+        provider.get_model_backend.return_value = Mock()
+        provider.get_model_repository.return_value = Mock()
+        provider.get_agent_backend.return_value = Mock()
+        provider.get_agent_repository.return_value = Mock()
+        provider.get_tool_backend.return_value = Mock()
+        provider.get_tool_repository.return_value = Mock()
+        provider.get_embedding_backend.return_value = Mock()
+        provider.get_embedding_repository.return_value = Mock()
+        provider.get_skill_repository.return_value = Mock()
+        return provider
+
+    def _make_mock_chat_provider(self):
+        provider = Mock()
+        provider.get_chat_repository.return_value = Mock()
+        return provider
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.generators.create_skill_retriever_async")
+    @patch("fivccliche.utils.generators.create_tool_retriever_async")
+    @patch("fivccliche.utils.generators.create_agent_async")
+    async def test_create_generator_skills_disabled_by_default(
+        self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
+    ):
+        """create_skill_retriever_async not called when chat_skills_enabled=False."""
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock()
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_create_skill_retriever.return_value = AsyncMock()
+
+        user = self._make_mock_user()
+        config_provider = self._make_mock_config_provider()
+        chat_provider = self._make_mock_chat_provider()
+
+        result = await create_chat_streaming_generator_async(
+            user,
+            config_provider,
+            chat_provider,
+            chat_uuid="chat-uuid-1",
+            chat_query="hello",
+            chat_skills_enabled=False,
+        )
+
+        mock_create_skill_retriever.assert_not_called()
+        _, kwargs = mock_agent.run_async.call_args
+        assert kwargs["skill_retriever"] is None
+        assert isinstance(result, _ChatStreamingGenerator)
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.generators.create_skill_retriever_async")
+    @patch("fivccliche.utils.generators.create_tool_retriever_async")
+    @patch("fivccliche.utils.generators.create_agent_async")
+    async def test_create_generator_skills_enabled(
+        self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
+    ):
+        """create_skill_retriever_async is called when chat_skills_enabled=True."""
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock()
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_skill_retriever = AsyncMock()
+        mock_create_skill_retriever.return_value = mock_skill_retriever
+
+        user = self._make_mock_user()
+        config_provider = self._make_mock_config_provider()
+        chat_provider = self._make_mock_chat_provider()
+
+        result = await create_chat_streaming_generator_async(
+            user,
+            config_provider,
+            chat_provider,
+            chat_uuid="chat-uuid-2",
+            chat_query="hello",
+            chat_skills_enabled=True,
+        )
+
+        mock_create_skill_retriever.assert_called_once()
+        _, kwargs = mock_agent.run_async.call_args
+        assert kwargs["skill_retriever"] is mock_skill_retriever
+        assert isinstance(result, _ChatStreamingGenerator)
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.generators.create_skill_retriever_async")
+    @patch("fivccliche.utils.generators.create_tool_retriever_async")
+    @patch("fivccliche.utils.generators.create_agent_async")
+    async def test_create_generator_returns_streaming_generator(
+        self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
+    ):
+        """Returns a _ChatStreamingGenerator with the correct chat_uuid."""
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock()
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_create_skill_retriever.return_value = AsyncMock()
+
+        user = self._make_mock_user()
+        config_provider = self._make_mock_config_provider()
+        chat_provider = self._make_mock_chat_provider()
+
+        result = await create_chat_streaming_generator_async(
+            user,
+            config_provider,
+            chat_provider,
+            chat_uuid="my-chat-uuid",
+            chat_query="test query",
+        )
+
+        assert isinstance(result, _ChatStreamingGenerator)
+        assert result.chat_uuid == "my-chat-uuid"

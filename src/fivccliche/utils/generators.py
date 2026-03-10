@@ -6,6 +6,7 @@ from collections.abc import Awaitable
 
 from fivcplayground.agents import AgentRunEvent, AgentRun, create_agent_async
 from fivcplayground.tools import create_tool_retriever_async, Tool
+from fivcplayground.skills import create_skill_retriever_async
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider
@@ -117,6 +118,7 @@ async def create_chat_streaming_generator_async(
     chat_uuid: str | None = None,
     chat_agent_id: str = "default",
     chat_tools: list[Tool] | None = None,
+    chat_skills_enabled: bool = False,
     chat_finish_callback: (
         Callable[[AgentRun], None] | Callable[[AgentRun], Awaitable[None]] | None
     ) = None,
@@ -147,6 +149,21 @@ async def create_chat_streaming_generator_async(
         ),
         space_id=user.uuid,
     )
+    agent_skills = (
+        await create_skill_retriever_async(
+            tool_backend=user_config_provider.get_tool_backend(),
+            skill_config_repository=user_config_provider.get_skill_repository(
+                user_uuid=user.uuid, session=session
+            ),
+            embedding_backend=user_config_provider.get_embedding_backend(),
+            embedding_config_repository=user_config_provider.get_embedding_repository(
+                user_uuid=user.uuid, session=session
+            ),
+            space_id=user.uuid,
+        )
+        if chat_skills_enabled
+        else None
+    )
     chat_queue = asyncio.Queue()
 
     # chat_uuid = chat.uuid if chat else str(uuid.uuid4())
@@ -160,6 +177,8 @@ async def create_chat_streaming_generator_async(
             query=chat_query,
             tool_retriever=agent_tools,
             tool_ids=chat_tool_ids,
+            skill_retriever=agent_skills,
+            # skill_ids=chat_skill_ids,
             agent_run_repository=user_chat_provider.get_chat_repository(
                 user_uuid=user.uuid, session=session
             ),

@@ -282,7 +282,7 @@ class UserAgent(SQLModel, table=True):
     skill_ids: list[str] | None = Field(
         sa_type=JSON,
         default=None,
-        description="List of skill config IDs.",
+        description="List of skill config IDs. Set to [] to enable all skills or None to disable.",
     )
     system_prompt: str | None = Field(
         default=None,

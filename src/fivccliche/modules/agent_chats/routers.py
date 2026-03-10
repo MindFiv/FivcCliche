@@ -205,7 +205,13 @@ async def create_chat_messages_async(
         context=chat_context,
         config_provider=config_provider,
     )
-    chat_tools = await chat_context.get_tools_async() if chat_context else None
+    if chat_context:
+        chat_tools = await chat_context.get_tools_async()
+        chat_skills_enabled = await chat_context.get_is_skills_enabled()
+    else:
+        chat_tools = None
+        chat_skills_enabled = True  # enable skills by default if no context
+
     chat_gen = await create_chat_streaming_generator_async(
         user,
         config_provider,
@@ -214,6 +220,7 @@ async def create_chat_messages_async(
         chat_query=chat_message.query,
         chat_agent_id=chat_agent_id,
         chat_tools=chat_tools,
+        chat_skills_enabled=chat_skills_enabled,
         session=session,
     )
     return responses.StreamingResponse(
