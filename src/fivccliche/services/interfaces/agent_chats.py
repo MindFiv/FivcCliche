@@ -16,7 +16,7 @@ class IUserChatContext(IComponent):
         """Get the chat tools."""
 
     @abstractmethod
-    async def get_is_skills_enabled(self, **kwargs) -> bool:
+    async def get_is_skills_enabled_async(self, **kwargs) -> bool:
         """Get if skills are enabled."""
 
 

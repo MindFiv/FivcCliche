@@ -207,7 +207,7 @@ async def create_chat_messages_async(
     )
     if chat_context:
         chat_tools = await chat_context.get_tools_async()
-        chat_skills_enabled = await chat_context.get_is_skills_enabled()
+        chat_skills_enabled = await chat_context.get_is_skills_enabled_async()
     else:
         chat_tools = None
         chat_skills_enabled = True  # enable skills by default if no context

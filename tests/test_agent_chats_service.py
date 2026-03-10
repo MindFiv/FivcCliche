@@ -1237,7 +1237,7 @@ class MockUserChatContext(IUserChatContext):
         self.get_tools_kwargs = kwargs
         return self.tools
 
-    async def get_is_skills_enabled(self, **kwargs) -> bool:
+    async def get_is_skills_enabled_async(self, **kwargs) -> bool:
         """Return False by default."""
         return False
 
