@@ -313,6 +313,7 @@ async def create_agent_config_async(
         description=config_create.description,
         model_id=config_create.model_id,
         tools_ids=config_create.tool_ids,
+        skill_ids=config_create.skill_ids,
         system_prompt=config_create.system_prompt,
         response_format=config_create.response_format,
     )
@@ -417,6 +418,8 @@ async def update_agent_config_async(
         config.model_id = config_update.model_id
     if config_update.tool_ids is not None:
         config.tools_ids = config_update.tool_ids
+    if config_update.skill_ids is not None:
+        config.skill_ids = config_update.skill_ids
     if config_update.system_prompt is not None:
         config.system_prompt = config_update.system_prompt
     if config_update.response_format is not None:

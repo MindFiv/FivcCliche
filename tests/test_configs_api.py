@@ -661,6 +661,130 @@ class TestAgentConfigAPI:
         )
         assert response.status_code == 404
 
+    def test_create_agent_config_with_skill_ids(self, client: TestClient, auth_token: str):
+        """Test creating agent config with skill_ids."""
+        skill_ids = ["skill1", "skill2", "skill3"]
+        response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-with-skills",
+                "model_id": "model123",
+                "description": "Agent with skills",
+                "skill_ids": skill_ids,
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["id"] == "agent-with-skills"
+        assert data["skill_ids"] == skill_ids
+        assert "user_uuid" in data
+
+    def test_create_agent_config_with_both_tools_and_skills(
+        self, client: TestClient, auth_token: str
+    ):
+        """Test creating agent config with both tool_ids and skill_ids."""
+        tool_ids = ["tool1", "tool2"]
+        skill_ids = ["skill1", "skill2"]
+        response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-with-both",
+                "model_id": "model123",
+                "tool_ids": tool_ids,
+                "skill_ids": skill_ids,
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["tool_ids"] == tool_ids
+        assert data["skill_ids"] == skill_ids
+
+    def test_update_agent_config_add_skill_ids(self, client: TestClient, auth_token: str):
+        """Test updating agent config to add skill_ids."""
+        create_response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-update-skills",
+                "model_id": "model123",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        skill_ids = ["skill1", "skill2"]
+        response = client.patch(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-update-skills",
+                "model_id": "model123",
+                "skill_ids": skill_ids,
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["skill_ids"] == skill_ids
+
+    def test_update_agent_config_modify_skill_ids(self, client: TestClient, auth_token: str):
+        """Test updating agent config to modify skill_ids."""
+        initial_skill_ids = ["skill1", "skill2"]
+        create_response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-modify-skills",
+                "model_id": "model123",
+                "skill_ids": initial_skill_ids,
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        # Verify initial skill_ids
+        get_response = client.get(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert get_response.json()["skill_ids"] == initial_skill_ids
+
+        # Update to different skill_ids
+        new_skill_ids = ["skill3", "skill4", "skill5"]
+        response = client.patch(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-modify-skills",
+                "model_id": "model123",
+                "skill_ids": new_skill_ids,
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["skill_ids"] == new_skill_ids
+
+    def test_get_agent_config_preserves_skill_ids(self, client: TestClient, auth_token: str):
+        """Test that retrieving agent config preserves skill_ids."""
+        skill_ids = ["skill1"]
+        create_response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-get-skills",
+                "model_id": "model123",
+                "skill_ids": skill_ids,
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.get(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["skill_ids"] == skill_ids
+
 
 class TestToolConfigAPI:
     """Test cases for Tool Config API endpoints."""

@@ -2410,6 +2410,75 @@ class TestModelsRegressionUserAgent:
         assert schema.tool_ids is None
         assert schema.response_format is None
 
+    async def test_user_agent_skill_ids_field_exists(self, session: AsyncSession):
+        """Test that UserAgent model has skill_ids field."""
+        import uuid as uuid_lib
+
+        config = UserAgent(
+            uuid=str(uuid_lib.uuid4()),
+            id="test-agent",
+            model_id="llm-1",
+            skill_ids=["skill1", "skill2"],
+            user_uuid="user123",
+        )
+
+        assert config.skill_ids == ["skill1", "skill2"]
+
+    async def test_user_agent_skill_ids_default_is_none(self, session: AsyncSession):
+        """Test that skill_ids defaults to None."""
+        import uuid as uuid_lib
+
+        config = UserAgent(
+            uuid=str(uuid_lib.uuid4()),
+            id="test-agent",
+            model_id="llm-1",
+        )
+
+        assert config.skill_ids is None
+
+    async def test_user_agent_skill_ids_json_serialization(self, session: AsyncSession):
+        """Test that skill_ids JSON field is properly stored and retrieved."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        skill_ids = ["skill1", "skill2", "skill3"]
+        config = UserAgent(
+            uuid=config_uuid,
+            id="test-agent",
+            model_id="llm-1",
+            skill_ids=skill_ids,
+            user_uuid="user123",
+        )
+        session.add(config)
+        await session.commit()
+
+        # Retrieve and verify
+        retrieved = await session.get(UserAgent, config_uuid)
+        assert retrieved.skill_ids == skill_ids
+
+    async def test_user_agent_to_schema_includes_skill_ids(self, session: AsyncSession):
+        """Test that to_schema() method converts skill_ids correctly."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        skill_ids = ["skill1", "skill2"]
+        config = UserAgent(
+            uuid=config_uuid,
+            id="test-agent",
+            description="Test agent",
+            model_id="llm-1",
+            tools_ids=["tool1"],
+            skill_ids=skill_ids,
+            system_prompt="You are helpful",
+            user_uuid="user123",
+        )
+
+        schema = config.to_schema()
+
+        assert isinstance(schema, schemas.UserAgentSchema)
+        assert schema.skill_ids == skill_ids
+        assert schema.tool_ids == ["tool1"]
+
 
 class TestModelsRegressionGlobalUserConfigs:
     """Regression tests for global vs user-specific config patterns."""
