@@ -131,12 +131,20 @@ class UserAuthenticatorImpl(IUserAuthenticator):
             user = await get_user_async(session, username=username)
             if user and not ignore_password and not user.check_password(password):
                 user = None
+            if user:
+                user.signed_in_at = datetime.now(timezone.utc)
+                session.add(user)
+                await session.commit()
             return self._create_access_token(user.uuid) if user else None
 
         async with get_db_session_async() as session:
             user = await get_user_async(session, username=username)
             if user and not ignore_password and not user.check_password(password):
                 user = None
+            if user:
+                user.signed_in_at = datetime.now(timezone.utc)
+                session.add(user)
+                await session.commit()
             return self._create_access_token(user.uuid) if user else None
 
     async def create_sso_credential_async(
@@ -177,6 +185,10 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                     is_superuser=False,
                 )
 
+            if user:
+                user.signed_in_at = datetime.now(timezone.utc)
+                session.add(user)
+                await session.commit()
             return self._create_access_token(user.uuid) if user else None
 
         async with get_db_session_async() as session:
@@ -193,6 +205,10 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                     is_superuser=False,
                 )
 
+            if user:
+                user.signed_in_at = datetime.now(timezone.utc)
+                session.add(user)
+                await session.commit()
             return self._create_access_token(user.uuid) if user else None
 
     async def verify_credential_async(
