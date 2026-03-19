@@ -832,3 +832,102 @@ class TestImpersonateUser:
         user = self._create_regular_user(client, admin_headers)
         response = client.get(f"/users/{user['uuid']}/impersonate/")
         assert response.status_code == 401
+
+
+class TestListUsersOrdering:
+    """Test cases for order_by and order_dir query params on the list users endpoint."""
+
+    def _get_admin_headers(self, client: TestClient) -> dict:
+        response = client.post("/users/login", json={"username": "admin", "password": "admin123"})
+        return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+    def _create_users(self, client: TestClient, admin_headers: dict) -> list[dict]:
+        users = []
+        for i in range(3):
+            r = client.post(
+                "/users/",
+                json={
+                    "username": f"orderuser{i}",
+                    "email": f"orderuser{i}@example.com",
+                    "password": "password123",
+                },
+                headers=admin_headers,
+            )
+            users.append(r.json())
+        return users
+
+    def test_default_order_is_created_at_asc(self, client: TestClient):
+        headers = self._get_admin_headers(client)
+        self._create_users(client, headers)
+        response = client.get("/users/", headers=headers)
+        assert response.status_code == 200
+        results = response.json()["results"]
+        dates = [r["created_at"] for r in results]
+        assert dates == sorted(dates)
+
+    def test_order_by_created_at_asc(self, client: TestClient):
+        headers = self._get_admin_headers(client)
+        self._create_users(client, headers)
+        response = client.get("/users/?order_by=created_at&order_dir=asc", headers=headers)
+        assert response.status_code == 200
+        results = response.json()["results"]
+        dates = [r["created_at"] for r in results]
+        assert dates == sorted(dates)
+
+    def test_order_by_created_at_desc(self, client: TestClient):
+        headers = self._get_admin_headers(client)
+        self._create_users(client, headers)
+        response = client.get("/users/?order_by=created_at&order_dir=desc", headers=headers)
+        assert response.status_code == 200
+        results = response.json()["results"]
+        dates = [r["created_at"] for r in results]
+        assert dates == sorted(dates, reverse=True)
+
+    def test_order_by_signed_in_at_asc(self, client: TestClient):
+        headers = self._get_admin_headers(client)
+        self._create_users(client, headers)
+        response = client.get("/users/?order_by=signed_in_at&order_dir=asc", headers=headers)
+        assert response.status_code == 200
+        # Just verify the request succeeds and returns results
+        assert len(response.json()["results"]) > 0
+
+    def test_order_by_signed_in_at_desc(self, client: TestClient):
+        headers = self._get_admin_headers(client)
+        self._create_users(client, headers)
+        response = client.get("/users/?order_by=signed_in_at&order_dir=desc", headers=headers)
+        assert response.status_code == 200
+        assert len(response.json()["results"]) > 0
+
+    def test_invalid_order_by_returns_422(self, client: TestClient):
+        headers = self._get_admin_headers(client)
+        response = client.get("/users/?order_by=username", headers=headers)
+        assert response.status_code == 422
+
+    def test_invalid_order_dir_returns_422(self, client: TestClient):
+        headers = self._get_admin_headers(client)
+        response = client.get("/users/?order_dir=random", headers=headers)
+        assert response.status_code == 422
+
+    def test_order_by_signed_in_at_after_login(self, client: TestClient):
+        """Users who have logged in should be sortable by signed_in_at."""
+        headers = self._get_admin_headers(client)
+        # Create two users and log them in to populate signed_in_at
+        for i in range(2):
+            client.post(
+                "/users/",
+                json={
+                    "username": f"siuser{i}",
+                    "email": f"siuser{i}@example.com",
+                    "password": "password123",
+                },
+                headers=headers,
+            )
+            client.post("/users/login", json={"username": f"siuser{i}", "password": "password123"})
+
+        response = client.get("/users/?order_by=signed_in_at&order_dir=desc", headers=headers)
+        assert response.status_code == 200
+        results = response.json()["results"]
+        # Filter to users with signed_in_at set
+        signed_in = [r for r in results if r["signed_in_at"] is not None]
+        dates = [r["signed_in_at"] for r in signed_in]
+        assert dates == sorted(dates, reverse=True)

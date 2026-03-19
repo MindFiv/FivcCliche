@@ -114,6 +114,8 @@ async def get_self_async(
 async def list_users_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
+    order_by: schemas.UserOrderBy = Query(schemas.UserOrderBy.created_at),
+    order_dir: schemas.UserOrderDir = Query(schemas.UserOrderDir.asc),
     admin_user: IUser = Depends(get_admin_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse[schemas.UserRead]:
@@ -123,7 +125,9 @@ async def list_users_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a admin",
         )
-    users = await methods.list_users_async(session, skip=skip, limit=limit)
+    users = await methods.list_users_async(
+        session, skip=skip, limit=limit, order_by=order_by.value, order_dir=order_dir.value
+    )
     total = await methods.count_users_async(session)
     return PaginatedResponse[schemas.UserRead](total=total, results=users)
 

@@ -1,6 +1,17 @@
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+
+class UserOrderBy(str, Enum):
+    created_at = "created_at"
+    signed_in_at = "signed_in_at"
+
+
+class UserOrderDir(str, Enum):
+    asc = "asc"
+    desc = "desc"
 
 
 class UserBase(BaseModel):

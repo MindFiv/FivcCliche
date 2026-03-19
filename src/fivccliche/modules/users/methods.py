@@ -82,7 +82,11 @@ async def get_user_async(
 
 
 async def list_users_async(
-    session: AsyncSession, skip: int = 0, limit: int = 100
+    session: AsyncSession,
+    skip: int = 0,
+    limit: int = 100,
+    order_by: str = "created_at",
+    order_dir: str = "asc",
 ) -> list[models.User]:
     """List all users with pagination.
 
@@ -90,11 +94,15 @@ async def list_users_async(
         session: Database session
         skip: Number of users to skip
         limit: Maximum number of users to return
+        order_by: Field to order by ('created_at' or 'signed_in_at')
+        order_dir: Order direction ('asc' or 'desc')
 
     Returns:
         List of users
     """
-    statement = select(models.User).offset(skip).limit(limit)
+    col = models.User.signed_in_at if order_by == "signed_in_at" else models.User.created_at
+    order_expr = col.desc() if order_dir == "desc" else col.asc()
+    statement = select(models.User).order_by(order_expr).offset(skip).limit(limit)
     result = await session.execute(statement)
     return list(result.scalars().all())
 
