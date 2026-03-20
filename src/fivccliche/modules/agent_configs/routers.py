@@ -46,7 +46,7 @@ async def create_embedding_config_async(
         owner_uuid,
         config_create,
     )
-    return config.to_schema()
+    return config.to_schema(include_api_key=False)
 
 
 @router_embeddings.get(
@@ -70,7 +70,7 @@ async def list_embedding_configs_async(
     total = await methods.count_embedding_configs_async(session, user.uuid)
     return PaginatedResponse[schemas.UserEmbeddingSchema](
         total=total,
-        results=[config.to_schema() for config in configs],
+        results=[config.to_schema(include_api_key=False) for config in configs],
     )
 
 
@@ -96,7 +96,7 @@ async def get_embedding_config_async(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Embedding config not found",
         )
-    return config.to_schema()
+    return config.to_schema(include_api_key=False)
 
 
 @router_embeddings.patch(
@@ -135,7 +135,7 @@ async def update_embedding_config_async(
             detail="Cannot update configs belonging to other users",
         )
     config = await methods.update_embedding_config_async(session, config, config_update)
-    return config.to_schema()
+    return config.to_schema(include_api_key=False)
 
 
 @router_embeddings.delete(
@@ -202,7 +202,7 @@ async def create_llm_config_async(
     # Superusers create global configs (user_uuid=None), regular users create user-specific configs
     owner_uuid = None if user.is_superuser else user.uuid
     config = await methods.create_llm_config_async(session, owner_uuid, config_create)
-    return config.to_schema()
+    return config.to_schema(include_api_key=False)
 
 
 @router_models.get(
@@ -226,7 +226,7 @@ async def list_llm_configs_async(
     total = await methods.count_llm_configs_async(session, user.uuid)
     return PaginatedResponse[schemas.UserLLMSchema](
         total=total,
-        results=[config.to_schema() for config in configs],
+        results=[config.to_schema(include_api_key=False) for config in configs],
     )
 
 
@@ -253,7 +253,7 @@ async def get_llm_config_async(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="LLM config not found",
         )
-    return config.to_schema()
+    return config.to_schema(include_api_key=False)
 
 
 @router_models.patch(
@@ -292,7 +292,7 @@ async def update_llm_config_async(
             detail="Cannot update configs belonging to other users",
         )
     config = await methods.update_llm_config_async(session, config, config_update)
-    return config.to_schema()
+    return config.to_schema(include_api_key=False)
 
 
 @router_models.delete(

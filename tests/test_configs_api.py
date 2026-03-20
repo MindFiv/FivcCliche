@@ -2006,7 +2006,7 @@ class TestConfigsBackwardCompatibilityEmbedding:
         assert isinstance(data["id"], str)
         assert isinstance(data["provider"], str)
         assert isinstance(data["model"], str)
-        assert isinstance(data["api_key"], str)
+        assert data["api_key"] is None  # Security: api_key should never be returned in responses
         assert isinstance(data["dimension"], int)
         assert data["user_uuid"] is None or isinstance(data["user_uuid"], str)
 
@@ -2085,7 +2085,7 @@ class TestConfigsBackwardCompatibilityLLM:
         assert isinstance(data["id"], str)
         assert isinstance(data["provider"], str)
         assert isinstance(data["model"], str)
-        assert isinstance(data["api_key"], str)
+        assert data["api_key"] is None  # Security: api_key should never be returned in responses
         assert isinstance(data["temperature"], float)
         assert isinstance(data["max_tokens"], int)
 
