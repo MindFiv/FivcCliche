@@ -50,14 +50,17 @@ class _ChatStreamingGenerator:
                     continue
 
                 # Process the event
-                data_fields = {
+                data_fields_basics = {
                     "id",
                     "agent_id",
                     "started_at",
                     "completed_at",
+                }
+                data_fields = {
                     "query",
                     "reply",
                     "tool_calls",
+                    *data_fields_basics,
                 }
                 if ev == AgentRunEvent.START:
                     data = ev_run.model_dump(mode="json", include=data_fields)
@@ -80,7 +83,7 @@ class _ChatStreamingGenerator:
                             await result
 
                 elif ev == AgentRunEvent.STREAM:
-                    data = ev_run.model_dump(mode="json", include=data_fields)
+                    data = ev_run.model_dump(mode="json", include=data_fields_basics)
                     data.update(
                         {
                             "chat_uuid": self.chat_uuid,
