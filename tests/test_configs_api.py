@@ -2481,3 +2481,184 @@ class TestConfigsRegressionIntegrationEnd2End:
             headers={"Authorization": f"Bearer {other_user_token}"},
         )
         assert llm_get.status_code == 404
+
+
+class TestAuditFieldsAPI:
+    """Tests for updated_at and updated_user_uuid in API responses."""
+
+    def test_create_embedding_response_has_audit_fields(self, client: TestClient, auth_token: str):
+        """Test that creating an embedding config returns updated_at and updated_user_uuid."""
+        response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "audit-api-emb-1",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert "updated_at" in data
+        assert data["updated_at"] is not None
+        assert "updated_user_uuid" in data
+        assert data["updated_user_uuid"] is not None
+
+    def test_patch_embedding_updates_audit_fields(self, client: TestClient, auth_token: str):
+        """Test that patching an embedding config updates updated_at and updated_user_uuid."""
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "audit-api-emb-2",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+        original_updated_at = create_response.json()["updated_at"]
+
+        import time
+
+        time.sleep(0.05)
+
+        patch_response = client.patch(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"model": "text-embedding-3-large"},
+        )
+        assert patch_response.status_code == 200
+        data = patch_response.json()
+        assert data["updated_at"] is not None
+        assert data["updated_user_uuid"] is not None
+        # updated_at should be refreshed
+        assert data["updated_at"] >= original_updated_at
+
+    def test_create_agent_response_has_audit_fields(self, client: TestClient, auth_token: str):
+        """Test that creating an agent config returns updated_at and updated_user_uuid."""
+        response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "audit-api-agent-1",
+                "model_id": "gpt-4o",
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert "updated_at" in data
+        assert data["updated_at"] is not None
+        assert "updated_user_uuid" in data
+        assert data["updated_user_uuid"] is not None
+
+    def test_get_embedding_includes_audit_fields(self, client: TestClient, auth_token: str):
+        """Test that GET endpoint returns updated_at and updated_user_uuid."""
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "audit-api-emb-get",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        get_response = client.get(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert get_response.status_code == 200
+        data = get_response.json()
+        assert "updated_at" in data
+        assert "updated_user_uuid" in data
+
+    def test_updated_user_uuid_matches_authenticated_user(
+        self, client: TestClient, auth_token: str, admin_token: str
+    ):
+        """Test that updated_user_uuid matches the UUID of the user who made the request."""
+        # Get the test user's UUID via admin endpoint
+        users_response = client.get(
+            "/users/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        users = users_response.json()["results"]
+        test_user = next(u for u in users if u["username"] == "testuser")
+        test_user_uuid = test_user["uuid"]
+
+        # Create a config as testuser
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "audit-uuid-check-1",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        assert create_response.status_code == 201
+        data = create_response.json()
+        assert data["updated_user_uuid"] == test_user_uuid
+
+    def test_updated_user_uuid_updated_on_patch(
+        self, client: TestClient, auth_token: str, admin_token: str
+    ):
+        """Test updated_user_uuid matches patcher's UUID after PATCH."""
+        # Get test user UUID
+        users_response = client.get(
+            "/users/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        users = users_response.json()["results"]
+        test_user = next(u for u in users if u["username"] == "testuser")
+        test_user_uuid = test_user["uuid"]
+
+        # Create config
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "audit-uuid-check-2",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        # Patch it
+        patch_response = client.patch(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"model": "text-embedding-3-large"},
+        )
+        assert patch_response.status_code == 200
+        assert patch_response.json()["updated_user_uuid"] == test_user_uuid
+
+    def test_list_configs_include_audit_fields(self, client: TestClient, auth_token: str):
+        """Test that list endpoint includes updated_at and updated_user_uuid for each item."""
+        client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "audit-list-1",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+            },
+        )
+
+        list_response = client.get(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert list_response.status_code == 200
+        results = list_response.json()["results"]
+        assert len(results) > 0
+        for item in results:
+            assert "updated_at" in item
+            assert "updated_user_uuid" in item

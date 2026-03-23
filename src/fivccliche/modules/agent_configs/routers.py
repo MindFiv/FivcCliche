@@ -45,6 +45,7 @@ async def create_embedding_config_async(
         session,
         owner_uuid,
         config_create,
+        updated_user_uuid=user.uuid,
     )
     return config.to_schema(include_api_key=False)
 
@@ -134,7 +135,9 @@ async def update_embedding_config_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot update configs belonging to other users",
         )
-    config = await methods.update_embedding_config_async(session, config, config_update)
+    config = await methods.update_embedding_config_async(
+        session, config, config_update, updated_user_uuid=user.uuid
+    )
     return config.to_schema(include_api_key=False)
 
 
@@ -201,7 +204,9 @@ async def create_llm_config_async(
         )
     # Superusers create global configs (user_uuid=None), regular users create user-specific configs
     owner_uuid = None if user.is_superuser else user.uuid
-    config = await methods.create_llm_config_async(session, owner_uuid, config_create)
+    config = await methods.create_llm_config_async(
+        session, owner_uuid, config_create, updated_user_uuid=user.uuid
+    )
     return config.to_schema(include_api_key=False)
 
 
@@ -291,7 +296,9 @@ async def update_llm_config_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot update configs belonging to other users",
         )
-    config = await methods.update_llm_config_async(session, config, config_update)
+    config = await methods.update_llm_config_async(
+        session, config, config_update, updated_user_uuid=user.uuid
+    )
     return config.to_schema(include_api_key=False)
 
 
@@ -358,7 +365,9 @@ async def create_agent_config_async(
         )
     # Superusers create global configs (user_uuid=None), regular users create user-specific configs
     owner_uuid = None if user.is_superuser else user.uuid
-    config = await methods.create_agent_config_async(session, owner_uuid, config_create)
+    config = await methods.create_agent_config_async(
+        session, owner_uuid, config_create, updated_user_uuid=user.uuid
+    )
     return config.to_schema()
 
 
@@ -447,7 +456,9 @@ async def update_agent_config_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot update configs belonging to other users",
         )
-    config = await methods.update_agent_config_async(session, config, config_update)
+    config = await methods.update_agent_config_async(
+        session, config, config_update, updated_user_uuid=user.uuid
+    )
     return config.to_schema()
 
 
@@ -573,7 +584,9 @@ async def create_tool_config_async(
         )
     # Superusers create global configs (user_uuid=None), regular users create user-specific configs
     owner_uuid = None if user.is_superuser else user.uuid
-    config = await methods.create_tool_config_async(session, owner_uuid, config_create)
+    config = await methods.create_tool_config_async(
+        session, owner_uuid, config_create, updated_user_uuid=user.uuid
+    )
     return config.to_schema()
 
 
@@ -662,7 +675,9 @@ async def update_tool_config_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot update configs belonging to other users",
         )
-    config = await methods.update_tool_config_async(session, config, config_update)
+    config = await methods.update_tool_config_async(
+        session, config, config_update, updated_user_uuid=user.uuid
+    )
     return config.to_schema()
 
 
@@ -729,7 +744,9 @@ async def create_skill_config_async(
         )
     # Superusers create global configs (user_uuid=None), regular users create user-specific configs
     owner_uuid = None if user.is_superuser else user.uuid
-    config = await methods.create_skill_config_async(session, owner_uuid, config_create)
+    config = await methods.create_skill_config_async(
+        session, owner_uuid, config_create, updated_user_uuid=user.uuid
+    )
     return config.to_schema()
 
 
@@ -818,7 +835,9 @@ async def update_skill_config_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot update configs belonging to other users",
         )
-    config = await methods.update_skill_config_async(session, config, config_update)
+    config = await methods.update_skill_config_async(
+        session, config, config_update, updated_user_uuid=user.uuid
+    )
     return config.to_schema()
 
 

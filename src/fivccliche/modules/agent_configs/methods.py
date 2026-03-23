@@ -1,5 +1,7 @@
 """Config service module with functions for config operations."""
 
+from datetime import datetime, timezone
+
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -16,6 +18,7 @@ async def create_embedding_config_async(
     session: AsyncSession,
     user_uuid: str | None,
     config_create: schemas.UserEmbeddingSchema,
+    updated_user_uuid: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserEmbedding:
     """Create a new embedding config."""
@@ -28,6 +31,8 @@ async def create_embedding_config_async(
         api_key=config_create.api_key,
         base_url=config_create.base_url,
         dimension=config_create.dimension,
+        updated_at=datetime.now(timezone.utc),
+        updated_user_uuid=updated_user_uuid,
     )
     session.add(config)
     await session.commit()
@@ -121,6 +126,7 @@ async def update_embedding_config_async(
     session: AsyncSession,
     config: models.UserEmbedding,
     config_update: schemas.UserEmbeddingSchema,
+    updated_user_uuid: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserEmbedding:
     """Update an embedding config."""
@@ -136,6 +142,8 @@ async def update_embedding_config_async(
         config.base_url = config_update.base_url
     if config_update.dimension is not None:
         config.dimension = config_update.dimension
+    config.updated_at = datetime.now(timezone.utc)
+    config.updated_user_uuid = updated_user_uuid
     session.add(config)
     await session.commit()
     await session.refresh(config)
@@ -159,6 +167,7 @@ async def create_llm_config_async(
     session: AsyncSession,
     user_uuid: str | None,
     config_create: schemas.UserLLMSchema,
+    updated_user_uuid: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserLLM:
     """Create a new LLM config."""
@@ -172,6 +181,8 @@ async def create_llm_config_async(
         base_url=config_create.base_url,
         temperature=config_create.temperature,
         max_tokens=config_create.max_tokens,
+        updated_at=datetime.now(timezone.utc),
+        updated_user_uuid=updated_user_uuid,
     )
     session.add(config)
     await session.commit()
@@ -264,6 +275,7 @@ async def update_llm_config_async(
     session: AsyncSession,
     config: models.UserLLM,
     config_update: schemas.UserLLMSchema,
+    updated_user_uuid: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserLLM:
     """Update an LLM config."""
@@ -281,6 +293,8 @@ async def update_llm_config_async(
         config.temperature = config_update.temperature
     if config_update.max_tokens is not None:
         config.max_tokens = config_update.max_tokens
+    config.updated_at = datetime.now(timezone.utc)
+    config.updated_user_uuid = updated_user_uuid
     session.add(config)
     await session.commit()
     await session.refresh(config)
@@ -304,6 +318,7 @@ async def create_agent_config_async(
     session: AsyncSession,
     user_uuid: str | None,
     config_create: schemas.UserAgentSchema,
+    updated_user_uuid: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserAgent:
     """Create a new agent config."""
@@ -316,6 +331,8 @@ async def create_agent_config_async(
         skill_ids=config_create.skill_ids,
         system_prompt=config_create.system_prompt,
         response_format=config_create.response_format,
+        updated_at=datetime.now(timezone.utc),
+        updated_user_uuid=updated_user_uuid,
     )
     session.add(config)
     await session.commit()
@@ -409,6 +426,7 @@ async def update_agent_config_async(
     session: AsyncSession,
     config: models.UserAgent,
     config_update: schemas.UserAgentSchema,
+    updated_user_uuid: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserAgent:
     """Update an agent config."""
@@ -424,6 +442,8 @@ async def update_agent_config_async(
         config.system_prompt = config_update.system_prompt
     if config_update.response_format is not None:
         config.response_format = config_update.response_format
+    config.updated_at = datetime.now(timezone.utc)
+    config.updated_user_uuid = updated_user_uuid
     session.add(config)
     await session.commit()
     await session.refresh(config)
@@ -447,6 +467,7 @@ async def create_tool_config_async(
     session: AsyncSession,
     user_uuid: str | None,
     config_create: schemas.UserToolSchema,
+    updated_user_uuid: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserTool:
     """Create a new tool config."""
@@ -461,6 +482,8 @@ async def create_tool_config_async(
         url=config_create.url,
         functions=config_create.functions,
         is_active=config_create.is_active if hasattr(config_create, "is_active") else True,
+        updated_at=datetime.now(timezone.utc),
+        updated_user_uuid=updated_user_uuid,
     )
     session.add(config)
     await session.commit()
@@ -553,6 +576,7 @@ async def update_tool_config_async(
     session: AsyncSession,
     config: models.UserTool,
     config_update: schemas.UserToolSchema,
+    updated_user_uuid: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserTool:
     """Update a tool config."""
@@ -572,6 +596,8 @@ async def update_tool_config_async(
         config.functions = config_update.functions
     if hasattr(config_update, "is_active") and config_update.is_active is not None:
         config.is_active = config_update.is_active
+    config.updated_at = datetime.now(timezone.utc)
+    config.updated_user_uuid = updated_user_uuid
     session.add(config)
     await session.commit()
     await session.refresh(config)
@@ -595,6 +621,7 @@ async def create_skill_config_async(
     session: AsyncSession,
     user_uuid: str | None,
     config_create: schemas.UserSkillSchema,
+    updated_user_uuid: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserSkill:
     """Create a new skill config."""
@@ -606,6 +633,8 @@ async def create_skill_config_async(
         tool_ids=config_create.tool_ids,
         resources=config_create.resources,
         is_active=config_create.is_active if hasattr(config_create, "is_active") else True,
+        updated_at=datetime.now(timezone.utc),
+        updated_user_uuid=updated_user_uuid,
     )
     session.add(config)
     await session.commit()
@@ -699,6 +728,7 @@ async def update_skill_config_async(
     session: AsyncSession,
     config: models.UserSkill,
     config_update: schemas.UserSkillSchema,
+    updated_user_uuid: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserSkill:
     """Update a skill config."""
@@ -712,6 +742,8 @@ async def update_skill_config_async(
         config.resources = config_update.resources
     if hasattr(config_update, "is_active") and config_update.is_active is not None:
         config.is_active = config_update.is_active
+    config.updated_at = datetime.now(timezone.utc)
+    config.updated_user_uuid = updated_user_uuid
     session.add(config)
     await session.commit()
     await session.refresh(config)

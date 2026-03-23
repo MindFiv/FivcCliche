@@ -1,7 +1,8 @@
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Index
+from sqlalchemy import DateTime, Index
 from sqlmodel import SQLModel, Field, JSON
 
 from . import schemas
@@ -54,6 +55,16 @@ class UserEmbedding(SQLModel, table=True):
         foreign_key="user.uuid",
         description="User ID.",
     )
+    updated_at: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Last update time.",
+    )
+    updated_user_uuid: str | None = Field(
+        default=None,
+        foreign_key="user.uuid",
+        description="UUID of user who last updated.",
+    )
 
     def to_schema(self, include_api_key: bool = True) -> schemas.UserEmbeddingSchema:
         return schemas.UserEmbeddingSchema(
@@ -66,6 +77,8 @@ class UserEmbedding(SQLModel, table=True):
             base_url=self.base_url,
             dimension=self.dimension,
             user_uuid=self.user_uuid,
+            updated_at=self.updated_at,
+            updated_user_uuid=self.updated_user_uuid,
         )
 
 
@@ -118,6 +131,16 @@ class UserLLM(SQLModel, table=True):
         foreign_key="user.uuid",
         description="User ID.",
     )
+    updated_at: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Last update time.",
+    )
+    updated_user_uuid: str | None = Field(
+        default=None,
+        foreign_key="user.uuid",
+        description="UUID of user who last updated.",
+    )
 
     def to_schema(self, include_api_key: bool = True) -> schemas.UserLLMSchema:
         return schemas.UserLLMSchema(
@@ -131,6 +154,8 @@ class UserLLM(SQLModel, table=True):
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             user_uuid=self.user_uuid,
+            updated_at=self.updated_at,
+            updated_user_uuid=self.updated_user_uuid,
         )
 
 
@@ -180,6 +205,16 @@ class UserTool(SQLModel, table=True):
         foreign_key="user.uuid",
         description="User ID.",
     )
+    updated_at: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Last update time.",
+    )
+    updated_user_uuid: str | None = Field(
+        default=None,
+        foreign_key="user.uuid",
+        description="UUID of user who last updated.",
+    )
 
     def to_schema(self) -> schemas.UserToolSchema:
         return schemas.UserToolSchema(
@@ -194,6 +229,8 @@ class UserTool(SQLModel, table=True):
             functions=self.functions,
             is_active=self.is_active,
             user_uuid=self.user_uuid,
+            updated_at=self.updated_at,
+            updated_user_uuid=self.updated_user_uuid,
         )
 
 
@@ -238,6 +275,16 @@ class UserSkill(SQLModel, table=True):
         foreign_key="user.uuid",
         description="User ID.",
     )
+    updated_at: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Last update time.",
+    )
+    updated_user_uuid: str | None = Field(
+        default=None,
+        foreign_key="user.uuid",
+        description="UUID of user who last updated.",
+    )
 
     def to_schema(self) -> schemas.UserSkillSchema:
         return schemas.UserSkillSchema(
@@ -249,6 +296,8 @@ class UserSkill(SQLModel, table=True):
             resources=self.resources,
             is_active=self.is_active,
             user_uuid=self.user_uuid,
+            updated_at=self.updated_at,
+            updated_user_uuid=self.updated_user_uuid,
         )
 
 
@@ -299,6 +348,16 @@ class UserAgent(SQLModel, table=True):
         foreign_key="user.uuid",
         description="User ID.",
     )
+    updated_at: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Last update time.",
+    )
+    updated_user_uuid: str | None = Field(
+        default=None,
+        foreign_key="user.uuid",
+        description="UUID of user who last updated.",
+    )
 
     def to_schema(self) -> schemas.UserAgentSchema:
         return schemas.UserAgentSchema(
@@ -311,4 +370,6 @@ class UserAgent(SQLModel, table=True):
             system_prompt=self.system_prompt,
             response_format=self.response_format,
             user_uuid=self.user_uuid,
+            updated_at=self.updated_at,
+            updated_user_uuid=self.updated_user_uuid,
         )

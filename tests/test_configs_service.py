@@ -86,6 +86,8 @@ async def session():
                     base_url VARCHAR,
                     dimension INTEGER NOT NULL DEFAULT 1024,
                     user_uuid VARCHAR,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_user_uuid VARCHAR,
                     PRIMARY KEY (uuid),
                     UNIQUE (id, user_uuid),
                     FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
@@ -109,6 +111,8 @@ async def session():
                     temperature FLOAT NOT NULL DEFAULT 0.5,
                     max_tokens INTEGER NOT NULL DEFAULT 4096,
                     user_uuid VARCHAR,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_user_uuid VARCHAR,
                     PRIMARY KEY (uuid),
                     UNIQUE (id, user_uuid),
                     FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
@@ -143,6 +147,8 @@ async def session():
                     system_prompt VARCHAR,
                     response_format JSON,
                     user_uuid VARCHAR,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_user_uuid VARCHAR,
                     PRIMARY KEY (uuid),
                     UNIQUE (id, user_uuid),
                     FOREIGN KEY(user_uuid) REFERENCES "user" (uuid),
@@ -168,6 +174,8 @@ async def session():
                     functions JSON,
                     is_active BOOLEAN NOT NULL DEFAULT 1,
                     user_uuid VARCHAR,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_user_uuid VARCHAR,
                     PRIMARY KEY (uuid),
                     UNIQUE (id, user_uuid),
                     FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
@@ -189,6 +197,8 @@ async def session():
                     resources JSON,
                     is_active BOOLEAN NOT NULL DEFAULT 1,
                     user_uuid VARCHAR,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_user_uuid VARCHAR,
                     PRIMARY KEY (uuid),
                     UNIQUE (id, user_uuid),
                     FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
@@ -2581,7 +2591,175 @@ class TestModelsRegressionGlobalUserConfigs:
         assert retrieved_global.user_uuid is None
         assert retrieved_user.user_uuid == "user123"
 
-    async def test_global_and_user_specific_agents_coexist(self, session: AsyncSession):
+
+class TestAuditFieldsRegression:
+    """Regression tests for updated_at and updated_user_uuid fields on all config models."""
+
+    async def test_embedding_updated_at_set_on_create(self, session: AsyncSession):
+        """Test that updated_at is set when creating an embedding config."""
+        from datetime import datetime, timezone
+
+        config_create = EmbeddingConfig(
+            id="audit-emb-1",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+        )
+        before = datetime.now(timezone.utc)
+        config = await methods.create_embedding_config_async(
+            session, "user123", config_create, updated_user_uuid="user123"
+        )
+        after = datetime.now(timezone.utc)
+
+        assert config.updated_at is not None
+        assert config.updated_user_uuid == "user123"
+        assert before <= config.updated_at.replace(tzinfo=timezone.utc) <= after
+
+    async def test_embedding_updated_at_changes_on_update(self, session: AsyncSession):
+        """Test that updated_at changes after updating an embedding config."""
+        import asyncio
+
+        config_create = EmbeddingConfig(
+            id="audit-emb-2",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+        )
+        config = await methods.create_embedding_config_async(session, "user123", config_create)
+        original_updated_at = config.updated_at
+
+        await asyncio.sleep(0.01)  # ensure time advances
+
+        config_update = EmbeddingConfig(
+            id="audit-emb-2",
+            provider="openai",
+            model="text-embedding-3-large",
+            api_key="test-key",
+        )
+        updated = await methods.update_embedding_config_async(
+            session, config, config_update, updated_user_uuid="user456"
+        )
+
+        assert updated.updated_user_uuid == "user456"
+        assert updated.updated_at >= original_updated_at
+
+    async def test_llm_audit_fields_on_create(self, session: AsyncSession):
+        """Test that updated_at and updated_user_uuid are set when creating an LLM config."""
+        config_create = ModelConfig(
+            id="audit-llm-1",
+            provider="openai",
+            model="gpt-4o",
+            api_key="test-key",
+        )
+        config = await methods.create_llm_config_async(
+            session, "user123", config_create, updated_user_uuid="user123"
+        )
+
+        assert config.updated_at is not None
+        assert config.updated_user_uuid == "user123"
+
+    async def test_llm_updated_user_uuid_changes_on_update(self, session: AsyncSession):
+        """Test that updated_user_uuid reflects the updating user for LLM config."""
+        config_create = ModelConfig(
+            id="audit-llm-2",
+            provider="openai",
+            model="gpt-4o",
+            api_key="test-key",
+        )
+        config = await methods.create_llm_config_async(
+            session, "user123", config_create, updated_user_uuid="user123"
+        )
+
+        config_update = ModelConfig(
+            id="audit-llm-2",
+            provider="openai",
+            model="gpt-4o-mini",
+            api_key="test-key",
+        )
+        updated = await methods.update_llm_config_async(
+            session, config, config_update, updated_user_uuid="admin"
+        )
+
+        assert updated.updated_user_uuid == "admin"
+
+    async def test_agent_audit_fields_on_create(self, session: AsyncSession):
+        """Test that updated_at and updated_user_uuid are set when creating an agent config."""
+        config_create = AgentConfig(
+            id="audit-agent-1",
+            model_id="gpt-4o",
+        )
+        config = await methods.create_agent_config_async(
+            session, "user123", config_create, updated_user_uuid="user123"
+        )
+
+        assert config.updated_at is not None
+        assert config.updated_user_uuid == "user123"
+
+    async def test_agent_updated_user_uuid_changes_on_update(self, session: AsyncSession):
+        """Test that updated_user_uuid reflects the updating user for agent config."""
+        config_create = AgentConfig(
+            id="audit-agent-2",
+            model_id="gpt-4o",
+        )
+        config = await methods.create_agent_config_async(
+            session, "user123", config_create, updated_user_uuid="user123"
+        )
+        updated = await methods.update_agent_config_async(
+            session,
+            config,
+            AgentConfig(id="audit-agent-2", model_id="gpt-4o-mini"),
+            updated_user_uuid="superuser",
+        )
+
+        assert updated.updated_user_uuid == "superuser"
+
+    async def test_audit_fields_schema_includes_updated_at(self, session: AsyncSession):
+        """Test that to_schema() includes updated_at and updated_user_uuid."""
+        config_create = EmbeddingConfig(
+            id="audit-schema-1",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+        )
+        config = await methods.create_embedding_config_async(
+            session, "user123", config_create, updated_user_uuid="user123"
+        )
+        schema = config.to_schema(include_api_key=False)
+
+        assert schema.updated_at is not None
+        assert schema.updated_user_uuid == "user123"
+
+    async def test_tool_audit_fields_on_create(self, session: AsyncSession):
+        """Test that updated_at and updated_user_uuid are set when creating a tool config."""
+        from fivccliche.modules.agent_configs import schemas as agent_schemas
+
+        config_create = agent_schemas.UserToolSchema(
+            id="audit-tool-1",
+            description="Test tool",
+            transport=agent_schemas.UserToolTransport.STDIO,
+            command="echo",
+        )
+        config = await methods.create_tool_config_async(
+            session, "user123", config_create, updated_user_uuid="user123"
+        )
+
+        assert config.updated_at is not None
+        assert config.updated_user_uuid == "user123"
+
+    async def test_skill_audit_fields_on_create(self, session: AsyncSession):
+        """Test that updated_at and updated_user_uuid are set when creating a skill config."""
+        from fivccliche.modules.agent_configs import schemas as agent_schemas
+
+        config_create = agent_schemas.UserSkillSchema(
+            id="audit-skill-1",
+            description="Test skill",
+        )
+        config = await methods.create_skill_config_async(
+            session, "user123", config_create, updated_user_uuid="user123"
+        )
+
+        assert config.updated_at is not None
+        assert config.updated_user_uuid == "user123"
         """Test that global and user-specific agent configs coexist with same id."""
         import uuid as uuid_lib
 

@@ -7,6 +7,8 @@ __all__ = [
     "UserToolTransport",
 ]
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from fivcplayground.embeddings.types import EmbeddingConfig
@@ -29,6 +31,10 @@ class UserEmbeddingSchema(EmbeddingConfig):
 
     uuid: str = Field(default=None, description="Embedding config UUID (globally unique)")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
+    updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
+    updated_user_uuid: str | None = Field(
+        default=None, description="UUID of user who last updated (read-only)"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -38,6 +44,10 @@ class UserLLMSchema(ModelConfig):
 
     uuid: str = Field(default=None, description="LLM config UUID (globally unique)")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
+    updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
+    updated_user_uuid: str | None = Field(
+        default=None, description="UUID of user who last updated (read-only)"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,6 +58,10 @@ class UserToolSchema(ToolConfig):
     uuid: str = Field(default=None, description="Tool config UUID (globally unique)")
     is_active: bool = Field(default=True, description="Whether the tool is active")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
+    updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
+    updated_user_uuid: str | None = Field(
+        default=None, description="UUID of user who last updated (read-only)"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -64,6 +78,10 @@ class UserSkillSchema(SkillConfig):
     uuid: str = Field(default=None, description="Skill config UUID (globally unique)")
     is_active: bool = Field(default=True, description="Whether the skill is active")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
+    updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
+    updated_user_uuid: str | None = Field(
+        default=None, description="UUID of user who last updated (read-only)"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -73,5 +91,9 @@ class UserAgentSchema(AgentConfig):
 
     uuid: str = Field(default=None, description="Agent config UUID (globally unique)")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
+    updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
+    updated_user_uuid: str | None = Field(
+        default=None, description="UUID of user who last updated (read-only)"
+    )
 
     model_config = ConfigDict(from_attributes=True)
