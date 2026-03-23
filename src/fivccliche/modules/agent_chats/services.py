@@ -181,22 +181,25 @@ class UserChatRepositoryImpl(UserChatRepository):
         # Check if message exists
         existing = await methods.get_chat_message_async(self.session, agent_run.id, session_id)
         if not existing:
-            existing = await methods.create_chat_message_async(
+            await methods.create_chat_message_async(
                 self.session,
                 chat_uuid=session_id,
-                query=agent_run.query.model_dump() if agent_run.query else None,
+                status=agent_run.status,
+                query=agent_run.query.model_dump(mode="json") if agent_run.query else None,
+                reply=agent_run.reply.model_dump(mode="json") if agent_run.reply else None,
+                tool_calls={k: v.model_dump(mode="json") for k, v in agent_run.tool_calls.items()},
                 message_uuid=agent_run.id,
             )
-
-        await methods.update_chat_message_async(
-            self.session,
-            existing,
-            status=agent_run.status,
-            query=agent_run.query.model_dump(mode="json") if agent_run.query else None,
-            reply=agent_run.reply.model_dump(mode="json") if agent_run.reply else None,
-            tool_calls={k: v.model_dump(mode="json") for k, v in agent_run.tool_calls.items()},
-            completed_at=agent_run.completed_at,
-        )
+        else:
+            await methods.update_chat_message_async(
+                self.session,
+                existing,
+                status=agent_run.status,
+                query=agent_run.query.model_dump(mode="json") if agent_run.query else None,
+                reply=agent_run.reply.model_dump(mode="json") if agent_run.reply else None,
+                tool_calls={k: v.model_dump(mode="json") for k, v in agent_run.tool_calls.items()},
+                completed_at=agent_run.completed_at,
+            )
 
     async def get_agent_run_async(self, session_id: str, run_id: str) -> AgentRun | None:
         """Retrieve an agent run (chat message) by ID.

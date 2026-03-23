@@ -33,6 +33,8 @@ class _ChatStreamingGenerator:
 
     async def __call__(self, *args, **kwargs):
         try:
+            ev_run_finish = None
+
             while True:
                 # Check if task is done and queue is empty
                 if self.chat_task.done() and self.chat_queue.empty():
@@ -71,16 +73,12 @@ class _ChatStreamingGenerator:
                     yield f"data: {data_json}\n\n"
 
                 elif ev == AgentRunEvent.FINISH:
+                    ev_run_finish = ev_run
                     data = ev_run.model_dump(mode="json", include=data_fields)
                     data.update({"chat_uuid": self.chat_uuid})
                     data = {"event": "finish", "info": data}
                     data_json = json.dumps(data)
                     yield f"data: {data_json}\n\n"
-
-                    if self.chat_finish_callback:
-                        result = self.chat_finish_callback(ev_run)
-                        if inspect.iscoroutine(result):
-                            await result
 
                 elif ev == AgentRunEvent.STREAM:
                     data = ev_run.model_dump(mode="json", include=data_fields_basics)
@@ -104,6 +102,11 @@ class _ChatStreamingGenerator:
                     yield f"data: {data}\n\n"
 
                 self.chat_queue.task_done()
+
+            if self.chat_finish_callback and ev_run_finish:
+                callback_result = self.chat_finish_callback(ev_run_finish)
+                if inspect.iscoroutine(callback_result):
+                    await callback_result
 
         except Exception as e:
             # Ensure any exception is properly handled

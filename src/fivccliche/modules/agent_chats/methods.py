@@ -172,28 +172,14 @@ async def create_chat_message_async(
     session: AsyncSession,
     chat_uuid: str,
     query: dict,
+    message_uuid: str | None = None,
+    status: schemas.AgentRunStatus | None = None,
     reply: dict | None = None,
     tool_calls: dict | None = None,
-    message_uuid: str | None = None,
+    completed_at: datetime | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserChatMessage:
-    """Create a new chat message.
-
-    Args:
-        session: AsyncSession for database operations
-        chat_uuid: Chat UUID (required)
-        query: Query data (required)
-        reply: Optional reply data
-        tool_calls: Optional tool calls data
-        message_uuid: Optional message UUID (will be auto-generated if not provided)
-        **kwargs: Additional arguments (ignored)
-
-    Returns:
-        Created UserChatMessage instance
-
-    Raises:
-        ValueError: If chat_uuid is missing
-    """
+    """Create a new chat message."""
     if not chat_uuid:
         raise ValueError("Chat UUID is required to create a message")
 
@@ -203,7 +189,10 @@ async def create_chat_message_async(
         query=query,
         reply=reply,
         tool_calls=tool_calls,
+        completed_at=completed_at,
     )
+    if status:
+        message.status = status
     session.add(message)
     await session.commit()
     await session.refresh(message)
