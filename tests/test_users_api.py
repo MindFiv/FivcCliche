@@ -931,3 +931,79 @@ class TestListUsersOrdering:
         signed_in = [r for r in results if r["signed_in_at"] is not None]
         dates = [r["signed_in_at"] for r in signed_in]
         assert dates == sorted(dates, reverse=True)
+
+
+class TestChangePassword:
+    """Test cases for PATCH /users/self/password/ endpoint."""
+
+    def _get_headers(self, client: TestClient, username: str, password: str) -> dict:
+        response = client.post("/users/login", json={"username": username, "password": password})
+        return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+    def _create_user(self, client: TestClient, admin_headers: dict, username: str, password: str):
+        client.post(
+            "/users/",
+            json={"username": username, "password": password},
+            headers=admin_headers,
+        )
+
+    def _get_admin_headers(self, client: TestClient) -> dict:
+        return self._get_headers(client, "admin", "admin123")
+
+    def test_change_password_success(self, client: TestClient):
+        """Changing password with correct current password returns 200 and allows login with new password."""
+        admin_headers = self._get_admin_headers(client)
+        self._create_user(client, admin_headers, "pwuser1", "oldpassword")
+        headers = self._get_headers(client, "pwuser1", "oldpassword")
+
+        response = client.patch(
+            "/users/self/password/",
+            json={"current_password": "oldpassword", "new_password": "newpassword"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["username"] == "pwuser1"
+        assert "hashed_password" not in data
+
+        # Verify login with new password works
+        login_response = client.post(
+            "/users/login", json={"username": "pwuser1", "password": "newpassword"}
+        )
+        assert login_response.status_code == 200
+        assert "access_token" in login_response.json()
+
+    def test_change_password_wrong_current(self, client: TestClient):
+        """Changing password with incorrect current password returns 400."""
+        admin_headers = self._get_admin_headers(client)
+        self._create_user(client, admin_headers, "pwuser2", "correctpassword")
+        headers = self._get_headers(client, "pwuser2", "correctpassword")
+
+        response = client.patch(
+            "/users/self/password/",
+            json={"current_password": "wrongpassword", "new_password": "newpassword"},
+            headers=headers,
+        )
+        assert response.status_code == 400
+        assert "incorrect" in response.json()["detail"].lower()
+
+    def test_change_password_too_short_new(self, client: TestClient):
+        """New password shorter than 8 chars returns 422."""
+        admin_headers = self._get_admin_headers(client)
+        self._create_user(client, admin_headers, "pwuser3", "validpassword")
+        headers = self._get_headers(client, "pwuser3", "validpassword")
+
+        response = client.patch(
+            "/users/self/password/",
+            json={"current_password": "validpassword", "new_password": "short"},
+            headers=headers,
+        )
+        assert response.status_code == 422
+
+    def test_change_password_requires_auth(self, client: TestClient):
+        """Changing password without auth token returns 401 or 403."""
+        response = client.patch(
+            "/users/self/password/",
+            json={"current_password": "oldpassword", "new_password": "newpassword"},
+        )
+        assert response.status_code in (401, 403)

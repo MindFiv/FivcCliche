@@ -108,6 +108,25 @@ async def get_self_async(
     return user
 
 
+@router.patch(
+    "/self/password/",
+    summary="Change the authenticated user's password.",
+    response_model=schemas.UserRead,
+)
+async def change_password_async(
+    data: schemas.UserChangePassword,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> models.User:
+    """Change the current user's password."""
+    try:
+        return await methods.change_user_password_async(
+            session, str(user.uuid), data.current_password, data.new_password
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
 @router.get(
     "/", summary="List all users (admin only).", response_model=PaginatedResponse[schemas.UserRead]
 )

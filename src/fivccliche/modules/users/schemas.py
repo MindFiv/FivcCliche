@@ -48,6 +48,13 @@ class UserRead(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class UserChangePassword(BaseModel):
+    """Schema for changing a user's password."""
+
+    current_password: str = Field(..., min_length=8, description="Current password")
+    new_password: str = Field(..., min_length=8, max_length=255, description="New password")
+
+
 class UserLogin(BaseModel):
     """Schema for user login."""
 

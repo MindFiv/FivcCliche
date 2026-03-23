@@ -161,6 +161,36 @@ async def update_user_async(
     return user
 
 
+async def change_user_password_async(
+    session: AsyncSession,
+    user_uuid: str,
+    current_password: str,
+    new_password: str,
+) -> models.User:
+    """Change a user's password after verifying the current password.
+
+    Args:
+        session: Database session
+        user_uuid: User's UUID
+        current_password: The user's current password (plain text)
+        new_password: The new password to set (plain text)
+
+    Returns:
+        The updated User object
+
+    Raises:
+        ValueError: If the current password is incorrect or user not found
+    """
+    user = await get_user_async(session, user_uuid=user_uuid)
+    if user is None or not user.check_password(current_password):
+        raise ValueError("Current password is incorrect")
+    user.change_password(new_password)
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
 async def delete_user_async(session: AsyncSession, user: models.User) -> None:
     """Delete a user."""
     await session.delete(user)
