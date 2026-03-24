@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Index
+from sqlalchemy import Column, DateTime, Index
+from sqlalchemy.sql import func
 from sqlmodel import SQLModel, Field, JSON
 
 from . import schemas
@@ -56,8 +57,12 @@ class UserEmbedding(SQLModel, table=True):
         description="User ID.",
     )
     updated_at: datetime = Field(
-        sa_type=DateTime(timezone=True),
-        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            default=lambda: datetime.now(timezone.utc),
+            nullable=False,
+        ),
         description="Last update time.",
     )
     updated_user_uuid: str | None = Field(
@@ -132,8 +137,12 @@ class UserLLM(SQLModel, table=True):
         description="User ID.",
     )
     updated_at: datetime = Field(
-        sa_type=DateTime(timezone=True),
-        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            default=lambda: datetime.now(timezone.utc),
+            nullable=False,
+        ),
         description="Last update time.",
     )
     updated_user_uuid: str | None = Field(
@@ -206,8 +215,12 @@ class UserTool(SQLModel, table=True):
         description="User ID.",
     )
     updated_at: datetime = Field(
-        sa_type=DateTime(timezone=True),
-        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            default=lambda: datetime.now(timezone.utc),
+            nullable=False,
+        ),
         description="Last update time.",
     )
     updated_user_uuid: str | None = Field(
@@ -276,8 +289,12 @@ class UserSkill(SQLModel, table=True):
         description="User ID.",
     )
     updated_at: datetime = Field(
-        sa_type=DateTime(timezone=True),
-        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            default=lambda: datetime.now(timezone.utc),
+            nullable=False,
+        ),
         description="Last update time.",
     )
     updated_user_uuid: str | None = Field(
@@ -349,8 +366,12 @@ class UserAgent(SQLModel, table=True):
         description="User ID.",
     )
     updated_at: datetime = Field(
-        sa_type=DateTime(timezone=True),
-        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            default=lambda: datetime.now(timezone.utc),
+            nullable=False,
+        ),
         description="Last update time.",
     )
     updated_user_uuid: str | None = Field(
