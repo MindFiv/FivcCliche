@@ -91,7 +91,7 @@ async def list_chats_async(
         .offset(skip)
         .limit(limit)
     )
-    if agent_id is not None:
+    if agent_id:
         statement = statement.where(models.UserChat.agent_id == agent_id)
 
     result = await session.execute(statement)
