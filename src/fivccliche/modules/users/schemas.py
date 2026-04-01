@@ -36,6 +36,12 @@ class UserUpdate(BaseModel):
     is_active: bool | None = Field(None, description="User active status")
 
 
+class UserStatusUpdate(BaseModel):
+    """Schema for updating user active status."""
+
+    is_active: bool = Field(..., description="User active status")
+
+
 class UserRead(UserBase):
     """Schema for reading user data (response)."""
 
@@ -48,8 +54,8 @@ class UserRead(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-class UserChangePassword(BaseModel):
-    """Schema for changing a user's password."""
+class UserPasswordUpdate(BaseModel):
+    """Schema for updating a user's password."""
 
     current_password: str = Field(..., min_length=8, description="Current password")
     new_password: str = Field(..., min_length=8, max_length=255, description="New password")

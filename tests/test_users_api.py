@@ -1007,3 +1007,107 @@ class TestChangePassword:
             json={"current_password": "oldpassword", "new_password": "newpassword"},
         )
         assert response.status_code in (401, 403)
+
+
+class TestUserStatusUpdate:
+    """Tests for user activation/deactivation endpoints."""
+
+    def _get_headers(self, client: TestClient, username: str, password: str) -> dict:
+        response = client.post("/users/login", json={"username": username, "password": password})
+        return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+    def _create_user(self, client: TestClient, admin_headers: dict, username: str, password: str):
+        return client.post(
+            "/users/",
+            json={"username": username, "password": password},
+            headers=admin_headers,
+        )
+
+    def _get_admin_headers(self, client: TestClient) -> dict:
+        return self._get_headers(client, "admin", "admin123")
+
+    def test_admin_can_deactivate_user(self, client: TestClient):
+        """Admin can deactivate a user."""
+        admin_headers = self._get_admin_headers(client)
+        user_response = self._create_user(client, admin_headers, "testuser1", "password123")
+        user_uuid = user_response.json()["uuid"]
+
+        response = client.patch(
+            f"/users/{user_uuid}/status",
+            json={"is_active": False},
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["is_active"] is False
+
+    def test_admin_can_activate_user(self, client: TestClient):
+        """Admin can activate a deactivated user."""
+        admin_headers = self._get_admin_headers(client)
+        user_response = self._create_user(client, admin_headers, "testuser2", "password123")
+        user_uuid = user_response.json()["uuid"]
+
+        client.patch(f"/users/{user_uuid}/status", json={"is_active": False}, headers=admin_headers)
+        response = client.patch(
+            f"/users/{user_uuid}/status",
+            json={"is_active": True},
+            headers=admin_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["is_active"] is True
+
+    def test_admin_cannot_deactivate_self(self, client: TestClient):
+        """Admin cannot deactivate their own account."""
+        admin_headers = self._get_admin_headers(client)
+        admin_response = client.get("/users/self/", headers=admin_headers)
+        admin_uuid = admin_response.json()["uuid"]
+
+        response = client.patch(
+            f"/users/{admin_uuid}/status",
+            json={"is_active": False},
+            headers=admin_headers,
+        )
+        assert response.status_code == 400
+        assert "cannot deactivate your own account" in response.json()["detail"].lower()
+
+    def test_regular_user_cannot_change_status(self, client: TestClient):
+        """Regular user cannot change another user's status."""
+        admin_headers = self._get_admin_headers(client)
+        self._create_user(client, admin_headers, "user1", "password123")
+        user2_response = self._create_user(client, admin_headers, "user2", "password123")
+        user2_uuid = user2_response.json()["uuid"]
+
+        user1_headers = self._get_headers(client, "user1", "password123")
+        response = client.patch(
+            f"/users/{user2_uuid}/status",
+            json={"is_active": False},
+            headers=user1_headers,
+        )
+        assert response.status_code == 403
+
+    def test_inactive_user_cannot_login(self, client: TestClient):
+        """Inactive user cannot login."""
+        admin_headers = self._get_admin_headers(client)
+        user_response = self._create_user(client, admin_headers, "testuser3", "password123")
+        user_uuid = user_response.json()["uuid"]
+
+        client.patch(f"/users/{user_uuid}/status", json={"is_active": False}, headers=admin_headers)
+
+        response = client.post(
+            "/users/login", json={"username": "testuser3", "password": "password123"}
+        )
+        assert response.status_code == 401
+
+    def test_inactive_user_token_rejected(self, client: TestClient):
+        """Inactive user's existing token is rejected."""
+        admin_headers = self._get_admin_headers(client)
+        user_response = self._create_user(client, admin_headers, "testuser4", "password123")
+        user_uuid = user_response.json()["uuid"]
+
+        user_headers = self._get_headers(client, "testuser4", "password123")
+        response = client.get("/users/self/", headers=user_headers)
+        assert response.status_code == 200
+
+        client.patch(f"/users/{user_uuid}/status", json={"is_active": False}, headers=admin_headers)
+
+        response = client.get("/users/self/", headers=user_headers)
+        assert response.status_code in (401, 403)

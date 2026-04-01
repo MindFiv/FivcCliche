@@ -114,7 +114,7 @@ async def get_self_async(
     response_model=schemas.UserRead,
 )
 async def change_password_async(
-    data: schemas.UserChangePassword,
+    data: schemas.UserPasswordUpdate,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> models.User:
@@ -198,6 +198,37 @@ async def delete_user_async(
             detail="User not found",
         )
     await methods.delete_user_async(session, user)
+
+
+@router.patch(
+    "/{user_uuid}/status/",
+    summary="Update user active status (admin only).",
+    response_model=schemas.UserRead,
+)
+async def update_user_status_async(
+    user_uuid: str,
+    status_update: schemas.UserStatusUpdate,
+    admin_user: IUser = Depends(get_admin_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> models.User:
+    """Update a user's active status."""
+    user = await methods.get_user_async(session, user_uuid=user_uuid)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    if user_uuid == admin_user.uuid and not status_update.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot deactivate your own account",
+        )
+
+    if user.is_active == status_update.is_active:
+        return user
+
+    return await methods.update_user_async(session, user, is_active=status_update.is_active)
 
 
 @router.get(

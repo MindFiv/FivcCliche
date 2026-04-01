@@ -131,6 +131,8 @@ class UserAuthenticatorImpl(IUserAuthenticator):
             user = await get_user_async(session, username=username)
             if user and not ignore_password and not user.check_password(password):
                 user = None
+            if user and not user.is_active:
+                user = None
             if user:
                 user.signed_in_at = datetime.now(timezone.utc)
                 session.add(user)
@@ -140,6 +142,8 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         async with get_db_session_async() as session:
             user = await get_user_async(session, username=username)
             if user and not ignore_password and not user.check_password(password):
+                user = None
+            if user and not user.is_active:
                 user = None
             if user:
                 user.signed_in_at = datetime.now(timezone.utc)
@@ -236,6 +240,10 @@ class UserAuthenticatorImpl(IUserAuthenticator):
             else:
                 async with get_db_session_async() as session:
                     user = await get_user_async(session, user_uuid=user_uuid)
+
+            # Block inactive users
+            if user and not user.is_active:
+                return None
 
             return UserImpl(user) if user else None
 
