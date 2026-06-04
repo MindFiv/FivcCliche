@@ -29,6 +29,7 @@ from fivccliche.modules.agent_configs.models import (
     UserLLM,
     UserAgent,
     UserTool,
+    UserQuestion,
 )
 from fivccliche.modules.agent_configs import schemas
 
@@ -196,6 +197,27 @@ async def session():
                     tool_ids JSON,
                     resources JSON,
                     is_active BOOLEAN NOT NULL DEFAULT 1,
+                    user_uuid VARCHAR,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_user_uuid VARCHAR,
+                    PRIMARY KEY (uuid),
+                    UNIQUE (id, user_uuid),
+                    FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
+                )
+            """
+                )
+            )
+
+            # Create user_question table
+            await conn.execute(
+                text(
+                    """
+                CREATE TABLE user_question (
+                    uuid VARCHAR NOT NULL,
+                    id VARCHAR NOT NULL,
+                    question VARCHAR NOT NULL,
+                    answer VARCHAR,
+                    is_active BOOLEAN NOT NULL DEFAULT 0,
                     user_uuid VARCHAR,
                     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_user_uuid VARCHAR,
@@ -1682,6 +1704,438 @@ class TestToolConfigRepository:
 
         with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
             await repo.update_tool_config_async(config)
+
+
+# ============================================================================
+# Question Config Tests
+# ============================================================================
+
+
+class TestQuestionConfigMethods:
+    """Test cases for question config methods."""
+
+    async def test_create_question(self, session: AsyncSession):
+        """Test creating a question config."""
+        config_create = schemas.UserQuestionSchema(
+            id="question-create",
+            question="What should the agent ask next?",
+            is_active=True,
+        )
+
+        config = await methods.create_question_async(
+            session, "user123", config_create, updated_user_uuid="user123"
+        )
+
+        assert config.id == "question-create"
+        assert config.question == "What should the agent ask next?"
+        assert config.is_active is True
+        assert config.user_uuid == "user123"
+        assert config.updated_user_uuid == "user123"
+        assert config.uuid is not None
+
+    async def test_create_question_with_answer(self, session: AsyncSession):
+        """Test creating a question config with an answer."""
+        config_create = schemas.UserQuestionSchema(
+            id="question-create-answer",
+            question="What is the answer?",
+            answer="The answer is available.",
+        )
+
+        config = await methods.create_question_async(session, "user123", config_create)
+
+        assert config.answer == "The answer is available."
+
+    async def test_create_question_default_is_inactive(self, session: AsyncSession):
+        """Test that question configs default to inactive."""
+        config_create = schemas.UserQuestionSchema(
+            id="question-default",
+            question="Should this start inactive?",
+        )
+
+        config = await methods.create_question_async(session, "user123", config_create)
+
+        assert config.is_active is False
+
+    async def test_get_question_by_uuid(self, session: AsyncSession):
+        """Test getting a question config by UUID."""
+        config_create = schemas.UserQuestionSchema(
+            id="question-uuid",
+            question="Can this be fetched by UUID?",
+        )
+        created = await methods.create_question_async(session, "user123", config_create)
+
+        retrieved = await methods.get_question_async(session, "user123", config_uuid=created.uuid)
+
+        assert retrieved is not None
+        assert retrieved.id == "question-uuid"
+        assert retrieved.uuid == created.uuid
+
+    async def test_get_question_by_id(self, session: AsyncSession):
+        """Test getting a question config by user-scoped ID."""
+        config_create = schemas.UserQuestionSchema(
+            id="question-id",
+            question="Can this be fetched by ID?",
+        )
+        await methods.create_question_async(session, "user123", config_create)
+
+        retrieved = await methods.get_question_async(session, "user123", config_id="question-id")
+
+        assert retrieved is not None
+        assert retrieved.id == "question-id"
+        assert retrieved.question == "Can this be fetched by ID?"
+
+    async def test_get_question_not_found(self, session: AsyncSession):
+        """Test getting a non-existent question config."""
+        result = await methods.get_question_async(session, "user123", config_id="missing")
+
+        assert result is None
+
+    async def test_list_questions(self, session: AsyncSession):
+        """Test listing question configs."""
+        for i in range(3):
+            config_create = schemas.UserQuestionSchema(
+                id=f"question-list-{i}",
+                question=f"Question {i}?",
+            )
+            await methods.create_question_async(session, "user123", config_create)
+
+        configs = await methods.list_questions_async(session, "user123")
+
+        assert len(configs) == 3
+        assert all(config.user_uuid == "user123" for config in configs)
+
+    async def test_list_questions_with_pagination(self, session: AsyncSession):
+        """Test listing question configs with pagination."""
+        for i in range(5):
+            config_create = schemas.UserQuestionSchema(
+                id=f"question-page-{i}",
+                question=f"Paged question {i}?",
+            )
+            await methods.create_question_async(session, "user123", config_create)
+
+        configs = await methods.list_questions_async(session, "user123", skip=0, limit=2)
+
+        assert len(configs) == 2
+
+        configs = await methods.list_questions_async(session, "user123", skip=2, limit=2)
+
+        assert len(configs) == 2
+
+    async def test_list_questions_filters_by_is_active(self, session: AsyncSession):
+        """Test listing question configs filtered by active state."""
+        await methods.create_question_async(
+            session,
+            "user123",
+            schemas.UserQuestionSchema(
+                id="question-active-1",
+                question="Active question one?",
+                is_active=True,
+            ),
+        )
+        await methods.create_question_async(
+            session,
+            "user123",
+            schemas.UserQuestionSchema(
+                id="question-active-2",
+                question="Active question two?",
+                is_active=True,
+            ),
+        )
+        await methods.create_question_async(
+            session,
+            "user123",
+            schemas.UserQuestionSchema(
+                id="question-inactive",
+                question="Inactive question?",
+                is_active=False,
+            ),
+        )
+
+        active_configs = await methods.list_questions_async(session, "user123", is_active=True)
+        inactive_configs = await methods.list_questions_async(session, "user123", is_active=False)
+
+        assert {config.id for config in active_configs} == {
+            "question-active-1",
+            "question-active-2",
+        }
+        assert {config.id for config in inactive_configs} == {"question-inactive"}
+
+    async def test_count_questions(self, session: AsyncSession):
+        """Test counting question configs."""
+        for i in range(3):
+            config_create = schemas.UserQuestionSchema(
+                id=f"question-count-{i}",
+                question=f"Count question {i}?",
+            )
+            await methods.create_question_async(session, "user123", config_create)
+
+        count = await methods.count_questions_async(session, "user123")
+
+        assert count == 3
+
+    async def test_count_questions_filters_by_is_active(self, session: AsyncSession):
+        """Test counting question configs filtered by active state."""
+        await methods.create_question_async(
+            session,
+            "user123",
+            schemas.UserQuestionSchema(
+                id="question-count-active",
+                question="Active count question?",
+                is_active=True,
+            ),
+        )
+        await methods.create_question_async(
+            session,
+            "user123",
+            schemas.UserQuestionSchema(
+                id="question-count-inactive",
+                question="Inactive count question?",
+                is_active=False,
+            ),
+        )
+
+        active_count = await methods.count_questions_async(session, "user123", is_active=True)
+        inactive_count = await methods.count_questions_async(session, "user123", is_active=False)
+
+        assert active_count == 1
+        assert inactive_count == 1
+
+    async def test_update_question(self, session: AsyncSession):
+        """Test updating a question config."""
+        config_create = schemas.UserQuestionSchema(
+            id="question-update",
+            question="Original question?",
+        )
+        created = await methods.create_question_async(session, "user123", config_create)
+
+        config_update = schemas.UserQuestionSchema(
+            id="question-update",
+            question="Updated question?",
+            answer="Updated answer.",
+            is_active=True,
+        )
+        updated = await methods.update_question_async(
+            session, created, config_update, updated_user_uuid="user456"
+        )
+
+        assert updated.question == "Updated question?"
+        assert updated.answer == "Updated answer."
+        assert updated.is_active is True
+        assert updated.updated_user_uuid == "user456"
+
+    async def test_update_question_preserves_answer_when_omitted(self, session: AsyncSession):
+        """Test partial question updates preserve answer when omitted."""
+        config_create = schemas.UserQuestionSchema(
+            id="question-preserve-answer",
+            question="Original question?",
+            answer="Original answer.",
+            is_active=True,
+        )
+        created = await methods.create_question_async(session, "user123", config_create)
+
+        config_update = schemas.UserQuestionSchema(
+            id="question-preserve-answer",
+            question="Updated question?",
+        )
+        updated = await methods.update_question_async(session, created, config_update)
+
+        assert updated.question == "Updated question?"
+        assert updated.answer == "Original answer."
+        assert updated.is_active is True
+
+    async def test_delete_question(self, session: AsyncSession):
+        """Test deleting a question config."""
+        config_create = schemas.UserQuestionSchema(
+            id="question-delete",
+            question="Delete this question?",
+        )
+        created = await methods.create_question_async(session, "user123", config_create)
+
+        await methods.delete_question_async(session, created)
+
+        retrieved = await methods.get_question_async(
+            session, "user123", config_id="question-delete"
+        )
+        assert retrieved is None
+
+    async def test_question_global_accessible(self, session: AsyncSession):
+        """Test that global question configs are accessible to all users."""
+        config_create = schemas.UserQuestionSchema(
+            id="global-question",
+            question="Should every user see this?",
+        )
+        created = await methods.create_question_async(session, None, config_create)
+
+        retrieved_user1 = await methods.get_question_async(
+            session, "user123", config_uuid=created.uuid
+        )
+        retrieved_user2 = await methods.get_question_async(
+            session, "user456", config_uuid=created.uuid
+        )
+
+        assert retrieved_user1 is not None
+        assert retrieved_user2 is not None
+        assert retrieved_user1.user_uuid is None
+        assert retrieved_user2.user_uuid is None
+
+    async def test_list_questions_includes_global(self, session: AsyncSession):
+        """Test listing question configs includes global records."""
+        await methods.create_question_async(
+            session,
+            "user123",
+            schemas.UserQuestionSchema(id="user-question", question="User question?"),
+        )
+        await methods.create_question_async(
+            session,
+            None,
+            schemas.UserQuestionSchema(id="global-list-question", question="Global question?"),
+        )
+
+        configs = await methods.list_questions_async(session, "user123")
+        ids = {config.id for config in configs}
+
+        assert ids == {"user-question", "global-list-question"}
+
+    async def test_count_questions_includes_global(self, session: AsyncSession):
+        """Test counting question configs includes global records."""
+        await methods.create_question_async(
+            session,
+            "user456",
+            schemas.UserQuestionSchema(id="user456-question", question="Other user's question?"),
+        )
+        await methods.create_question_async(
+            session,
+            None,
+            schemas.UserQuestionSchema(id="global-count-question", question="Global question?"),
+        )
+
+        count = await methods.count_questions_async(session, "user456")
+
+        assert count == 2
+
+    async def test_question_user_scoped_uniqueness(self, session: AsyncSession):
+        """Test that question IDs are unique within user scope."""
+        config1 = schemas.UserQuestionSchema(id="shared-question", question="First question?")
+        await methods.create_question_async(session, "user1", config1)
+
+        config2 = schemas.UserQuestionSchema(id="shared-question", question="Second question?")
+        created = await methods.create_question_async(session, "user2", config2)
+        assert created.user_uuid == "user2"
+
+        config3 = schemas.UserQuestionSchema(id="shared-question", question="Duplicate?")
+        with pytest.raises(Exception):  # SQLAlchemy integrity error. # noqa
+            await methods.create_question_async(session, "user1", config3)
+
+    async def test_user_question_model_has_required_fields(self, session: AsyncSession):
+        """Test that UserQuestion model has all required field definitions."""
+        import uuid as uuid_lib
+
+        config = UserQuestion(
+            uuid=str(uuid_lib.uuid4()),
+            id="model-question",
+            question="Does the model hold required fields?",
+            answer="Yes.",
+            is_active=True,
+            user_uuid="user123",
+        )
+
+        assert config.uuid is not None
+        assert config.id == "model-question"
+        assert config.question == "Does the model hold required fields?"
+        assert config.answer == "Yes."
+        assert config.is_active is True
+        assert config.user_uuid == "user123"
+
+    async def test_user_question_model_field_defaults(self, session: AsyncSession):
+        """Test that UserQuestion model has correct field defaults."""
+        import uuid as uuid_lib
+
+        config = UserQuestion(
+            uuid=str(uuid_lib.uuid4()),
+            id="model-question-defaults",
+            question="Do defaults work?",
+        )
+
+        assert config.is_active is False
+        assert config.answer is None
+        assert config.user_uuid is None
+
+    async def test_user_question_composite_unique_index_prevents_duplicate(
+        self, session: AsyncSession
+    ):
+        """Test that composite unique index (id, user_uuid) prevents duplicates."""
+        import uuid as uuid_lib
+
+        config1 = UserQuestion(
+            uuid=str(uuid_lib.uuid4()),
+            id="duplicate-question",
+            question="First?",
+            user_uuid="user123",
+        )
+        session.add(config1)
+        await session.commit()
+
+        config2 = UserQuestion(
+            uuid=str(uuid_lib.uuid4()),
+            id="duplicate-question",
+            question="Second?",
+            user_uuid="user123",
+        )
+        session.add(config2)
+
+        with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
+            await session.commit()
+
+    async def test_user_question_to_schema_conversion(self, session: AsyncSession):
+        """Test that to_schema() method correctly converts model to schema."""
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        config = UserQuestion(
+            uuid=config_uuid,
+            id="schema-question",
+            question="Does schema conversion work?",
+            answer="Schema conversion works.",
+            is_active=True,
+            user_uuid="user123",
+            updated_user_uuid="user456",
+        )
+
+        schema = config.to_schema()
+
+        assert isinstance(schema, schemas.UserQuestionSchema)
+        assert schema.uuid == config_uuid
+        assert schema.id == "schema-question"
+        assert schema.question == "Does schema conversion work?"
+        assert schema.answer == "Schema conversion works."
+        assert schema.is_active is True
+        assert schema.user_uuid == "user123"
+        assert schema.updated_user_uuid == "user456"
+
+    async def test_question_audit_fields_on_create_and_update(self, session: AsyncSession):
+        """Test that question audit fields are set on create and update."""
+        config_create = schemas.UserQuestionSchema(
+            id="audit-question",
+            question="Who changed this?",
+        )
+        created = await methods.create_question_async(
+            session, "user123", config_create, updated_user_uuid="user123"
+        )
+
+        assert created.updated_at is not None
+        assert created.updated_user_uuid == "user123"
+
+        config_update = schemas.UserQuestionSchema(
+            id="audit-question",
+            question="Who changed this now?",
+            is_active=True,
+        )
+        updated = await methods.update_question_async(
+            session, created, config_update, updated_user_uuid="user456"
+        )
+
+        assert updated.updated_at is not None
+        assert updated.updated_user_uuid == "user456"
 
 
 # ============================================================================

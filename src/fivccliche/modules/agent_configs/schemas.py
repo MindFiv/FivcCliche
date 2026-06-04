@@ -2,6 +2,7 @@ __all__ = [
     "UserAgentSchema",
     "UserEmbeddingSchema",
     "UserLLMSchema",
+    "UserQuestionSchema",
     "UserSkillSchema",
     "UserToolSchema",
     "UserToolTransport",
@@ -90,6 +91,23 @@ class UserAgentSchema(AgentConfig):
     """Schema for reading agent config data (response)."""
 
     uuid: str = Field(default=None, description="Agent config UUID (globally unique)")
+    user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
+    updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
+    updated_user_uuid: str | None = Field(
+        default=None, description="UUID of user who last updated (read-only)"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserQuestionSchema(BaseModel):
+    """Schema for reading user question data (response)."""
+
+    uuid: str = Field(default=None, description="Question UUID (globally unique)")
+    id: str = Field(..., description="Question ID (unique within user scope)")
+    question: str = Field(..., description="User question text")
+    answer: str | None = Field(default=None, description="User answer text")
+    is_active: bool = Field(default=False, description="Whether the question is active")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
     updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
     updated_user_uuid: str | None = Field(

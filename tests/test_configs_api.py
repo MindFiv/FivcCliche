@@ -28,6 +28,7 @@ def client():
         UserLLM,
         UserAgent,
         UserTool,
+        UserQuestion,
     )
 
     # Create a temporary file for the database
@@ -1391,6 +1392,486 @@ class TestToolConfigAPI:
         data = create_response.json()
         assert "functions" in data
         assert data["functions"] is None
+
+
+class TestQuestionConfigAPI:
+    """Test cases for Question Config API endpoints."""
+
+    def test_create_question_unauthorized(self, client: TestClient):
+        """Test creating question config without authentication."""
+        response = client.post(
+            "/configs/questions/",
+            json={
+                "id": "question-unauthorized",
+                "question": "Is authentication required?",
+            },
+        )
+
+        assert response.status_code == 401
+
+    def test_create_question(self, client: TestClient, auth_token: str):
+        """Test creating a question config."""
+        response = client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-create",
+                "question": "What should the agent ask?",
+                "answer": "The agent should ask for context.",
+                "is_active": True,
+            },
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["id"] == "question-create"
+        assert data["question"] == "What should the agent ask?"
+        assert data["answer"] == "The agent should ask for context."
+        assert data["is_active"] is True
+        assert "uuid" in data
+        assert "user_uuid" in data
+        assert "updated_at" in data
+        assert "updated_user_uuid" in data
+
+    def test_create_question_defaults_to_inactive(self, client: TestClient, auth_token: str):
+        """Test question config default active state."""
+        response = client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-default",
+                "question": "Does this default inactive?",
+            },
+        )
+
+        assert response.status_code == 201
+        assert response.json()["is_active"] is False
+
+    def test_list_questions(self, client: TestClient, auth_token: str):
+        """Test listing question configs."""
+        for i in range(3):
+            client.post(
+                "/configs/questions/",
+                headers={"Authorization": f"Bearer {auth_token}"},
+                json={
+                    "id": f"question-list-{i}",
+                    "question": f"Question {i}?",
+                    "answer": f"Answer {i}.",
+                },
+            )
+
+        response = client.get(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 3
+        assert len(data["results"]) == 3
+        assert {result["answer"] for result in data["results"]} == {
+            "Answer 0.",
+            "Answer 1.",
+            "Answer 2.",
+        }
+
+    def test_list_questions_with_pagination(self, client: TestClient, auth_token: str):
+        """Test listing question configs with pagination."""
+        for i in range(5):
+            client.post(
+                "/configs/questions/",
+                headers={"Authorization": f"Bearer {auth_token}"},
+                json={
+                    "id": f"question-page-{i}",
+                    "question": f"Paged question {i}?",
+                },
+            )
+
+        response = client.get(
+            "/configs/questions/?skip=0&limit=2",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 5
+        assert len(data["results"]) == 2
+
+    def test_list_questions_filters_active(self, client: TestClient, auth_token: str):
+        """Test listing question configs filtered to active questions."""
+        client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-api-active-1",
+                "question": "Active API question one?",
+                "is_active": True,
+            },
+        )
+        client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-api-active-2",
+                "question": "Active API question two?",
+                "is_active": True,
+            },
+        )
+        client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-api-inactive",
+                "question": "Inactive API question?",
+                "is_active": False,
+            },
+        )
+
+        response = client.get(
+            "/configs/questions/?is_active=true",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 2
+        assert {result["id"] for result in data["results"]} == {
+            "question-api-active-1",
+            "question-api-active-2",
+        }
+        assert all(result["is_active"] is True for result in data["results"])
+
+    def test_list_questions_filters_inactive(self, client: TestClient, auth_token: str):
+        """Test listing question configs filtered to inactive questions."""
+        client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-api-active",
+                "question": "Active API question?",
+                "is_active": True,
+            },
+        )
+        client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-api-inactive-1",
+                "question": "Inactive API question one?",
+                "is_active": False,
+            },
+        )
+        client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-api-inactive-2",
+                "question": "Inactive API question two?",
+                "is_active": False,
+            },
+        )
+
+        response = client.get(
+            "/configs/questions/?is_active=false",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 2
+        assert {result["id"] for result in data["results"]} == {
+            "question-api-inactive-1",
+            "question-api-inactive-2",
+        }
+        assert all(result["is_active"] is False for result in data["results"])
+
+    def test_get_question(self, client: TestClient, auth_token: str):
+        """Test getting a question config."""
+        create_response = client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-get",
+                "question": "Can this be fetched?",
+                "answer": "Yes, it can.",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.get(
+            f"/configs/questions/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == "question-get"
+        assert data["question"] == "Can this be fetched?"
+        assert data["answer"] == "Yes, it can."
+
+    def test_get_question_not_found(self, client: TestClient, auth_token: str):
+        """Test getting a non-existent question config."""
+        response = client.get(
+            "/configs/questions/nonexistent-uuid",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+
+        assert response.status_code == 404
+
+    def test_update_question(self, client: TestClient, auth_token: str):
+        """Test updating a question config."""
+        create_response = client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-update",
+                "question": "Original question?",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.patch(
+            f"/configs/questions/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-update",
+                "question": "Updated question?",
+                "answer": "Updated answer.",
+                "is_active": True,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["question"] == "Updated question?"
+        assert data["answer"] == "Updated answer."
+        assert data["is_active"] is True
+
+    def test_update_question_partial(self, client: TestClient, auth_token: str):
+        """Test partial update of a question config."""
+        create_response = client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-partial",
+                "question": "Original partial question?",
+                "answer": "Original partial answer.",
+                "is_active": True,
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.patch(
+            f"/configs/questions/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-partial",
+                "question": "Updated partial question?",
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["question"] == "Updated partial question?"
+        assert data["answer"] == "Original partial answer."
+        assert data["is_active"] is True
+
+    def test_delete_question(self, client: TestClient, auth_token: str):
+        """Test deleting a question config."""
+        create_response = client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-delete",
+                "question": "Delete this?",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.delete(
+            f"/configs/questions/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+
+        assert response.status_code == 204
+
+        response = client.get(
+            f"/configs/questions/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 404
+
+    def test_user_cannot_update_other_user_question(
+        self, client: TestClient, auth_token: str, other_user_token: str
+    ):
+        """Test that users cannot update another user's question config."""
+        create_response = client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-auth-user",
+                "question": "Can another user edit this?",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.patch(
+            f"/configs/questions/{config_uuid}",
+            headers={"Authorization": f"Bearer {other_user_token}"},
+            json={
+                "id": "question-auth-user",
+                "question": "Changed by another user?",
+            },
+        )
+
+        assert response.status_code == 404
+
+    def test_user_cannot_delete_other_user_question(
+        self, client: TestClient, auth_token: str, other_user_token: str
+    ):
+        """Test that users cannot delete another user's question config."""
+        create_response = client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-delete-auth",
+                "question": "Can another user delete this?",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.delete(
+            f"/configs/questions/{config_uuid}",
+            headers={"Authorization": f"Bearer {other_user_token}"},
+        )
+
+        assert response.status_code == 404
+
+    def test_superuser_can_update_global_question(self, client: TestClient, admin_token: str):
+        """Test that superusers can update global question configs."""
+        create_response = client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-question-update",
+                "question": "Global original?",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+        assert create_response.json()["user_uuid"] is None
+
+        response = client.patch(
+            f"/configs/questions/{config_uuid}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-question-update",
+                "question": "Global updated?",
+                "is_active": True,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["question"] == "Global updated?"
+        assert response.json()["is_active"] is True
+
+    def test_superuser_can_delete_global_question(self, client: TestClient, admin_token: str):
+        """Test that superusers can delete global question configs."""
+        create_response = client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-question-delete",
+                "question": "Global delete?",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.delete(
+            f"/configs/questions/{config_uuid}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+
+        assert response.status_code == 204
+
+    def test_regular_user_cannot_update_global_question(
+        self, client: TestClient, admin_token: str, auth_token: str
+    ):
+        """Test that regular users cannot update global question configs."""
+        create_response = client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-question-regular-update",
+                "question": "Global regular update?",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.patch(
+            f"/configs/questions/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "global-question-regular-update",
+                "question": "Blocked update?",
+            },
+        )
+
+        assert response.status_code == 403
+        assert "Cannot update global configs" in response.json()["detail"]
+
+    def test_regular_user_cannot_delete_global_question(
+        self, client: TestClient, admin_token: str, auth_token: str
+    ):
+        """Test that regular users cannot delete global question configs."""
+        create_response = client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "global-question-regular-delete",
+                "question": "Global regular delete?",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.delete(
+            f"/configs/questions/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+
+        assert response.status_code == 403
+        assert "Cannot delete global configs" in response.json()["detail"]
+
+    def test_question_response_has_expected_fields(self, client: TestClient, auth_token: str):
+        """Test question config response field shape."""
+        create_response = client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-fields",
+                "question": "Are all fields present?",
+            },
+        )
+
+        assert create_response.status_code == 201
+        data = create_response.json()
+        assert set(data).issuperset(
+            {
+                "uuid",
+                "id",
+                "question",
+                "answer",
+                "is_active",
+                "user_uuid",
+                "updated_at",
+                "updated_user_uuid",
+            }
+        )
+        assert isinstance(data["uuid"], str)
+        assert isinstance(data["id"], str)
+        assert isinstance(data["question"], str)
+        assert data["answer"] is None or isinstance(data["answer"], str)
+        assert isinstance(data["is_active"], bool)
+        assert data["user_uuid"] is None or isinstance(data["user_uuid"], str)
 
 
 class TestConfigsAuthorizationEmbedding:

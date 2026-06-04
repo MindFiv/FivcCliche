@@ -394,3 +394,64 @@ class UserAgent(SQLModel, table=True):
             updated_at=self.updated_at,
             updated_user_uuid=self.updated_user_uuid,
         )
+
+
+class UserQuestion(SQLModel, table=True):
+    """User question model."""
+
+    __tablename__ = "user_question"
+    __table_args__ = (Index("ix_user_question_id_user_uuid", "id", "user_uuid", unique=True),)
+
+    uuid: str = Field(
+        default_factory=lambda: str(uuid4()),
+        primary_key=True,
+        max_length=36,
+        description="Question UUID.",
+    )
+    id: str = Field(
+        max_length=36,
+        description="Question ID (unique within user scope).",
+        index=True,
+    )
+    question: str = Field(
+        description="User question text.",
+    )
+    answer: str | None = Field(
+        default=None,
+        description="User answer text.",
+    )
+    is_active: bool = Field(
+        default=False,
+        description="User question active or not.",
+    )
+    user_uuid: str | None = Field(
+        default=None,
+        foreign_key="user.uuid",
+        description="User ID.",
+    )
+    updated_at: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            default=lambda: datetime.now(timezone.utc),
+            nullable=False,
+        ),
+        description="Last update time.",
+    )
+    updated_user_uuid: str | None = Field(
+        default=None,
+        foreign_key="user.uuid",
+        description="UUID of user who last updated.",
+    )
+
+    def to_schema(self) -> schemas.UserQuestionSchema:
+        return schemas.UserQuestionSchema(
+            uuid=self.uuid,
+            id=self.id,
+            question=self.question,
+            answer=self.answer,
+            is_active=self.is_active,
+            user_uuid=self.user_uuid,
+            updated_at=self.updated_at,
+            updated_user_uuid=self.updated_user_uuid,
+        )

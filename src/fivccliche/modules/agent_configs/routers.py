@@ -879,6 +879,164 @@ async def delete_skill_config_async(
 
 
 # ============================================================================
+# Question Config Endpoints
+# ============================================================================
+
+router_questions = APIRouter(prefix="/configs/questions", tags=["question_configs"])
+
+
+@router_questions.post(
+    "/",
+    summary="Create a new question config for the authenticated user.",
+    response_model=schemas.UserQuestionSchema,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_question_async(
+    config_create: schemas.UserQuestionSchema,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> schemas.UserQuestionSchema:
+    """Create a new question config."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    owner_uuid = None if user.is_superuser else user.uuid
+    config = await methods.create_question_async(
+        session, owner_uuid, config_create, updated_user_uuid=user.uuid
+    )
+    return config.to_schema()
+
+
+@router_questions.get(
+    "/",
+    summary="List all question configs for the authenticated user.",
+    response_model=PaginatedResponse[schemas.UserQuestionSchema],
+)
+async def list_questions_async(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    is_active: bool | None = Query(None),
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> PaginatedResponse[schemas.UserQuestionSchema]:
+    """List all question configs for the authenticated user."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    configs = await methods.list_questions_async(
+        session, user.uuid, skip=skip, limit=limit, is_active=is_active
+    )
+    total = await methods.count_questions_async(session, user.uuid, is_active=is_active)
+    return PaginatedResponse[schemas.UserQuestionSchema](
+        total=total,
+        results=[config.to_schema() for config in configs],
+    )
+
+
+@router_questions.get(
+    "/{config_uuid}/",
+    summary="Get a question config by ID for the authenticated user.",
+    response_model=schemas.UserQuestionSchema,
+)
+async def get_question_async(
+    config_uuid: str,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> schemas.UserQuestionSchema:
+    """Get a question config by ID."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    config = await methods.get_question_async(session, user.uuid, config_uuid=config_uuid)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question config not found",
+        )
+    return config.to_schema()
+
+
+@router_questions.patch(
+    "/{config_uuid}/",
+    summary="Update a question config by ID for the authenticated user.",
+    response_model=schemas.UserQuestionSchema,
+)
+async def update_question_async(
+    config_uuid: str,
+    config_update: create_partial_model(schemas.UserQuestionSchema),
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> schemas.UserQuestionSchema:
+    """Update a question config."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    config = await methods.get_question_async(session, user.uuid, config_uuid=config_uuid)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question config not found",
+        )
+    if config.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot update global configs",
+        )
+    if config.user_uuid is not None and config.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot update configs belonging to other users",
+        )
+    config = await methods.update_question_async(
+        session, config, config_update, updated_user_uuid=user.uuid
+    )
+    return config.to_schema()
+
+
+@router_questions.delete(
+    "/{config_uuid}/",
+    summary="Delete a question config by ID for the authenticated user.",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_question_async(
+    config_uuid: str,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> None:
+    """Delete a question config."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    config = await methods.get_question_async(session, user.uuid, config_uuid=config_uuid)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question config not found",
+        )
+    if config.user_uuid is None and not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete global configs",
+        )
+    if config.user_uuid is not None and config.user_uuid != user.uuid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete configs belonging to other users",
+        )
+    await methods.delete_question_async(session, config)
+
+
+# ============================================================================
 # Main Router
 # ============================================================================
 

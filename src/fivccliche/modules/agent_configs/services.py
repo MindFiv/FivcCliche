@@ -1,4 +1,7 @@
 import asyncio
+import importlib.util
+from pathlib import Path
+from typing import Any, cast
 from fastapi import FastAPI
 
 from fivcglue import IComponentSite
@@ -14,11 +17,12 @@ from fivcplayground.skills.types import SkillConfig
 from fivcplayground.backends.chroma import (
     ChromaEmbeddingBackend,
 )
-from fivcplayground.backends.strands import (
-    StrandsModelBackend,
-    StrandsToolBackend,
-    StrandsAgentBackend,
-)
+
+# from fivcplayground.backends.adk import (
+#     AdkModelBackend as ModelBackend,
+#     AdkToolBackend as ToolBackend,
+#     AdkAgentBackend as AgentBackend,
+# )
 
 from fivccliche.services.interfaces.modules import IModule
 from fivccliche.services.interfaces.agent_configs import (
@@ -34,6 +38,41 @@ from fivccliche.services.interfaces.agent_configs import (
 )
 
 from . import methods, routers
+
+
+def _load_strands_backend(module_name: str, class_name: str):
+    """Load Strands backend modules without importing the package-level __init__."""
+    import fivcplayground
+
+    backend_path = (
+        Path(fivcplayground.__file__).parent / "backends" / "strands" / f"{module_name}.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        f"_fivccliche_strands_{module_name}", backend_path
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load Strands backend module: {module_name}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return getattr(module, class_name)
+
+
+class _LazyStrandsBackend:
+    """Proxy a Strands backend so optional runtime imports happen only when used."""
+
+    def __init__(self, module_name: str, class_name: str):
+        self.module_name = module_name
+        self.class_name = class_name
+        self._backend: Any | None = None
+
+    def _load(self) -> Any:
+        if self._backend is None:
+            backend = _load_strands_backend(self.module_name, self.class_name)
+            self._backend = backend()
+        return self._backend
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._load(), name)
 
 
 class UserEmbeddingRepositoryImpl(UserEmbeddingRepository):
@@ -461,7 +500,7 @@ class UserConfigProviderImpl(IUserConfigProvider):
         **kwargs,  # ignore additional arguments
     ) -> UserLLMBackend:
         """Get the model backend."""
-        return StrandsModelBackend()
+        return cast(UserLLMBackend, _LazyStrandsBackend("models", "StrandsModelBackend"))
 
     def get_tool_repository(
         self,
@@ -478,7 +517,7 @@ class UserConfigProviderImpl(IUserConfigProvider):
         **kwargs,  # ignore additional arguments
     ) -> UserToolBackend:
         """Get the tool backend."""
-        return StrandsToolBackend()
+        return cast(UserToolBackend, _LazyStrandsBackend("tools", "StrandsToolBackend"))
 
     def get_skill_repository(
         self,
@@ -504,7 +543,7 @@ class UserConfigProviderImpl(IUserConfigProvider):
         **kwargs,  # ignore additional arguments
     ) -> UserAgentBackend:
         """Get the agent backend."""
-        return StrandsAgentBackend()
+        return cast(UserAgentBackend, _LazyStrandsBackend("agents", "StrandsAgentBackend"))
 
 
 class ModuleImpl(IModule):
@@ -528,3 +567,4 @@ class ModuleImpl(IModule):
         app.include_router(routers.router_agents, **kwargs)
         app.include_router(routers.router_tools, **kwargs)
         app.include_router(routers.router_skills, **kwargs)
+        app.include_router(routers.router_questions, **kwargs)

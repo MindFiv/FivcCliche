@@ -54,6 +54,21 @@ python -m fivccliche.cli setup
 
 Visit http://localhost:8000/docs for interactive API documentation.
 
+### Configuration APIs
+
+Authenticated users can manage user-scoped AI agent resources under `/configs/`.
+Superusers create global configs (`user_uuid = null`) that regular users can read but not update
+or delete.
+
+- `/configs/embeddings/` - embedding provider/model configs
+- `/configs/models/` - LLM provider/model configs
+- `/configs/agents/` - agent configs that compose models, tools, and skills
+- `/configs/tools/` - tool configs, including MCP/function transports
+- `/configs/skills/` - reusable skill configs and resources
+- `/configs/questions/` - reusable user question configs with `id`, `question`, optional
+  `answer`, `is_active`, `user_uuid`, `updated_at`, and `updated_user_uuid` fields; list with
+  `?is_active=true` or `?is_active=false` to filter by active state
+
 ### CLI Options
 
 ```bash
@@ -143,4 +158,3 @@ Charlie Zhang (sunnypig2002@gmail.com)
 - **FastAPI**: https://fastapi.tiangolo.com/
 - **SQLModel**: https://sqlmodel.tiangolo.com/
 - **Pydantic**: https://docs.pydantic.dev/
-

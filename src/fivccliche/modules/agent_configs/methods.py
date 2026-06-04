@@ -756,3 +756,136 @@ async def delete_skill_config_async(
     """Delete a skill config."""
     await session.delete(config)
     await session.commit()
+
+
+# ============================================================================
+# Question Config Operations
+# ============================================================================
+
+
+async def create_question_async(
+    session: AsyncSession,
+    user_uuid: str | None,
+    config_create: schemas.UserQuestionSchema,
+    updated_user_uuid: str | None = None,
+    **kwargs,  # ignore additional arguments
+) -> models.UserQuestion:
+    """Create a new question config."""
+    config = models.UserQuestion(
+        id=config_create.id,
+        user_uuid=user_uuid,
+        question=config_create.question,
+        answer=config_create.answer,
+        is_active=config_create.is_active if hasattr(config_create, "is_active") else False,
+        updated_at=datetime.now(timezone.utc),
+        updated_user_uuid=updated_user_uuid,
+    )
+    session.add(config)
+    await session.commit()
+    await session.refresh(config)
+    return config
+
+
+async def get_question_async(
+    session: AsyncSession,
+    user_uuid: str,
+    config_uuid: str | None = None,
+    config_id: str | None = None,
+    **kwargs,  # ignore additional arguments
+) -> models.UserQuestion | None:
+    """Get a question config by UUID or ID for a specific user."""
+    if (config_uuid is None and config_id is None) or (
+        config_uuid is not None and config_id is not None
+    ):
+        raise ValueError("Exactly one of config_uuid or config_id must be provided")
+
+    if config_uuid is not None:
+        statement = select(models.UserQuestion).where(
+            (models.UserQuestion.uuid == config_uuid)
+            & (
+                (models.UserQuestion.user_uuid == user_uuid)
+                | (models.UserQuestion.user_uuid == None)  # noqa E711
+            )
+        )
+    else:
+        statement = select(models.UserQuestion).where(
+            (models.UserQuestion.id == config_id)
+            & (
+                (models.UserQuestion.user_uuid == user_uuid)
+                | (models.UserQuestion.user_uuid == None)  # noqa E711
+            )
+        )
+
+    result = await session.execute(statement)
+    return result.scalars().first()
+
+
+async def list_questions_async(
+    session: AsyncSession,
+    user_uuid: str,
+    skip: int = 0,
+    limit: int = 100,
+    is_active: bool | None = None,
+    **kwargs,  # ignore additional arguments
+) -> list[models.UserQuestion]:
+    """List all question configs for a user with pagination."""
+    conditions = [
+        (models.UserQuestion.user_uuid == user_uuid)
+        | (models.UserQuestion.user_uuid == None)  # noqa E711
+    ]
+    if is_active is not None:
+        conditions.append(models.UserQuestion.is_active == is_active)
+
+    statement = select(models.UserQuestion).where(*conditions).offset(skip).limit(limit)
+    result = await session.execute(statement)
+    return list(result.scalars().all())
+
+
+async def count_questions_async(
+    session: AsyncSession,
+    user_uuid: str,
+    is_active: bool | None = None,
+    **kwargs,  # ignore additional arguments
+) -> int:
+    """Count the number of question configs for a user."""
+    conditions = [
+        (models.UserQuestion.user_uuid == user_uuid)
+        | (models.UserQuestion.user_uuid == None)  # noqa E711
+    ]
+    if is_active is not None:
+        conditions.append(models.UserQuestion.is_active == is_active)
+
+    statement = select(func.count(models.UserQuestion.uuid)).where(*conditions)
+    result = await session.execute(statement)
+    return result.scalar() or 0
+
+
+async def update_question_async(
+    session: AsyncSession,
+    config: models.UserQuestion,
+    config_update: schemas.UserQuestionSchema,
+    updated_user_uuid: str | None = None,
+    **kwargs,  # ignore additional arguments
+) -> models.UserQuestion:
+    """Update a question config."""
+    fields_set = getattr(config_update, "model_fields_set", set())
+    if "question" in fields_set and config_update.question is not None:
+        config.question = config_update.question
+    if "answer" in fields_set and config_update.answer is not None:
+        config.answer = config_update.answer
+    if "is_active" in fields_set and config_update.is_active is not None:
+        config.is_active = config_update.is_active
+    config.updated_at = datetime.now(timezone.utc)
+    config.updated_user_uuid = updated_user_uuid
+    session.add(config)
+    await session.commit()
+    await session.refresh(config)
+    return config
+
+
+async def delete_question_async(
+    session: AsyncSession, config: models.UserQuestion, **kwargs  # ignore additional arguments
+) -> None:
+    """Delete a question config."""
+    await session.delete(config)
+    await session.commit()
