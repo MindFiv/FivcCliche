@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 
 from fastapi import (
     APIRouter,
@@ -8,6 +9,7 @@ from fastapi import (
     responses,
     status,
 )
+from fivcglue.interfaces.mutexes import IMutexSite
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider
@@ -15,9 +17,10 @@ from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.utils.deps import (
     IUser,
     get_authenticated_user_async,
-    get_db_session_async,
-    get_config_provider_async,
     get_chat_provider_async,
+    get_config_provider_async,
+    get_db_session_async,
+    get_mutex_site_async,
 )
 from fivccliche.utils.generators import create_chat_streaming_generator_async
 from fivccliche.utils.schemas import PaginatedResponse
@@ -151,6 +154,7 @@ async def delete_chat_async(
 # ============================================================================
 
 router_messages = APIRouter(tags=["chat_messages"], prefix="/chats")
+CHAT_MESSAGE_LOCK_EXPIRE = timedelta(minutes=15)
 
 
 @router_messages.post(
@@ -165,6 +169,7 @@ async def create_chat_messages_async(
     session: AsyncSession = Depends(get_db_session_async),
     config_provider: IUserConfigProvider = Depends(get_config_provider_async),
     chat_provider: IUserChatProvider = Depends(get_chat_provider_async),
+    mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
 ) -> responses.StreamingResponse:
     """Send a new message to an existing chat session."""
     if not user:
@@ -212,19 +217,45 @@ async def create_chat_messages_async(
         chat_tools = None
         chat_skills_enabled = True  # enable skills by default if no context
 
-    chat_gen = await create_chat_streaming_generator_async(
-        user,
-        config_provider,
-        chat_provider,
-        chat_uuid=chat_uuid,
-        chat_query=chat_message.query,
-        chat_agent_id=chat_agent_id,
-        chat_tools=chat_tools,
-        chat_skills_enabled=chat_skills_enabled,
-        session=session,
-    )
+    mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
+    if mutex:
+        lock_acquired = mutex.acquire(
+            expire=CHAT_MESSAGE_LOCK_EXPIRE,
+            method="non-blocking",
+        )
+        if not lock_acquired:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Chat message processing already running",
+            )
+
+    try:
+        chat_gen = await create_chat_streaming_generator_async(
+            user,
+            config_provider,
+            chat_provider,
+            chat_uuid=chat_uuid,
+            chat_query=chat_message.query,
+            chat_agent_id=chat_agent_id,
+            chat_tools=chat_tools,
+            chat_skills_enabled=chat_skills_enabled,
+            session=session,
+        )
+    except Exception:
+        if mutex:
+            mutex.release()
+        raise
+
+    async def locked_chat_gen():
+        try:
+            async for chunk in chat_gen():
+                yield chunk
+        finally:
+            if mutex:
+                mutex.release()
+
     return responses.StreamingResponse(
-        chat_gen(),
+        locked_chat_gen(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

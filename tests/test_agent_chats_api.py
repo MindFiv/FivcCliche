@@ -2,9 +2,10 @@
 
 import os
 import tempfile
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -1106,6 +1107,304 @@ class TestMessageDeleteAuthorization:
 
 class TestCreateChatMessages:
     """Test cases for create_chat_messages_async endpoint."""
+
+    @staticmethod
+    def _mock_user(uuid: str = "user-123", is_superuser: bool = False):
+        user = MagicMock()
+        user.uuid = uuid
+        user.is_superuser = is_superuser
+        return user
+
+    @staticmethod
+    def _mock_chat(chat_uuid: str = "chat-123", user_uuid: str | None = "user-123"):
+
+        return UserChat(
+            uuid=chat_uuid,
+            user_uuid=user_uuid,
+            agent_id="test-agent",
+            context=None,
+        )
+
+    @staticmethod
+    async def _consume_response(response):
+        return [chunk async for chunk in response.body_iterator]
+
+    @pytest.mark.asyncio
+    async def test_create_message_does_not_access_mutex_when_chat_not_found(self):
+        """Ownership validation happens before optional mutex acquisition."""
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_async
+        from fivccliche.modules.agent_chats.schemas import UserChatMessageCreateSchema
+
+        mock_mutex_site = MagicMock()
+
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.create_chat_streaming_generator_async",
+                new_callable=AsyncMock,
+            ) as mock_create_streaming,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await create_chat_messages_async(
+                    chat_uuid="missing-chat",
+                    chat_message=UserChatMessageCreateSchema(query="Hello"),
+                    user=self._mock_user(),
+                    session=AsyncMock(),
+                    config_provider=MagicMock(),
+                    chat_provider=MagicMock(),
+                    mutex_site=mock_mutex_site,
+                )
+
+        assert exc_info.value.status_code == 404
+        mock_mutex_site.get_mutex.assert_not_called()
+        mock_create_streaming.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_message_falls_back_without_mutex_site(self):
+        """Missing mutex site preserves the existing unlocked streaming flow."""
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_async
+        from fivccliche.modules.agent_chats.schemas import UserChatMessageCreateSchema
+
+        async def mock_generator():
+            yield b"data: done\n\n"
+
+        chat_provider = MagicMock()
+        chat_provider.get_chat_context.return_value = None
+
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._mock_chat(),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.create_chat_streaming_generator_async",
+                new_callable=AsyncMock,
+                return_value=lambda: mock_generator(),
+            ) as mock_create_streaming,
+        ):
+            response = await create_chat_messages_async(
+                chat_uuid="chat-123",
+                chat_message=UserChatMessageCreateSchema(query="Hello"),
+                user=self._mock_user(),
+                session=AsyncMock(),
+                config_provider=MagicMock(),
+                chat_provider=chat_provider,
+                mutex_site=None,
+            )
+            chunks = await self._consume_response(response)
+
+        assert chunks == [b"data: done\n\n"]
+        mock_create_streaming.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_message_falls_back_when_mutex_unavailable(self):
+        """Missing concrete mutex preserves the existing unlocked streaming flow."""
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_async
+        from fivccliche.modules.agent_chats.schemas import UserChatMessageCreateSchema
+
+        async def mock_generator():
+            yield b"data: done\n\n"
+
+        mock_mutex_site = MagicMock()
+        mock_mutex_site.get_mutex.return_value = None
+        chat_provider = MagicMock()
+        chat_provider.get_chat_context.return_value = None
+
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._mock_chat(),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.create_chat_streaming_generator_async",
+                new_callable=AsyncMock,
+                return_value=lambda: mock_generator(),
+            ) as mock_create_streaming,
+        ):
+            response = await create_chat_messages_async(
+                chat_uuid="chat-123",
+                chat_message=UserChatMessageCreateSchema(query="Hello"),
+                user=self._mock_user(),
+                session=AsyncMock(),
+                config_provider=MagicMock(),
+                chat_provider=chat_provider,
+                mutex_site=mock_mutex_site,
+            )
+            chunks = await self._consume_response(response)
+
+        assert chunks == [b"data: done\n\n"]
+        mock_mutex_site.get_mutex.assert_called_once_with("chats:message:chat-123")
+        mock_create_streaming.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_message_returns_409_when_chat_mutex_locked(self):
+        """An existing chat message lock prevents duplicate agent runs."""
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_async
+        from fivccliche.modules.agent_chats.schemas import UserChatMessageCreateSchema
+
+        mock_mutex = MagicMock()
+        mock_mutex.acquire.return_value = False
+        mock_mutex_site = MagicMock()
+        mock_mutex_site.get_mutex.return_value = mock_mutex
+        chat_provider = MagicMock()
+        chat_provider.get_chat_context.return_value = None
+
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._mock_chat(),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.create_chat_streaming_generator_async",
+                new_callable=AsyncMock,
+            ) as mock_create_streaming,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await create_chat_messages_async(
+                    chat_uuid="chat-123",
+                    chat_message=UserChatMessageCreateSchema(query="Hello"),
+                    user=self._mock_user(),
+                    session=AsyncMock(),
+                    config_provider=MagicMock(),
+                    chat_provider=chat_provider,
+                    mutex_site=mock_mutex_site,
+                )
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == "Chat message processing already running"
+        mock_mutex.acquire.assert_called_once()
+        mock_mutex.release.assert_not_called()
+        mock_create_streaming.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_message_releases_mutex_after_stream_finishes(self):
+        """The chat lock is released after the SSE stream finishes."""
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_async
+        from fivccliche.modules.agent_chats.schemas import UserChatMessageCreateSchema
+
+        async def mock_generator():
+            yield b"data: done\n\n"
+
+        mock_mutex = MagicMock()
+        mock_mutex.acquire.return_value = True
+        mock_mutex_site = MagicMock()
+        mock_mutex_site.get_mutex.return_value = mock_mutex
+        chat_provider = MagicMock()
+        chat_provider.get_chat_context.return_value = None
+
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._mock_chat(),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.create_chat_streaming_generator_async",
+                new_callable=AsyncMock,
+                return_value=lambda: mock_generator(),
+            ),
+        ):
+            response = await create_chat_messages_async(
+                chat_uuid="chat-123",
+                chat_message=UserChatMessageCreateSchema(query="Hello"),
+                user=self._mock_user(),
+                session=AsyncMock(),
+                config_provider=MagicMock(),
+                chat_provider=chat_provider,
+                mutex_site=mock_mutex_site,
+            )
+            chunks = await self._consume_response(response)
+
+        assert chunks == [b"data: done\n\n"]
+        mock_mutex.release.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_message_releases_mutex_when_stream_raises(self):
+        """The chat lock is released when the SSE stream raises."""
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_async
+        from fivccliche.modules.agent_chats.schemas import UserChatMessageCreateSchema
+
+        async def mock_generator():
+            yield b"data: start\n\n"
+            raise RuntimeError("stream failed")
+
+        mock_mutex = MagicMock()
+        mock_mutex.acquire.return_value = True
+        mock_mutex_site = MagicMock()
+        mock_mutex_site.get_mutex.return_value = mock_mutex
+        chat_provider = MagicMock()
+        chat_provider.get_chat_context.return_value = None
+
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._mock_chat(),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.create_chat_streaming_generator_async",
+                new_callable=AsyncMock,
+                return_value=lambda: mock_generator(),
+            ),
+        ):
+            response = await create_chat_messages_async(
+                chat_uuid="chat-123",
+                chat_message=UserChatMessageCreateSchema(query="Hello"),
+                user=self._mock_user(),
+                session=AsyncMock(),
+                config_provider=MagicMock(),
+                chat_provider=chat_provider,
+                mutex_site=mock_mutex_site,
+            )
+            with pytest.raises(RuntimeError, match="stream failed"):
+                await self._consume_response(response)
+
+        mock_mutex.release.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_message_releases_mutex_when_streaming_generator_creation_fails(self):
+        """The chat lock is released if agent streaming setup fails."""
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_async
+        from fivccliche.modules.agent_chats.schemas import UserChatMessageCreateSchema
+
+        mock_mutex = MagicMock()
+        mock_mutex.acquire.return_value = True
+        mock_mutex_site = MagicMock()
+        mock_mutex_site.get_mutex.return_value = mock_mutex
+        chat_provider = MagicMock()
+        chat_provider.get_chat_context.return_value = None
+
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._mock_chat(),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.create_chat_streaming_generator_async",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("setup failed"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="setup failed"):
+                await create_chat_messages_async(
+                    chat_uuid="chat-123",
+                    chat_message=UserChatMessageCreateSchema(query="Hello"),
+                    user=self._mock_user(),
+                    session=AsyncMock(),
+                    config_provider=MagicMock(),
+                    chat_provider=chat_provider,
+                    mutex_site=mock_mutex_site,
+                )
+
+        mock_mutex.release.assert_called_once()
 
     def test_create_message_unauthorized(self, client: TestClient):
         """Test creating message without authentication."""

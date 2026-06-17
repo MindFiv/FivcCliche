@@ -1,10 +1,12 @@
-from typing import cast
 from collections.abc import AsyncGenerator
+from datetime import timedelta
+from typing import cast
 
 from fastapi import status, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fivcglue import query_component, IComponentSite, LazyValue
 from fivcglue.interfaces import configs
+from fivcglue.interfaces import mutexes
 
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
@@ -20,9 +22,14 @@ default_config: LazyValue[configs.IConfig] = LazyValue(
     lambda: query_component(cast(IComponentSite, service_site), configs.IConfig)
 )
 
+default_mutex_site: LazyValue[mutexes.IMutexSite] = LazyValue(
+    lambda: query_component(cast(IComponentSite, service_site), mutexes.IMutexSite)
+)
+
 default_db: LazyValue[IDatabase] = LazyValue(
     lambda: query_component(cast(IComponentSite, service_site), IDatabase)
 )
+
 """Lazy-loaded database service instance. Call default_db() to get the IDatabase instance."""
 
 default_auth: LazyValue[IUserAuthenticator] = LazyValue(
@@ -36,6 +43,56 @@ default_config_provider: LazyValue[IUserConfigProvider] = LazyValue(
 default_chat_provider: LazyValue[IUserChatProvider] = LazyValue(
     lambda: query_component(cast(IComponentSite, service_site), IUserChatProvider)
 )
+
+
+class SafeMutex(mutexes.IMutex):
+    """IMutex wrapper that makes release idempotent per wrapper instance."""
+
+    def __init__(self, mutex: mutexes.IMutex) -> None:
+        self._mutex = mutex
+        self._acquired = False
+        self._released = False
+
+    def acquire(
+        self,
+        expire: timedelta,
+        method: str = "blocking",
+    ) -> bool:
+        acquired = self._mutex.acquire(expire=expire, method=method)
+        if acquired:
+            self._acquired = True
+            self._released = False
+        return acquired
+
+    def release(self) -> bool:
+        if not self._acquired:
+            return False
+        if self._released:
+            return True
+
+        released = self._mutex.release()
+        if released:
+            self._released = True
+        return released
+
+
+class SafeMutexSite(mutexes.IMutexSite):
+    """IMutexSite wrapper that returns SafeMutex instances."""
+
+    def __init__(self, mutex_site: mutexes.IMutexSite) -> None:
+        self._mutex_site = mutex_site
+
+    def get_mutex(self, mtx_name: str) -> mutexes.IMutex | None:
+        mutex = self._mutex_site.get_mutex(mtx_name)
+        if mutex is None:
+            return None
+        return SafeMutex(mutex)
+
+
+async def get_mutex_site_async() -> mutexes.IMutexSite | None:
+    """Get the distributed mutex site for dependency injection."""
+    mutex_site = default_mutex_site()
+    return SafeMutexSite(mutex_site) if mutex_site else None
 
 
 async def get_db_session_async() -> AsyncGenerator[AsyncSession, None]:
