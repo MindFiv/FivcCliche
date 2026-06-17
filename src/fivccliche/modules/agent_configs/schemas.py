@@ -57,6 +57,7 @@ class UserToolSchema(ToolConfig):
     """Schema for reading tool config data (response)."""
 
     uuid: str = Field(default=None, description="Tool config UUID (globally unique)")
+    description: str | None = Field(default=None, description="Tool description")
     is_active: bool = Field(default=True, description="Whether the tool is active")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
     updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")

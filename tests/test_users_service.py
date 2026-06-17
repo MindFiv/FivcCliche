@@ -102,6 +102,32 @@ class TestUserService:
         assert user.is_active is True
         assert user.is_superuser is False
 
+    async def test_create_user_with_preferences(self, session: AsyncSession):
+        """Test creating a user with JSON preferences."""
+        preferences = {"theme": "dark", "notifications": {"email": True}}
+
+        user = await methods.create_user_async(
+            session,
+            username="prefuser",
+            email="pref@example.com",
+            password="password123",
+            preferences=preferences,
+        )
+
+        assert user.preferences == preferences
+
+    async def test_create_user_with_full_name(self, session: AsyncSession):
+        """Test creating a user with a full name."""
+        user = await methods.create_user_async(
+            session,
+            username="nameuser",
+            email="name@example.com",
+            password="password123",
+            full_name="Name User",
+        )
+
+        assert user.full_name == "Name User"
+
     async def test_get_user_by_uuid(self, session: AsyncSession):
         """Test getting a user by ID."""
         created_user = await methods.create_user_async(
@@ -180,6 +206,54 @@ class TestUserService:
         updated_user = await methods.update_user_async(session, user, username="newusername")
 
         assert updated_user.username == "newusername"
+
+    async def test_update_user_replaces_preferences(self, session: AsyncSession):
+        """Test updating a user's JSON preferences replaces the previous object."""
+        user = await methods.create_user_async(
+            session,
+            username="prefuser",
+            email="pref@example.com",
+            password="password123",
+            preferences={"theme": "light", "locale": "en-US"},
+        )
+
+        updated_user = await methods.update_user_async(
+            session,
+            user,
+            preferences={"theme": "dark"},
+        )
+
+        assert updated_user.preferences == {"theme": "dark"}
+
+    async def test_update_user_clears_preferences(self, session: AsyncSession):
+        """Test updating a user's JSON preferences to None clears them."""
+        user = await methods.create_user_async(
+            session,
+            username="prefuser",
+            email="pref@example.com",
+            password="password123",
+            preferences={"theme": "light"},
+        )
+
+        updated_user = await methods.update_user_async(session, user, preferences=None)
+
+        assert updated_user.preferences is None
+
+    async def test_update_user_replaces_and_clears_full_name(self, session: AsyncSession):
+        """Test updating a user's full name can replace and clear it."""
+        user = await methods.create_user_async(
+            session,
+            username="nameuser",
+            email="name@example.com",
+            password="password123",
+            full_name="Original Name",
+        )
+
+        updated_user = await methods.update_user_async(session, user, full_name="New Name")
+        assert updated_user.full_name == "New Name"
+
+        cleared_user = await methods.update_user_async(session, updated_user, full_name=None)
+        assert cleared_user.full_name is None
 
     async def test_delete_user(self, session: AsyncSession):
         """Test deleting a user."""
@@ -524,6 +598,55 @@ class TestUserAuthenticatorCaching:
         assert cached_value["uuid"] == user.uuid
         assert cached_value["username"] == user.username
         assert cached_value["email"] == user.email
+
+    async def test_cache_set_preserves_preferences(
+        self, authenticator, mock_cache, session: AsyncSession
+    ):
+        """Test that cached user data preserves JSON preferences."""
+        preferences = {"theme": "dark", "shortcuts": ["search", "compose"]}
+        user = await methods.create_user_async(
+            session,
+            username="prefcache",
+            email="prefcache@example.com",
+            password="password123",
+            preferences=preferences,
+        )
+
+        credential = authenticator._create_access_token(user.uuid)
+        mock_cache.get_value.return_value = None
+
+        result = await authenticator.verify_credential_async(
+            credential.access_token,
+            session=session,
+        )
+
+        assert result is not None
+        cached_value = json.loads(mock_cache.set_value.call_args[0][1].decode("utf-8"))
+        assert cached_value["preferences"] == preferences
+
+    async def test_cache_set_preserves_full_name(
+        self, authenticator, mock_cache, session: AsyncSession
+    ):
+        """Test that cached user data preserves full name."""
+        user = await methods.create_user_async(
+            session,
+            username="namecache",
+            email="namecache@example.com",
+            password="password123",
+            full_name="Name Cache",
+        )
+
+        credential = authenticator._create_access_token(user.uuid)
+        mock_cache.get_value.return_value = None
+
+        result = await authenticator.verify_credential_async(
+            credential.access_token,
+            session=session,
+        )
+
+        assert result is not None
+        cached_value = json.loads(mock_cache.set_value.call_args[0][1].decode("utf-8"))
+        assert cached_value["full_name"] == "Name Cache"
 
     async def test_cache_expiration_set_correctly(
         self, authenticator, mock_cache, session: AsyncSession

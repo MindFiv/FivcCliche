@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from pydantic_strict_partial import create_partial_model
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -32,6 +33,12 @@ from fivccliche.modules.agent_configs.models import (
     UserQuestion,
 )
 from fivccliche.modules.agent_configs import schemas
+
+PartialUserEmbeddingSchema = create_partial_model(schemas.UserEmbeddingSchema)
+PartialUserAgentSchema = create_partial_model(schemas.UserAgentSchema)
+PartialUserToolSchema = create_partial_model(schemas.UserToolSchema)
+PartialUserSkillSchema = create_partial_model(schemas.UserSkillSchema)
+PartialUserQuestionSchema = create_partial_model(schemas.UserQuestionSchema)
 
 
 @pytest.fixture
@@ -372,6 +379,28 @@ class TestEmbeddingConfigService:
 
         assert updated.dimension == 3072
         assert updated.model == "text-embedding-3-small"
+
+    async def test_update_embedding_config_clears_nullable_fields(self, session: AsyncSession):
+        """Test explicit None clears nullable embedding fields."""
+        config_create = EmbeddingConfig(
+            id="embedding-clear-nullable",
+            description="Original description",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            base_url="https://example.com",
+        )
+        config = await methods.create_embedding_config_async(session, "user123", config_create)
+
+        config_update = PartialUserEmbeddingSchema(
+            id="embedding-clear-nullable",
+            description=None,
+            base_url=None,
+        )
+        updated = await methods.update_embedding_config_async(session, config, config_update)
+
+        assert updated.description is None
+        assert updated.base_url is None
 
     async def test_delete_embedding_config(self, session: AsyncSession):
         """Test deleting an embedding config."""
@@ -739,6 +768,34 @@ class TestAgentConfigService:
             "type": "object",
             "properties": {"result": {"type": "integer"}},
         }
+
+    async def test_update_agent_config_clears_nullable_fields(self, session: AsyncSession):
+        """Test explicit None clears nullable agent fields."""
+        config_create = AgentConfig(
+            id="agent-clear-nullable",
+            model_id="model123",
+            tool_ids=["tool-a"],
+            skill_ids=["skill-a"],
+            system_prompt="Original prompt",
+            response_format={"type": "object"},
+        )
+        config = await methods.create_agent_config_async(session, "user123", config_create)
+
+        config_update = PartialUserAgentSchema(
+            id="agent-clear-nullable",
+            description=None,
+            tool_ids=None,
+            skill_ids=None,
+            system_prompt=None,
+            response_format=None,
+        )
+        updated = await methods.update_agent_config_async(session, config, config_update)
+
+        assert updated.description is None
+        assert updated.tools_ids is None
+        assert updated.skill_ids is None
+        assert updated.system_prompt is None
+        assert updated.response_format is None
 
     async def test_delete_agent_config(self, session: AsyncSession):
         """Test deleting an agent config."""
@@ -1459,6 +1516,37 @@ class TestToolConfigMethods:
 
         assert updated2.is_active is True
 
+    async def test_update_tool_config_clears_nullable_fields(self, session: AsyncSession):
+        """Test explicit None clears nullable tool fields."""
+        config_create = ToolConfig(
+            id="tool-clear-nullable",
+            description="Original description",
+            transport="stdio",
+            command="python",
+            args=["script.py"],
+            env={"DEBUG": "1"},
+            functions=["my_fn"],
+        )
+        created = await methods.create_tool_config_async(session, "user123", config_create)
+
+        config_update = PartialUserToolSchema(
+            id="tool-clear-nullable",
+            description=None,
+            command=None,
+            args=None,
+            env=None,
+            url=None,
+            functions=None,
+        )
+        updated = await methods.update_tool_config_async(session, created, config_update)
+
+        assert updated.description is None
+        assert updated.command is None
+        assert updated.args is None
+        assert updated.env is None
+        assert updated.url is None
+        assert updated.functions is None
+
     async def test_delete_tool_config(self, session: AsyncSession):
         """Test deleting a tool config."""
         config_create = ToolConfig(
@@ -1706,6 +1794,29 @@ class TestToolConfigRepository:
             await repo.update_tool_config_async(config)
 
 
+class TestSkillConfigMethods:
+    """Test cases for skill config methods."""
+
+    async def test_update_skill_config_clears_resources(self, session: AsyncSession):
+        """Test explicit None clears nullable skill resources."""
+        config_create = schemas.UserSkillSchema(
+            id="skill-clear-resources",
+            description="Skill description",
+            instructions="Original instructions",
+            tool_ids=["tool-a"],
+            resources={"notes": "original"},
+        )
+        created = await methods.create_skill_config_async(session, "user123", config_create)
+
+        config_update = PartialUserSkillSchema(
+            id="skill-clear-resources",
+            resources=None,
+        )
+        updated = await methods.update_skill_config_async(session, created, config_update)
+
+        assert updated.resources is None
+
+
 # ============================================================================
 # Question Config Tests
 # ============================================================================
@@ -1942,6 +2053,24 @@ class TestQuestionConfigMethods:
         assert updated.question == "Updated question?"
         assert updated.answer == "Original answer."
         assert updated.is_active is True
+
+    async def test_update_question_clears_answer(self, session: AsyncSession):
+        """Test explicit None clears a question answer."""
+        config_create = schemas.UserQuestionSchema(
+            id="question-clear-answer",
+            question="Original question?",
+            answer="Original answer.",
+            is_active=True,
+        )
+        created = await methods.create_question_async(session, "user123", config_create)
+
+        config_update = PartialUserQuestionSchema(
+            id="question-clear-answer",
+            answer=None,
+        )
+        updated = await methods.update_question_async(session, created, config_update)
+
+        assert updated.answer is None
 
     async def test_delete_question(self, session: AsyncSession):
         """Test deleting a question config."""

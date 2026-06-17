@@ -56,8 +56,10 @@ class IUserAuthenticator(IComponent):
         self,
         username: str,
         email: str | None = None,
+        full_name: str | None = None,
         password: str | None = None,
         is_superuser: bool = False,
+        preferences: dict | None = None,
         session: AsyncSession | None = None,
         **kwargs,  # ignore additional arguments
     ) -> IUser | None:

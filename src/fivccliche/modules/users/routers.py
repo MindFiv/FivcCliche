@@ -53,7 +53,9 @@ async def create_user_async(
         session,
         username=user_create.username,
         email=str(user_create.email) if user_create.email else None,
+        full_name=user_create.full_name,
         password=user_create.password,
+        preferences=user_create.preferences,
     )
     return user
 
@@ -106,6 +108,36 @@ async def get_self_async(
             detail="User not found",
         )
     return user
+
+
+@router.patch(
+    "/self/",
+    summary="Update the authenticated user's profile.",
+    response_model=schemas.UserRead,
+)
+async def update_self_async(
+    data: schemas.UserSelfUpdate,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> models.User:
+    """Update the current user's profile."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    db_user = await methods.get_user_async(session, user_uuid=user.uuid)
+    if not db_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    return await methods.update_user_async(
+        session,
+        db_user,
+        full_name=data.full_name,
+        preferences=data.preferences,
+    )
 
 
 @router.patch(

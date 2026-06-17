@@ -12,8 +12,8 @@ src/fivccliche/
     └── routers.py                # API endpoints
 
 tests/
-├── test_users_service.py         # Unit tests (14 tests)
-└── test_users_api.py             # Integration tests (12 tests)
+├── test_users_service.py         # Unit tests
+└── test_users_api.py             # Integration tests
 ```
 
 ## API Endpoints
@@ -23,6 +23,7 @@ tests/
 | POST | `/users/` | Create new user | None |
 | GET | `/users/` | List users (paginated) | None |
 | GET | `/users/self` | Get authenticated user's profile | Bearer Token |
+| PATCH | `/users/self` | Replace authenticated user's profile fields | Bearer Token |
 | GET | `/users/{user_id}` | Get user by ID | Admin |
 | DELETE | `/users/{user_id}` | Delete user | Admin |
 | POST | `/users/login` | Authenticate user and return JWT token | None |
@@ -54,6 +55,8 @@ UserService.authenticate_user(session, username, password)
 - `id` (str, PK): Unique identifier (UUID string)
 - `username` (str, unique): User login name
 - `email` (str, unique, nullable): User email (optional)
+- `full_name` (str, nullable): User display/profile name
+- `preferences` (JSON, nullable): Arbitrary user preferences
 - `hashed_password` (str): Argon2 hash
 - `created_at` (datetime): Creation timestamp
 - `signed_in_at` (datetime, nullable): Last login
@@ -68,16 +71,30 @@ UserService.authenticate_user(session, username, password)
 {
   "username": "john_doe",
   "email": "john@example.com",
-  "password": "SecurePass123!"
+  "full_name": "John Doe",
+  "password": "SecurePass123!",
+  "preferences": {
+    "theme": "dark",
+    "notifications": {
+      "email": true
+    }
+  }
 }
 ```
 
 **Response (201):**
 ```json
 {
-  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "uuid": "550e8400-e29b-41d4-a716-446655440000",
   "username": "john_doe",
   "email": "john@example.com",
+  "full_name": "John Doe",
+  "preferences": {
+    "theme": "dark",
+    "notifications": {
+      "email": true
+    }
+  },
   "created_at": "2024-01-15T10:30:00",
   "signed_in_at": null,
   "is_active": true,
@@ -97,9 +114,11 @@ UserService.authenticate_user(session, username, password)
 **Response (201):**
 ```json
 {
-  "id": "660f9500-f39c-52e5-b827-557766551111",
+  "uuid": "660f9500-f39c-52e5-b827-557766551111",
   "username": "jane_doe",
   "email": null,
+  "full_name": null,
+  "preferences": null,
   "created_at": "2024-01-15T10:35:00",
   "signed_in_at": null,
   "is_active": true,
@@ -120,9 +139,41 @@ UserService.authenticate_user(session, username, password)
 ```json
 {
   "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "bearer"
+  "expires_in": 43200
 }
 ```
+
+### Replace Current User Profile Fields
+**Request:**
+```json
+{
+  "full_name": "John Q. Doe",
+  "preferences": {
+    "theme": "light",
+    "locale": "en-US"
+  }
+}
+```
+
+**Response (200):**
+```json
+{
+  "uuid": "550e8400-e29b-41d4-a716-446655440000",
+  "username": "john_doe",
+  "email": "john@example.com",
+  "full_name": "John Q. Doe",
+  "preferences": {
+    "theme": "light",
+    "locale": "en-US"
+  },
+  "created_at": "2024-01-15T10:30:00",
+  "signed_in_at": "2024-01-15T11:00:00",
+  "is_active": true,
+  "is_superuser": false
+}
+```
+
+`full_name` and `preferences` are both required in this request. Send `"full_name": null` or `"preferences": null` to clear the stored value.
 
 ## Error Responses
 
@@ -161,8 +212,9 @@ export DATABASE_URL="postgresql://user:pass@localhost/dbname"
 ## Security Notes
 - Passwords hashed with Argon2 (resistant to GPU attacks)
 - No password in API responses
+- `full_name` and preferences are returned only through user response schemas
+- Preferences are arbitrary JSON data
 - Email validation enforced when provided
 - Email is optional (users can be created without email)
 - Unique constraints on username/email
 - Proper HTTP status codes for errors
-

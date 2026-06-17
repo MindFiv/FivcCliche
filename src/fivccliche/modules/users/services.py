@@ -92,8 +92,10 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         self,
         username: str,
         email: str | None = None,
+        full_name: str | None = None,
         password: str | None = None,
         is_superuser: bool = False,
+        preferences: dict | None = None,
         session: AsyncSession | None = None,
         **kwargs,
     ) -> IUser | None:
@@ -103,8 +105,10 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 session,
                 username=username,
                 email=email,
+                full_name=full_name,
                 password=password,
                 is_superuser=is_superuser,
+                preferences=preferences,
             )
             return UserImpl(user) if user else None
 
@@ -113,8 +117,10 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 session,
                 username=username,
                 email=email,
+                full_name=full_name,
                 password=password,
                 is_superuser=is_superuser,
+                preferences=preferences,
             )
             return UserImpl(user) if user else None
 

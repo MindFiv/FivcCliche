@@ -6,11 +6,12 @@ The users module has been fully implemented with comprehensive functionality for
 ## ✅ Completed Components
 
 ### 1. **Schemas** (`src/fivccliche/modules/users/schemas.py`)
-- `UserBase`: Base schema with username and email
-- `UserCreate`: Schema for user registration with password
+- `UserBase`: Base schema with username, email, full name, and preferences
+- `UserCreate`: Schema for user registration with password plus optional full name and preferences
 - `UserUpdate`: Schema for updating user information
+- `UserSelfUpdate`: Schema for replacing the authenticated user's full name and preferences
 - `UserLogin`: Schema for authentication
-- `UserRead`: Response schema for user data (excludes sensitive fields)
+- `UserRead`: Response schema for user profile data and preferences (excludes sensitive fields)
 
 ### 2. **Service Layer** (`src/fivccliche/modules/users/services.py`)
 - Password hashing using Argon2 (secure, no length limits)
@@ -18,6 +19,8 @@ The users module has been fully implemented with comprehensive functionality for
 - User CRUD operations (Create, Read, Update, Delete)
 - User lookup by UUID, username, or email
 - User authentication
+- User full name persistence as nullable profile data
+- User preferences persistence as nullable JSON
 - Pagination support for listing users
 
 ### 3. **Database Configuration** (`src/fivccliche/database.py`)
@@ -30,6 +33,7 @@ The users module has been fully implemented with comprehensive functionality for
 - `POST /users/` - Create new user
 - `GET /users/` - List users with pagination (returns PaginatedResponse with total and results)
 - `GET /users/self` - Get authenticated user's own profile
+- `PATCH /users/self` - Replace authenticated user's full name and preferences
 - `GET /users/{user_id}` - Get user by ID (admin only)
 - `DELETE /users/{user_id}` - Delete user (admin only)
 - `POST /users/login` - Authenticate user and return JWT token
@@ -40,7 +44,7 @@ The users module has been fully implemented with comprehensive functionality for
 - Tests for all CRUD operations
 - Tests for user authentication
 - Tests for pagination
-- **Status**: ✅ All 14 tests passing
+- Coverage includes full name and preferences creation, update, clearing, and cache serialization
 
 ### 6. **Integration Tests** (`tests/test_users_api.py`)
 - 12 comprehensive integration tests for API endpoints
@@ -48,7 +52,7 @@ The users module has been fully implemented with comprehensive functionality for
 - Tests for duplicate username/email validation
 - Tests for authentication and error handling
 - Tests for pagination
-- **Status**: ✅ All 12 tests passing
+- Coverage includes admin-created full name/preferences responses and authenticated self updates
 
 ## 📦 Dependencies Added
 - `passlib[argon2]>=1.7.4` - Password hashing with Argon2
@@ -81,7 +85,7 @@ Follows the project's modular architecture:
 ```bash
 curl -X POST http://localhost:8000/users/ \
   -H "Content-Type: application/json" \
-  -d '{"username":"john","email":"john@example.com","password":"secure123"}'
+  -d '{"username":"john","email":"john@example.com","full_name":"John Doe","password":"secure123","preferences":{"theme":"dark"}}'
 ```
 
 ### Login
@@ -95,6 +99,16 @@ curl -X POST http://localhost:8000/users/login \
 ```bash
 curl http://localhost:8000/users/?skip=0&limit=10
 ```
+
+### Replace Current User Profile Fields
+```bash
+curl -X PATCH http://localhost:8000/users/self/ \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"full_name":"John Q. Doe","preferences":{"theme":"light","locale":"en-US"}}'
+```
+
+Send `null` for `full_name` or `preferences` to clear the stored value; omitted fields are not supported by this endpoint.
 
 ## 📝 Next Steps
 1. Add JWT token-based authentication
@@ -111,4 +125,3 @@ curl http://localhost:8000/users/?skip=0&limit=10
 - Pydantic validation
 - Full test coverage
 - Clean, maintainable code
-

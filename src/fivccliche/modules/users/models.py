@@ -3,7 +3,7 @@ from uuid import uuid1
 
 from passlib.context import CryptContext
 from sqlalchemy import DateTime
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, JSON, SQLModel
 from pydantic import EmailStr
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
@@ -25,6 +25,11 @@ class User(SQLModel, table=True):
         default=None, max_length=255, index=True, unique=True, description="User email."
     )
     full_name: str | None = Field(default=None, max_length=1024, description="User full name.")
+    preferences: dict | None = Field(
+        default=None,
+        sa_type=JSON,
+        description="User preferences.",
+    )
     hashed_password: str | None = Field(default=None, max_length=255, description="User password.")
     created_at: datetime = Field(
         sa_type=DateTime(timezone=True),

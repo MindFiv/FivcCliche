@@ -7,6 +7,8 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from fivccliche.utils import UNSET, UnsetType
+
 from . import models
 
 
@@ -14,8 +16,10 @@ async def create_user_async(
     session: AsyncSession,
     username: str,
     email: str | None = None,
+    full_name: str | None = None,
     password: str | None = None,
     is_superuser: bool = False,
+    preferences: dict | None = None,
 ) -> models.User:
     """Create a new user.
 
@@ -23,8 +27,10 @@ async def create_user_async(
         session: Database session
         username: Username for the new user
         email: Email address for the new user (optional)
+        full_name: Full name for the new user (optional)
         password: Password for the new user (optional)
         is_superuser: Whether the user is a superuser (default: False)
+        preferences: JSON preferences for the new user (optional)
 
     Returns:
         The created User object
@@ -33,6 +39,8 @@ async def create_user_async(
         uuid=str(uuid.uuid4()),
         username=username,
         email=email,
+        full_name=full_name,
+        preferences=preferences,
         created_at=datetime.now(timezone.utc),
         is_active=True,
         is_superuser=is_superuser,
@@ -127,9 +135,11 @@ async def update_user_async(
     user: models.User,
     username: str | None = None,
     email: str | None = None,
+    full_name: str | None | UnsetType = UNSET,
     password: str | None = None,
     is_active: bool | None = None,
     is_superuser: bool | None = None,
+    preferences: dict | None | UnsetType = UNSET,
 ) -> models.User:
     """Update a user.
 
@@ -138,9 +148,11 @@ async def update_user_async(
         user: User object to update
         username: New username (optional)
         email: New email address (optional)
+        full_name: New full name; pass None to clear it
         password: New password (optional)
         is_active: New active status (optional)
         is_superuser: New superuser status (optional)
+        preferences: New JSON preferences; pass None to clear them
 
     Returns:
         The updated User object
@@ -149,12 +161,16 @@ async def update_user_async(
         user.username = username
     if email is not None:
         user.email = email
+    if full_name is not UNSET:
+        user.full_name = full_name
     if password is not None:
         user.change_password(password)
     if is_active is not None:
         user.is_active = is_active
     if is_superuser is not None:
         user.is_superuser = is_superuser
+    if preferences is not UNSET:
+        user.preferences = preferences
     session.add(user)
     await session.commit()
     await session.refresh(user)

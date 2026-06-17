@@ -19,6 +19,8 @@ class UserBase(BaseModel):
 
     username: str = Field(..., min_length=3, max_length=255, description="Username")
     email: EmailStr | None = Field(None, description="User email address")
+    full_name: str | None = Field(None, max_length=1024, description="User full name")
+    preferences: dict | None = Field(None, description="User preferences")
 
 
 class UserCreate(UserBase):
@@ -40,6 +42,13 @@ class UserStatusUpdate(BaseModel):
     """Schema for updating user active status."""
 
     is_active: bool = Field(..., description="User active status")
+
+
+class UserSelfUpdate(BaseModel):
+    """Schema for updating the authenticated user's profile."""
+
+    full_name: str | None = Field(..., max_length=1024, description="User full name")
+    preferences: dict | None = Field(..., description="User preferences")
 
 
 class UserRead(UserBase):

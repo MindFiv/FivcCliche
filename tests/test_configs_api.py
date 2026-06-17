@@ -337,6 +337,36 @@ class TestEmbeddingConfigAPI:
         data = response.json()
         assert data["dimension"] == 3072
 
+    def test_update_embedding_config_clears_base_url(self, client: TestClient, auth_token: str):
+        """Test PATCH with explicit null clears nullable embedding base_url."""
+        create_response = client.post(
+            "/configs/embeddings/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "embedding-clear-base-url",
+                "description": "Embedding with base URL",
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key": "test-key",
+                "base_url": "https://api.example.com",
+                "dimension": 1536,
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.patch(
+            f"/configs/embeddings/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"id": "embedding-clear-base-url", "base_url": None},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["base_url"] is None
+        assert data["description"] == "Embedding with base URL"
+        assert data["dimension"] == 1536
+
     def test_delete_embedding_config(self, client: TestClient, auth_token: str):
         """Test deleting an embedding config."""
         # Create a config
@@ -637,6 +667,39 @@ class TestAgentConfigAPI:
             "type": "object",
             "properties": {"result": {"type": "integer"}},
         }
+
+    def test_update_agent_config_clears_nullable_fields(self, client: TestClient, auth_token: str):
+        """Test PATCH with explicit null clears nullable agent fields."""
+        create_response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-clear-nullable-api",
+                "description": "Agent with nullable fields",
+                "model_id": "model123",
+                "system_prompt": "Original prompt",
+                "response_format": {"type": "object"},
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.patch(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-clear-nullable-api",
+                "system_prompt": None,
+                "response_format": None,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["system_prompt"] is None
+        assert data["response_format"] is None
+        assert data["description"] == "Agent with nullable fields"
+        assert data["model_id"] == "model123"
 
     def test_delete_agent_config(self, client: TestClient, auth_token: str):
         """Test deleting an agent config."""
@@ -1363,6 +1426,42 @@ class TestToolConfigAPI:
         assert update_response.status_code == 200
         assert update_response.json()["functions"] == ["my_fn"]
 
+    def test_update_tool_config_clears_nullable_fields(self, client: TestClient, auth_token: str):
+        """Test PATCH with explicit null clears nullable tool fields."""
+        create_response = client.post(
+            "/configs/tools/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-clear-nullable-api",
+                "description": "Tool",
+                "transport": "stdio",
+                "command": "python",
+                "args": ["script.py"],
+                "env": {"DEBUG": "1"},
+                "functions": ["my_fn"],
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        update_response = client.patch(
+            f"/configs/tools/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "tool-clear-nullable-api",
+                "args": None,
+                "env": None,
+                "functions": None,
+            },
+        )
+
+        assert update_response.status_code == 200
+        data = update_response.json()
+        assert data["args"] is None
+        assert data["env"] is None
+        assert data["functions"] is None
+        assert data["command"] == "python"
+
     def test_create_tool_config_with_function_transport(self, client: TestClient, auth_token: str):
         """Test that transport='function' is accepted when creating a tool config."""
         create_response = client.post(
@@ -1392,6 +1491,37 @@ class TestToolConfigAPI:
         data = create_response.json()
         assert "functions" in data
         assert data["functions"] is None
+
+
+class TestSkillConfigAPI:
+    """Test cases for Skill Config API endpoints."""
+
+    def test_update_skill_config_clears_resources(self, client: TestClient, auth_token: str):
+        """Test PATCH with explicit null clears nullable skill resources."""
+        create_response = client.post(
+            "/configs/skills/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "skill-clear-resources-api",
+                "description": "Skill with resources",
+                "instructions": "Use the attached resources.",
+                "resources": {"notes": "original"},
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.patch(
+            f"/configs/skills/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"id": "skill-clear-resources-api", "resources": None},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["resources"] is None
+        assert data["description"] == "Skill with resources"
+        assert data["instructions"] == "Use the attached resources."
 
 
 class TestQuestionConfigAPI:
@@ -1674,6 +1804,33 @@ class TestQuestionConfigAPI:
         data = response.json()
         assert data["question"] == "Updated partial question?"
         assert data["answer"] == "Original partial answer."
+        assert data["is_active"] is True
+
+    def test_update_question_clears_answer(self, client: TestClient, auth_token: str):
+        """Test PATCH with explicit null clears nullable question answer."""
+        create_response = client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-clear-answer-api",
+                "question": "Original clear answer question?",
+                "answer": "Original answer.",
+                "is_active": True,
+            },
+        )
+        assert create_response.status_code == 201
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.patch(
+            f"/configs/questions/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"id": "question-clear-answer-api", "answer": None},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["answer"] is None
+        assert data["question"] == "Original clear answer question?"
         assert data["is_active"] is True
 
     def test_delete_question(self, client: TestClient, auth_token: str):

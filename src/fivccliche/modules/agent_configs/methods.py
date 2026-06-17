@@ -130,7 +130,8 @@ async def update_embedding_config_async(
     **kwargs,  # ignore additional arguments
 ) -> models.UserEmbedding:
     """Update an embedding config."""
-    if config_update.description is not None:
+    fields_set = getattr(config_update, "model_fields_set", set())
+    if "description" in fields_set:
         config.description = config_update.description
     if config_update.provider is not None:
         config.provider = config_update.provider
@@ -138,7 +139,7 @@ async def update_embedding_config_async(
         config.model = config_update.model
     if config_update.api_key is not None:
         config.api_key = config_update.api_key
-    if config_update.base_url is not None:
+    if "base_url" in fields_set:
         config.base_url = config_update.base_url
     if config_update.dimension is not None:
         config.dimension = config_update.dimension
@@ -279,7 +280,8 @@ async def update_llm_config_async(
     **kwargs,  # ignore additional arguments
 ) -> models.UserLLM:
     """Update an LLM config."""
-    if config_update.description is not None:
+    fields_set = getattr(config_update, "model_fields_set", set())
+    if "description" in fields_set:
         config.description = config_update.description
     if config_update.provider is not None:
         config.provider = config_update.provider
@@ -287,7 +289,7 @@ async def update_llm_config_async(
         config.model = config_update.model
     if config_update.api_key is not None:
         config.api_key = config_update.api_key
-    if config_update.base_url is not None:
+    if "base_url" in fields_set:
         config.base_url = config_update.base_url
     if config_update.temperature is not None:
         config.temperature = config_update.temperature
@@ -430,17 +432,18 @@ async def update_agent_config_async(
     **kwargs,  # ignore additional arguments
 ) -> models.UserAgent:
     """Update an agent config."""
-    if config_update.description is not None:
+    fields_set = getattr(config_update, "model_fields_set", set())
+    if "description" in fields_set:
         config.description = config_update.description
     if config_update.model_id is not None:
         config.model_id = config_update.model_id
-    if config_update.tool_ids is not None:
+    if "tool_ids" in fields_set:
         config.tools_ids = config_update.tool_ids
-    if config_update.skill_ids is not None:
+    if "skill_ids" in fields_set:
         config.skill_ids = config_update.skill_ids
-    if config_update.system_prompt is not None:
+    if "system_prompt" in fields_set:
         config.system_prompt = config_update.system_prompt
-    if config_update.response_format is not None:
+    if "response_format" in fields_set:
         config.response_format = config_update.response_format
     config.updated_at = datetime.now(timezone.utc)
     config.updated_user_uuid = updated_user_uuid
@@ -580,19 +583,20 @@ async def update_tool_config_async(
     **kwargs,  # ignore additional arguments
 ) -> models.UserTool:
     """Update a tool config."""
-    if config_update.description is not None:
+    fields_set = getattr(config_update, "model_fields_set", set())
+    if "description" in fields_set:
         config.description = config_update.description
     if config_update.transport is not None:
         config.transport = config_update.transport
-    if config_update.command is not None:
+    if "command" in fields_set:
         config.command = config_update.command
-    if config_update.args is not None:
+    if "args" in fields_set:
         config.args = config_update.args
-    if config_update.env is not None:
+    if "env" in fields_set:
         config.env = config_update.env
-    if config_update.url is not None:
+    if "url" in fields_set:
         config.url = config_update.url
-    if config_update.functions is not None:
+    if "functions" in fields_set:
         config.functions = config_update.functions
     if hasattr(config_update, "is_active") and config_update.is_active is not None:
         config.is_active = config_update.is_active
@@ -732,13 +736,14 @@ async def update_skill_config_async(
     **kwargs,  # ignore additional arguments
 ) -> models.UserSkill:
     """Update a skill config."""
+    fields_set = getattr(config_update, "model_fields_set", set())
     if config_update.description is not None:
         config.description = config_update.description
-    if config_update.instructions is not None:
+    if "instructions" in fields_set:
         config.instructions = config_update.instructions
-    if config_update.tool_ids is not None:
+    if "tool_ids" in fields_set:
         config.tool_ids = config_update.tool_ids
-    if config_update.resources is not None:
+    if "resources" in fields_set:
         config.resources = config_update.resources
     if hasattr(config_update, "is_active") and config_update.is_active is not None:
         config.is_active = config_update.is_active
@@ -871,7 +876,7 @@ async def update_question_async(
     fields_set = getattr(config_update, "model_fields_set", set())
     if "question" in fields_set and config_update.question is not None:
         config.question = config_update.question
-    if "answer" in fields_set and config_update.answer is not None:
+    if "answer" in fields_set:
         config.answer = config_update.answer
     if "is_active" in fields_set and config_update.is_active is not None:
         config.is_active = config_update.is_active

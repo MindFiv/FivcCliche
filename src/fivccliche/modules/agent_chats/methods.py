@@ -6,6 +6,8 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from fivccliche.utils import UNSET, UnsetType
+
 from . import models, schemas
 
 
@@ -203,22 +205,22 @@ async def update_chat_message_async(
     session: AsyncSession,
     message: models.UserChatMessage,
     status: schemas.AgentRunStatus | None = None,
-    reply: dict | None = None,
-    query: dict | None = None,
-    tool_calls: dict | None = None,
-    completed_at: datetime | None = None,
+    reply: dict | None | UnsetType = UNSET,
+    query: dict | None | UnsetType = UNSET,
+    tool_calls: dict | None | UnsetType = UNSET,
+    completed_at: datetime | None | UnsetType = UNSET,
     **kwargs,  # ignore additional arguments
 ) -> models.UserChatMessage:
     """Update a chat message."""
     if status is not None:
         message.status = status
-    if reply is not None:
+    if reply is not UNSET:
         message.reply = reply
-    if query is not None:
+    if query is not UNSET:
         message.query = query
-    if tool_calls is not None:
+    if tool_calls is not UNSET:
         message.tool_calls = tool_calls
-    if completed_at is not None:
+    if completed_at is not UNSET:
         message.completed_at = completed_at
     session.add(message)
     await session.commit()

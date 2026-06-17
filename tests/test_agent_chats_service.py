@@ -631,6 +631,32 @@ class TestUserChatRepositoryImpl:
         assert updated.status == "completed"
         assert updated.reply is not None
 
+    async def test_update_chat_message_clears_nullable_fields(
+        self, session: AsyncSession, test_chat: UserChat
+    ):
+        """Test explicit None clears nullable chat message fields while omitted fields remain."""
+        message = UserChatMessage(
+            uuid="run-clear-nullable",
+            chat_uuid=test_chat.uuid,
+            status="completed",
+            query={"text": "Hello"},
+            reply={"text": "Hi"},
+            tool_calls={"0": {"tool_id": "search"}},
+        )
+        session.add(message)
+        await session.commit()
+
+        updated = await methods.update_chat_message_async(
+            session,
+            message,
+            reply=None,
+            tool_calls=None,
+        )
+
+        assert updated.reply is None
+        assert updated.tool_calls is None
+        assert updated.query == {"text": "Hello"}
+
     async def test_update_agent_run_chat_not_found(self, repository: "UserChatRepositoryImpl"):
         """Test that updating a message for non-existent chat raises error."""
         from fivcplayground.agents.types import AgentRun
