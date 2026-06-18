@@ -296,7 +296,7 @@ class TestUsersAPI:
         assert "hashed_password" not in data
 
     def test_update_current_user_preferences(self, client: TestClient):
-        """Test authenticated users can replace their own preferences."""
+        """Test authenticated users can replace preferences without changing full name."""
         admin_headers = self._get_admin_headers(client)
         client.post(
             "/users/",
@@ -304,6 +304,7 @@ class TestUsersAPI:
                 "username": "prefuser",
                 "email": "pref@example.com",
                 "password": "password123",
+                "full_name": "Preference User",
                 "preferences": {"theme": "light", "locale": "en-US"},
             },
             headers=admin_headers,
@@ -317,15 +318,17 @@ class TestUsersAPI:
 
         response = client.patch(
             "/users/self/",
-            json={"full_name": None, "preferences": {"theme": "dark"}},
+            json={"preferences": {"theme": "dark"}},
             headers=headers,
         )
 
         assert response.status_code == 200
+        assert response.json()["full_name"] == "Preference User"
         assert response.json()["preferences"] == {"theme": "dark"}
 
         self_response = client.get("/users/self/", headers=headers)
         assert self_response.status_code == 200
+        assert self_response.json()["full_name"] == "Preference User"
         assert self_response.json()["preferences"] == {"theme": "dark"}
 
     def test_clear_current_user_preferences(self, client: TestClient):
@@ -349,7 +352,7 @@ class TestUsersAPI:
 
         response = client.patch(
             "/users/self/",
-            json={"full_name": None, "preferences": None},
+            json={"preferences": None},
             headers={"Authorization": f"Bearer {token}"},
         )
 
@@ -357,7 +360,7 @@ class TestUsersAPI:
         assert response.json()["preferences"] is None
 
     def test_update_current_user_full_name(self, client: TestClient):
-        """Test authenticated users can replace their own full name."""
+        """Test authenticated users can replace full name without changing preferences."""
         admin_headers = self._get_admin_headers(client)
         client.post(
             "/users/",
@@ -379,16 +382,18 @@ class TestUsersAPI:
 
         response = client.patch(
             "/users/self/",
-            json={"full_name": "New Name", "preferences": {"theme": "dark"}},
+            json={"full_name": "New Name"},
             headers=headers,
         )
 
         assert response.status_code == 200
         assert response.json()["full_name"] == "New Name"
+        assert response.json()["preferences"] == {"theme": "dark"}
 
         self_response = client.get("/users/self/", headers=headers)
         assert self_response.status_code == 200
         assert self_response.json()["full_name"] == "New Name"
+        assert self_response.json()["preferences"] == {"theme": "dark"}
 
     def test_clear_current_user_full_name(self, client: TestClient):
         """Test authenticated users can clear their own full name."""
@@ -412,12 +417,43 @@ class TestUsersAPI:
 
         response = client.patch(
             "/users/self/",
-            json={"full_name": None, "preferences": {"theme": "dark"}},
+            json={"full_name": None},
             headers={"Authorization": f"Bearer {token}"},
         )
 
         assert response.status_code == 200
         assert response.json()["full_name"] is None
+        assert response.json()["preferences"] == {"theme": "dark"}
+
+    def test_empty_current_user_profile_update_preserves_fields(self, client: TestClient):
+        """Test empty profile updates leave existing nullable fields unchanged."""
+        admin_headers = self._get_admin_headers(client)
+        client.post(
+            "/users/",
+            json={
+                "username": "emptyprofilepatch",
+                "email": "emptyprofilepatch@example.com",
+                "password": "password123",
+                "full_name": "Empty Patch",
+                "preferences": {"theme": "dark"},
+            },
+            headers=admin_headers,
+        )
+        login_response = client.post(
+            "/users/login",
+            json={"username": "emptyprofilepatch", "password": "password123"},
+        )
+        token = login_response.json()["access_token"]
+
+        response = client.patch(
+            "/users/self/",
+            json={},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["full_name"] == "Empty Patch"
+        assert response.json()["preferences"] == {"theme": "dark"}
 
     def test_update_current_user_preferences_requires_auth(self, client: TestClient):
         """Test updating preferences requires authentication."""

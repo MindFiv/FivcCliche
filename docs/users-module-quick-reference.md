@@ -23,7 +23,7 @@ tests/
 | POST | `/users/` | Create new user | None |
 | GET | `/users/` | List users (paginated) | None |
 | GET | `/users/self` | Get authenticated user's profile | Bearer Token |
-| PATCH | `/users/self` | Replace authenticated user's profile fields | Bearer Token |
+| PATCH | `/users/self` | Partially update authenticated user's profile fields | Bearer Token |
 | GET | `/users/{user_id}` | Get user by ID | Admin |
 | DELETE | `/users/{user_id}` | Delete user | Admin |
 | POST | `/users/login` | Authenticate user and return JWT token | None |
@@ -143,11 +143,10 @@ UserService.authenticate_user(session, username, password)
 }
 ```
 
-### Replace Current User Profile Fields
+### Partially Update Current User Profile Fields
 **Request:**
 ```json
 {
-  "full_name": "John Q. Doe",
   "preferences": {
     "theme": "light",
     "locale": "en-US"
@@ -173,7 +172,7 @@ UserService.authenticate_user(session, username, password)
 }
 ```
 
-`full_name` and `preferences` are both required in this request. Send `"full_name": null` or `"preferences": null` to clear the stored value.
+Omitted fields remain unchanged. Send `"full_name": null` or `"preferences": null` to clear the stored value.
 
 ## Error Responses
 

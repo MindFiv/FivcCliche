@@ -9,7 +9,7 @@ The users module has been fully implemented with comprehensive functionality for
 - `UserBase`: Base schema with username, email, full name, and preferences
 - `UserCreate`: Schema for user registration with password plus optional full name and preferences
 - `UserUpdate`: Schema for updating user information
-- `UserSelfUpdate`: Schema for replacing the authenticated user's full name and preferences
+- `UserSelfUpdate`: Schema for updating the authenticated user's full name and preferences
 - `UserLogin`: Schema for authentication
 - `UserRead`: Response schema for user profile data and preferences (excludes sensitive fields)
 
@@ -33,7 +33,7 @@ The users module has been fully implemented with comprehensive functionality for
 - `POST /users/` - Create new user
 - `GET /users/` - List users with pagination (returns PaginatedResponse with total and results)
 - `GET /users/self` - Get authenticated user's own profile
-- `PATCH /users/self` - Replace authenticated user's full name and preferences
+- `PATCH /users/self` - Partially update authenticated user's full name and preferences
 - `GET /users/{user_id}` - Get user by ID (admin only)
 - `DELETE /users/{user_id}` - Delete user (admin only)
 - `POST /users/login` - Authenticate user and return JWT token
@@ -100,15 +100,15 @@ curl -X POST http://localhost:8000/users/login \
 curl http://localhost:8000/users/?skip=0&limit=10
 ```
 
-### Replace Current User Profile Fields
+### Partially Update Current User Profile Fields
 ```bash
 curl -X PATCH http://localhost:8000/users/self/ \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
-  -d '{"full_name":"John Q. Doe","preferences":{"theme":"light","locale":"en-US"}}'
+  -d '{"preferences":{"theme":"light","locale":"en-US"}}'
 ```
 
-Send `null` for `full_name` or `preferences` to clear the stored value; omitted fields are not supported by this endpoint.
+Omitted fields remain unchanged. Send `null` for `full_name` or `preferences` to clear the stored value.
 
 ## 📝 Next Steps
 1. Add JWT token-based authentication

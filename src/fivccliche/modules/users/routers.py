@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic_strict_partial import create_partial_model
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.services.interfaces.auth import IUser
@@ -13,6 +14,7 @@ from fivccliche.utils.schemas import PaginatedResponse
 from . import methods, models, schemas
 
 router = APIRouter(prefix="/users", tags=["users"])
+UserSelfPatch = create_partial_model(schemas.UserSelfUpdate)
 
 
 @router.post(
@@ -116,7 +118,7 @@ async def get_self_async(
     response_model=schemas.UserRead,
 )
 async def update_self_async(
-    data: schemas.UserSelfUpdate,
+    data: UserSelfPatch,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> models.User:
@@ -132,12 +134,8 @@ async def update_self_async(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
-    return await methods.update_user_async(
-        session,
-        db_user,
-        full_name=data.full_name,
-        preferences=data.preferences,
-    )
+    update_data = {field: getattr(data, field) for field in data.model_fields_set}
+    return await methods.update_user_async(session, db_user, **update_data)
 
 
 @router.patch(
