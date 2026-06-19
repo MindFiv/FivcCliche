@@ -176,6 +176,120 @@ class TestChatMethods:
         count = await methods.count_chats_async(session, test_user.uuid)
         assert count == 3
 
+    async def test_list_chats_async_filters_by_context_profile_uuid(
+        self, session: AsyncSession, test_user
+    ):
+        """Test listing chats by a top-level context value."""
+        matching_chat = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_1",
+            context={"profile_uuid": "profile-1"},
+        )
+        other_chat = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_1",
+            context={"profile_uuid": "profile-2"},
+        )
+        no_context_chat = UserChat(user_uuid=test_user.uuid, agent_id="agent_1")
+        session.add_all([matching_chat, other_chat, no_context_chat])
+        await session.commit()
+
+        chats = await methods.list_chats_async(
+            session,
+            test_user.uuid,
+            context={"profile_uuid": "profile-1"},
+        )
+
+        assert [chat.uuid for chat in chats] == [matching_chat.uuid]
+
+    async def test_count_chats_async_filters_by_context_profile_uuid(
+        self, session: AsyncSession, test_user
+    ):
+        """Test counting chats with a top-level context value filter."""
+        session.add_all(
+            [
+                UserChat(
+                    user_uuid=test_user.uuid,
+                    agent_id="agent_1",
+                    context={"profile_uuid": "profile-1"},
+                ),
+                UserChat(
+                    user_uuid=test_user.uuid,
+                    agent_id="agent_1",
+                    context={"profile_uuid": "profile-2"},
+                ),
+                UserChat(user_uuid=test_user.uuid, agent_id="agent_1"),
+            ]
+        )
+        await session.commit()
+
+        count = await methods.count_chats_async(
+            session,
+            test_user.uuid,
+            context={"profile_uuid": "profile-1"},
+        )
+
+        assert count == 1
+
+    async def test_list_chats_async_combines_agent_and_context_filters(
+        self, session: AsyncSession, test_user
+    ):
+        """Test combining agent_id and context filters."""
+        matching_chat = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_1",
+            context={"profile_uuid": "profile-1"},
+        )
+        wrong_agent_chat = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_2",
+            context={"profile_uuid": "profile-1"},
+        )
+        session.add_all([matching_chat, wrong_agent_chat])
+        await session.commit()
+
+        chats = await methods.list_chats_async(
+            session,
+            test_user.uuid,
+            agent_id="agent_1",
+            context={"profile_uuid": "profile-1"},
+        )
+
+        assert [chat.uuid for chat in chats] == [matching_chat.uuid]
+
+    async def test_list_chats_async_requires_all_context_filters(
+        self, session: AsyncSession, test_user
+    ):
+        """Test multiple context filters are combined with AND."""
+        matching_chat = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_1",
+            context={"profile_uuid": "profile-1", "project_uuid": "project-1"},
+        )
+        partial_match_chat = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_1",
+            context={"profile_uuid": "profile-1", "project_uuid": "project-2"},
+        )
+        missing_key_chat = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_1",
+            context={"profile_uuid": "profile-1"},
+        )
+        session.add_all([matching_chat, partial_match_chat, missing_key_chat])
+        await session.commit()
+
+        chats = await methods.list_chats_async(
+            session,
+            test_user.uuid,
+            context={
+                "profile_uuid": "profile-1",
+                "project_uuid": "project-1",
+            },
+        )
+
+        assert [chat.uuid for chat in chats] == [matching_chat.uuid]
+
     async def test_delete_chat_async(self, session: AsyncSession, test_chat: UserChat):
         """Test deleting a chat."""
         await methods.delete_chat_async(session, test_chat)

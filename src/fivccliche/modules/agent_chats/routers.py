@@ -6,6 +6,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Request,
     responses,
     status,
 )
@@ -23,6 +24,10 @@ from fivccliche.utils.deps import (
     get_mutex_site_async,
 )
 from fivccliche.utils.generators import create_chat_streaming_generator_async
+from fivccliche.utils.queries import (
+    InvalidDottedJsonFilterError,
+    parse_dotted_json_filters,
+)
 from fivccliche.utils.schemas import PaginatedResponse
 
 from . import methods, schemas
@@ -63,6 +68,7 @@ async def create_chat_async(
     response_model=PaginatedResponse[schemas.UserChatSchema],
 )
 async def list_chats_async(
+    request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     agent_id: str | None = Query(None, description="Filter chats by agent ID"),
@@ -75,10 +81,30 @@ async def list_chats_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
+    try:
+        json_filters = parse_dotted_json_filters(
+            request.query_params.multi_items(),
+            allowed_fields=methods.CHAT_JSON_FILTER_FIELDS.keys(),
+        )
+    except InvalidDottedJsonFilterError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
     sessions = await methods.list_chats_async(
-        session, user.uuid, skip=skip, limit=limit, agent_id=agent_id
+        session,
+        user.uuid,
+        skip=skip,
+        limit=limit,
+        agent_id=agent_id,
+        context=json_filters.get("context"),
     )
-    total = await methods.count_chats_async(session, user.uuid, agent_id=agent_id)
+    total = await methods.count_chats_async(
+        session,
+        user.uuid,
+        agent_id=agent_id,
+        context=json_filters.get("context"),
+    )
     return PaginatedResponse[schemas.UserChatSchema](
         total=total,
         results=[s.to_schema() for s in sessions],

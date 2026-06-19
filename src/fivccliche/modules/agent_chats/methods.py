@@ -7,8 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from fivccliche.utils import UNSET, UnsetType
+from fivccliche.utils.queries import apply_dotted_json_filters
 
 from . import models, schemas
+
+CHAT_JSON_FILTER_FIELDS = {"context": models.UserChat.context}
 
 
 async def create_chat_async(
@@ -81,6 +84,7 @@ async def list_chats_async(
     skip: int = 0,
     limit: int = 100,
     agent_id: str | None = None,
+    context: dict[str, str] | None = None,
     **kwargs,
 ) -> list[models.UserChat]:
     """List all chat sessions for a user with pagination."""
@@ -95,6 +99,11 @@ async def list_chats_async(
     )
     if agent_id:
         statement = statement.where(models.UserChat.agent_id == agent_id)
+    statement = apply_dotted_json_filters(
+        statement,
+        filters={"context": context or {}},
+        field_map=CHAT_JSON_FILTER_FIELDS,
+    )
 
     result = await session.execute(statement)
     return list(result.scalars().all())
@@ -104,6 +113,7 @@ async def count_chats_async(
     session: AsyncSession,
     user_uuid: str,
     agent_id: str | None = None,
+    context: dict[str, str] | None = None,
     **kwargs,
 ) -> int:
     """Count the number of chat sessions for a user."""
@@ -112,6 +122,11 @@ async def count_chats_async(
     )
     if agent_id is not None:
         statement = statement.where(models.UserChat.agent_id == agent_id)
+    statement = apply_dotted_json_filters(
+        statement,
+        filters={"context": context or {}},
+        field_map=CHAT_JSON_FILTER_FIELDS,
+    )
 
     result = await session.execute(statement)
     return result.scalar() or 0

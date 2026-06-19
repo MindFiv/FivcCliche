@@ -267,6 +267,63 @@ class TestChatContextAPI:
         )
         assert chat_with_context is not None
 
+    def test_list_chats_filters_by_context_profile_uuid(self, client: TestClient, auth_token: str):
+        """Test list endpoint filters chats by top-level context query params."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        matching_context = {"profile_uuid": "profile-1", "project_uuid": "project-1"}
+        other_context = {"profile_uuid": "profile-2", "project_uuid": "project-1"}
+
+        matching_response = client.post(
+            "/chats/",
+            json={"agent_id": "default", "context": matching_context},
+            headers=headers,
+        )
+        other_response = client.post(
+            "/chats/",
+            json={"agent_id": "default", "context": other_context},
+            headers=headers,
+        )
+        no_context_response = client.post(
+            "/chats/",
+            json={"agent_id": "default"},
+            headers=headers,
+        )
+        assert matching_response.status_code == 201
+        assert other_response.status_code == 201
+        assert no_context_response.status_code == 201
+
+        response = client.get(
+            "/chats/?context.profile_uuid=profile-1",
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert [chat["uuid"] for chat in data["results"]] == [matching_response.json()["uuid"]]
+
+    def test_list_chats_rejects_nested_context_filter(self, client: TestClient, auth_token: str):
+        """Test nested context query params are rejected for v1."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+
+        response = client.get(
+            "/chats/?context.profile.uuid=profile-1",
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+
+    def test_list_chats_rejects_unknown_json_filter_root(self, client: TestClient, auth_token: str):
+        """Test chat list rejects JSON roots that are not whitelisted."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+
+        response = client.get(
+            "/chats/?options.key2=xxx",
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+
 
 class TestChatMessageAPI:
     """Test cases for chat message API endpoints."""
