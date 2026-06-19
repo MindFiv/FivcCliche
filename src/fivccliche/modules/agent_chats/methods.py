@@ -94,6 +94,7 @@ async def list_chats_async(
             (models.UserChat.user_uuid == user_uuid)
             | (models.UserChat.user_uuid == None)  # noqa: E711
         )
+        .order_by(models.UserChat.created_at.desc())
         .offset(skip)
         .limit(limit)
     )

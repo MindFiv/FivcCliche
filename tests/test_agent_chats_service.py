@@ -1,6 +1,7 @@
 """Unit tests for agent_chats service layer."""
 
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -108,6 +109,37 @@ class TestChatMethods:
         chats = await methods.list_chats_async(session, test_user.uuid)
         assert len(chats) == 1
         assert chats[0].uuid == test_chat.uuid
+
+    async def test_list_chats_async_ordered_by_created_at_desc(
+        self, session: AsyncSession, test_user
+    ):
+        """Test that chats are listed from newest to oldest."""
+        base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        oldest_chat = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_oldest",
+            created_at=base_time,
+        )
+        newest_chat = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_newest",
+            created_at=base_time + timedelta(minutes=2),
+        )
+        middle_chat = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_middle",
+            created_at=base_time + timedelta(minutes=1),
+        )
+        session.add_all([oldest_chat, newest_chat, middle_chat])
+        await session.commit()
+
+        chats = await methods.list_chats_async(session, test_user.uuid)
+
+        assert [chat.uuid for chat in chats] == [
+            newest_chat.uuid,
+            middle_chat.uuid,
+            oldest_chat.uuid,
+        ]
 
     async def test_list_chats_async_empty(self, session: AsyncSession, test_user):
         """Test listing chats when none exist."""
