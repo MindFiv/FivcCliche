@@ -131,6 +131,10 @@ class UserLLM(SQLModel, table=True):
         default=4096,
         description="LLM max tokens.",
     )
+    enable_thinking: bool | None = Field(
+        default=None,
+        description="LLM enable thinking.",
+    )
     user_uuid: str | None = Field(
         default=None,
         foreign_key="user.uuid",
@@ -162,6 +166,7 @@ class UserLLM(SQLModel, table=True):
             base_url=self.base_url,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            enable_thinking=self.enable_thinking,
             user_uuid=self.user_uuid,
             updated_at=self.updated_at,
             updated_user_uuid=self.updated_user_uuid,

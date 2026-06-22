@@ -61,13 +61,21 @@ Superusers create global configs (`user_uuid = null`) that regular users can rea
 or delete.
 
 - `/configs/embeddings/` - embedding provider/model configs
-- `/configs/models/` - LLM provider/model configs
+- `/configs/models/` - LLM provider/model configs with `id`, `description`, `provider`,
+  `model`, `api_key`, `base_url`, `temperature`, `max_tokens`, optional nullable
+  `enable_thinking`, `user_uuid`, `updated_at`, and `updated_user_uuid` fields.
+  `enable_thinking = null` leaves provider behavior unchanged, `true` enables
+  provider-supported thinking output, and `false` disables it.
 - `/configs/agents/` - agent configs that compose models, tools, and skills
 - `/configs/tools/` - tool configs, including MCP/function transports
 - `/configs/skills/` - reusable skill configs and resources
 - `/configs/questions/` - reusable user question configs with `id`, `question`, optional
   `answer`, `is_active`, `user_uuid`, `updated_at`, and `updated_user_uuid` fields; list with
   `?is_active=true` or `?is_active=false` to filter by active state
+
+`python -m fivccliche.cli migrate` creates missing tables but does not alter existing
+tables. Existing databases created before `user_llm.enable_thinking` was added need a
+manual nullable boolean column on `user_llm` or a table rebuild.
 
 ### CLI Options
 

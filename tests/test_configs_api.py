@@ -425,6 +425,7 @@ class TestLLMConfigAPI:
                 "api_key": "test-key",
                 "temperature": 0.7,
                 "max_tokens": 2048,
+                "enable_thinking": True,
             },
         )
         assert response.status_code == 201
@@ -432,6 +433,7 @@ class TestLLMConfigAPI:
         assert data["id"] == "llm-1"
         assert data["model"] == "gpt-4"
         assert data["temperature"] == 0.7
+        assert data["enable_thinking"] is True
         assert "user_uuid" in data
 
     def test_list_llm_configs(self, client: TestClient, auth_token: str):
@@ -498,6 +500,7 @@ class TestLLMConfigAPI:
                 "model": "gpt-4",
                 "api_key": "test-key",
                 "temperature": 0.5,
+                "enable_thinking": True,
             },
         )
         config_uuid = create_response.json()["uuid"]
@@ -511,11 +514,22 @@ class TestLLMConfigAPI:
                 "model": "gpt-4",
                 "api_key": "test-key",
                 "temperature": 0.9,
+                "enable_thinking": False,
             },
         )
         assert response.status_code == 200
         data = response.json()
         assert data["temperature"] == 0.9
+        assert data["enable_thinking"] is False
+
+        response = client.patch(
+            f"/configs/models/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"enable_thinking": None},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["enable_thinking"] is None
 
     def test_delete_llm_config(self, client: TestClient, auth_token: str):
         """Test deleting an LLM config."""
@@ -2686,6 +2700,7 @@ class TestConfigsBackwardCompatibilityLLM:
                 "base_url": "https://api.openai.com",
                 "temperature": 0.7,
                 "max_tokens": 2048,
+                "enable_thinking": True,
             },
         )
         assert create_response.status_code == 201
@@ -2701,6 +2716,7 @@ class TestConfigsBackwardCompatibilityLLM:
         assert "base_url" in data
         assert "temperature" in data
         assert "max_tokens" in data
+        assert "enable_thinking" in data
         assert "user_uuid" in data
 
     def test_llm_config_response_field_types(self, client: TestClient, auth_token: str):
@@ -2715,6 +2731,7 @@ class TestConfigsBackwardCompatibilityLLM:
                 "api_key": "test-key",
                 "temperature": 0.5,
                 "max_tokens": 4096,
+                "enable_thinking": True,
             },
         )
         data = create_response.json()
@@ -2726,6 +2743,7 @@ class TestConfigsBackwardCompatibilityLLM:
         assert data["api_key"] is None  # Security: api_key should never be returned in responses
         assert isinstance(data["temperature"], float)
         assert isinstance(data["max_tokens"], int)
+        assert isinstance(data["enable_thinking"], bool)
 
 
 class TestConfigsBackwardCompatibilityAgent:

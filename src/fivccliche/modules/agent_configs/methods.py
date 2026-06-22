@@ -182,6 +182,7 @@ async def create_llm_config_async(
         base_url=config_create.base_url,
         temperature=config_create.temperature,
         max_tokens=config_create.max_tokens,
+        enable_thinking=config_create.enable_thinking,
         updated_at=datetime.now(timezone.utc),
         updated_user_uuid=updated_user_uuid,
     )
@@ -295,6 +296,8 @@ async def update_llm_config_async(
         config.temperature = config_update.temperature
     if config_update.max_tokens is not None:
         config.max_tokens = config_update.max_tokens
+    if "enable_thinking" in fields_set:
+        config.enable_thinking = config_update.enable_thinking
     config.updated_at = datetime.now(timezone.utc)
     config.updated_user_uuid = updated_user_uuid
     session.add(config)

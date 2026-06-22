@@ -118,6 +118,7 @@ async def session():
                     base_url VARCHAR,
                     temperature FLOAT NOT NULL DEFAULT 0.5,
                     max_tokens INTEGER NOT NULL DEFAULT 4096,
+                    enable_thinking BOOLEAN,
                     user_uuid VARCHAR,
                     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_user_uuid VARCHAR,
@@ -510,6 +511,7 @@ class TestLLMConfigService:
             api_key="test-key",
             temperature=0.7,
             max_tokens=2048,
+            enable_thinking=True,
         )
         config = await methods.create_llm_config_async(session, "user123", config_create)
 
@@ -517,6 +519,7 @@ class TestLLMConfigService:
         assert config.user_uuid == "user123"
         assert config.model == "gpt-4"
         assert config.temperature == 0.7
+        assert config.enable_thinking is True
 
     async def test_get_llm_config(self, session: AsyncSession):
         """Test getting an LLM config by ID."""
@@ -554,6 +557,7 @@ class TestLLMConfigService:
             model="gpt-4",
             api_key="test-key",
             temperature=0.5,
+            enable_thinking=True,
         )
         config = await methods.create_llm_config_async(session, "user123", config_create)
 
@@ -563,11 +567,35 @@ class TestLLMConfigService:
             model="gpt-4",
             api_key="test-key",
             temperature=0.9,
+            enable_thinking=False,
         )
         updated = await methods.update_llm_config_async(session, config, config_update)
 
         assert updated.temperature == 0.9
         assert updated.model == "gpt-4"
+        assert updated.enable_thinking is False
+
+    async def test_update_llm_config_can_clear_enable_thinking(self, session: AsyncSession):
+        """Test updating an LLM config can explicitly clear enable_thinking."""
+        config_create = ModelConfig(
+            id="llm-clear-thinking",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            enable_thinking=True,
+        )
+        config = await methods.create_llm_config_async(session, "user123", config_create)
+
+        config_update = ModelConfig(
+            id="llm-clear-thinking",
+            provider="openai",
+            model="gpt-4",
+            api_key="test-key",
+            enable_thinking=None,
+        )
+        updated = await methods.update_llm_config_async(session, config, config_update)
+
+        assert updated.enable_thinking is None
 
     async def test_delete_llm_config(self, session: AsyncSession):
         """Test deleting an LLM config."""
@@ -1076,6 +1104,7 @@ class TestLLMRepositoryImpl:
             api_key="test-key",
             temperature=0.7,
             max_tokens=2048,
+            enable_thinking=True,
         )
 
         await repo.update_model_config_async(config)
@@ -1084,6 +1113,7 @@ class TestLLMRepositoryImpl:
         retrieved = await methods.get_llm_config_async(session, "user123", config_id="repo-llm-1")
         assert retrieved is not None
         assert retrieved.temperature == 0.7
+        assert retrieved.enable_thinking is True
 
     async def test_update_model_config_update_existing(self, session: AsyncSession):
         """Test updating an existing model config via update_model_config."""
@@ -1096,6 +1126,7 @@ class TestLLMRepositoryImpl:
             model="gpt-4",
             api_key="test-key",
             temperature=0.5,
+            enable_thinking=True,
         )
         await methods.create_llm_config_async(session, "user123", config_create)
 
@@ -1106,12 +1137,14 @@ class TestLLMRepositoryImpl:
             model="gpt-4",
             api_key="test-key",
             temperature=0.9,
+            enable_thinking=False,
         )
         await repo.update_model_config_async(config_update)
 
         # Verify it was updated
         retrieved = await methods.get_llm_config_async(session, "user123", config_id="repo-llm-2")
         assert retrieved.temperature == 0.9
+        assert retrieved.enable_thinking is False
 
     async def test_get_model_config_returns_config_type(self, session: AsyncSession):
         """Test that get_model_config returns ModelConfig type."""
@@ -1122,6 +1155,7 @@ class TestLLMRepositoryImpl:
             provider="openai",
             model="gpt-4",
             api_key="test-key",
+            enable_thinking=True,
         )
         await methods.create_llm_config_async(session, "user123", config_create)
 
@@ -1131,6 +1165,7 @@ class TestLLMRepositoryImpl:
         assert isinstance(result, ModelConfig)
         assert result.id == "repo-llm-3"
         assert result.provider == "openai"
+        assert result.enable_thinking is True
 
     async def test_get_model_config_returns_none_when_not_found(self, session: AsyncSession):
         """Test that get_model_config returns None when config not found."""
@@ -2496,6 +2531,7 @@ class TestModelsRegressionUserLLM:
             api_key="test-key",
             temperature=0.7,
             max_tokens=2048,
+            enable_thinking=True,
             user_uuid="user123",
         )
 
@@ -2506,6 +2542,7 @@ class TestModelsRegressionUserLLM:
         assert config.api_key == "test-key"
         assert config.temperature == 0.7
         assert config.max_tokens == 2048
+        assert config.enable_thinking is True
         assert config.user_uuid == "user123"
 
     async def test_user_llm_model_field_defaults(self, session: AsyncSession):
@@ -2522,6 +2559,7 @@ class TestModelsRegressionUserLLM:
         assert config.provider == "openai"  # Default
         assert config.temperature == 0.5  # Default
         assert config.max_tokens == 4096  # Default
+        assert config.enable_thinking is None  # Default
         assert config.description is None  # Default
         assert config.base_url is None  # Default
         assert config.user_uuid is None  # Default
@@ -2621,6 +2659,7 @@ class TestModelsRegressionUserLLM:
             base_url="https://api.openai.com",
             temperature=0.8,
             max_tokens=2048,
+            enable_thinking=True,
             user_uuid="user123",
         )
 
@@ -2636,6 +2675,7 @@ class TestModelsRegressionUserLLM:
         assert schema.base_url == "https://api.openai.com"
         assert schema.temperature == 0.8
         assert schema.max_tokens == 2048
+        assert schema.enable_thinking is True
         assert schema.user_uuid == "user123"
 
     async def test_user_llm_to_schema_with_none_values(self, session: AsyncSession):
