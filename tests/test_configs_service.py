@@ -332,17 +332,37 @@ class TestEmbeddingConfigService:
 
     async def test_list_embedding_configs(self, session: AsyncSession):
         """Test listing embedding configs for a user."""
-        for i in range(3):
+        for config_id in ["embedding-charlie", "embedding-alpha", "embedding-bravo"]:
             config_create = EmbeddingConfig(
-                id=f"embedding-list-{i}",
+                id=config_id,
                 provider="openai",
-                model=f"model-{i}",
-                api_key=f"key-{i}",
+                model=f"model-{config_id}",
+                api_key=f"key-{config_id}",
             )
             await methods.create_embedding_config_async(session, "user123", config_create)
 
         configs = await methods.list_embedding_configs_async(session, "user123")
         assert len(configs) == 3
+        assert [config.id for config in configs] == [
+            "embedding-alpha",
+            "embedding-bravo",
+            "embedding-charlie",
+        ]
+
+    async def test_list_embedding_configs_paginates_after_ordering(self, session: AsyncSession):
+        """Test embedding pagination applies after sorting by config ID."""
+        for config_id in ["embedding-page-charlie", "embedding-page-alpha", "embedding-page-bravo"]:
+            config_create = EmbeddingConfig(
+                id=config_id,
+                provider="openai",
+                model=f"model-{config_id}",
+                api_key=f"key-{config_id}",
+            )
+            await methods.create_embedding_config_async(session, "user123", config_create)
+
+        configs = await methods.list_embedding_configs_async(session, "user123", skip=1, limit=1)
+
+        assert [config.id for config in configs] == ["embedding-page-bravo"]
 
     async def test_list_embedding_configs_pagination(self, session: AsyncSession):
         """Test listing embedding configs with pagination."""
@@ -537,17 +557,22 @@ class TestLLMConfigService:
 
     async def test_list_llm_configs(self, session: AsyncSession):
         """Test listing LLM configs for a user."""
-        for i in range(3):
+        for config_id in ["llm-charlie", "llm-alpha", "llm-bravo"]:
             config_create = ModelConfig(
-                id=f"llm-list-{i}",
+                id=config_id,
                 provider="openai",
-                model=f"model-{i}",
-                api_key=f"key-{i}",
+                model=f"model-{config_id}",
+                api_key=f"key-{config_id}",
             )
             await methods.create_llm_config_async(session, "user123", config_create)
 
         configs = await methods.list_llm_configs_async(session, "user123")
         assert len(configs) == 3
+        assert [config.id for config in configs] == [
+            "llm-alpha",
+            "llm-bravo",
+            "llm-charlie",
+        ]
 
     async def test_update_llm_config(self, session: AsyncSession):
         """Test updating an LLM config."""
@@ -763,15 +788,20 @@ class TestAgentConfigService:
 
     async def test_list_agent_configs(self, session: AsyncSession):
         """Test listing agent configs for a user."""
-        for i in range(3):
+        for config_id in ["agent-charlie", "agent-alpha", "agent-bravo"]:
             config_create = AgentConfig(
-                id=f"agent-list-{i}",
-                model_id=f"model-{i}",
+                id=config_id,
+                model_id=f"model-{config_id}",
             )
             await methods.create_agent_config_async(session, "user123", config_create)
 
         configs = await methods.list_agent_configs_async(session, "user123")
         assert len(configs) == 3
+        assert [config.id for config in configs] == [
+            "agent-alpha",
+            "agent-bravo",
+            "agent-charlie",
+        ]
 
     async def test_update_agent_config(self, session: AsyncSession):
         """Test updating an agent config."""
@@ -1448,10 +1478,10 @@ class TestToolConfigMethods:
 
     async def test_list_tool_configs(self, session: AsyncSession):
         """Test listing tool configs."""
-        for i in range(3):
+        for config_id in ["tool-charlie", "tool-alpha", "tool-bravo"]:
             config = ToolConfig(
-                id=f"tool-{i}",
-                description=f"Tool {i}",
+                id=config_id,
+                description=f"Tool {config_id}",
                 transport="stdio",
             )
             await methods.create_tool_config_async(session, "user123", config)
@@ -1460,6 +1490,11 @@ class TestToolConfigMethods:
 
         assert len(configs) == 3
         assert all(c.user_uuid == "user123" for c in configs)
+        assert [config.id for config in configs] == [
+            "tool-alpha",
+            "tool-bravo",
+            "tool-charlie",
+        ]
 
     async def test_list_tool_configs_with_pagination(self, session: AsyncSession):
         """Test listing tool configs with pagination."""
@@ -1832,6 +1867,23 @@ class TestToolConfigRepository:
 class TestSkillConfigMethods:
     """Test cases for skill config methods."""
 
+    async def test_list_skill_configs_orders_by_id(self, session: AsyncSession):
+        """Test listing skill configs sorted by config ID."""
+        for config_id in ["skill-charlie", "skill-alpha", "skill-bravo"]:
+            config_create = schemas.UserSkillSchema(
+                id=config_id,
+                description=f"Skill {config_id}",
+            )
+            await methods.create_skill_config_async(session, "user123", config_create)
+
+        configs = await methods.list_skill_configs_async(session, "user123")
+
+        assert [config.id for config in configs] == [
+            "skill-alpha",
+            "skill-bravo",
+            "skill-charlie",
+        ]
+
     async def test_update_skill_config_clears_resources(self, session: AsyncSession):
         """Test explicit None clears nullable skill resources."""
         config_create = schemas.UserSkillSchema(
@@ -1938,10 +1990,10 @@ class TestQuestionConfigMethods:
 
     async def test_list_questions(self, session: AsyncSession):
         """Test listing question configs."""
-        for i in range(3):
+        for config_id in ["question-charlie", "question-alpha", "question-bravo"]:
             config_create = schemas.UserQuestionSchema(
-                id=f"question-list-{i}",
-                question=f"Question {i}?",
+                id=config_id,
+                question=f"Question {config_id}?",
             )
             await methods.create_question_async(session, "user123", config_create)
 
@@ -1949,6 +2001,11 @@ class TestQuestionConfigMethods:
 
         assert len(configs) == 3
         assert all(config.user_uuid == "user123" for config in configs)
+        assert [config.id for config in configs] == [
+            "question-alpha",
+            "question-bravo",
+            "question-charlie",
+        ]
 
     async def test_list_questions_with_pagination(self, session: AsyncSession):
         """Test listing question configs with pagination."""

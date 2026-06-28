@@ -103,6 +103,7 @@ async def list_embedding_configs_async(
             (models.UserEmbedding.user_uuid == user_uuid)
             | (models.UserEmbedding.user_uuid == None)  # noqa E711
         )
+        .order_by(models.UserEmbedding.id.asc())
         .offset(skip)
         .limit(limit)
     )
@@ -255,6 +256,7 @@ async def list_llm_configs_async(
             (models.UserLLM.user_uuid == user_uuid)
             | (models.UserLLM.user_uuid == None)  # noqa E711
         )
+        .order_by(models.UserLLM.id.asc())
         .offset(skip)
         .limit(limit)
     )
@@ -408,6 +410,7 @@ async def list_agent_configs_async(
             (models.UserAgent.user_uuid == user_uuid)
             | (models.UserAgent.user_uuid == None)  # noqa E711
         )
+        .order_by(models.UserAgent.id.asc())
         .offset(skip)
         .limit(limit)
     )
@@ -560,6 +563,7 @@ async def list_tool_configs_async(
             (models.UserTool.user_uuid == user_uuid)
             | (models.UserTool.user_uuid == None)  # noqa E711
         )
+        .order_by(models.UserTool.id.asc())
         .offset(skip)
         .limit(limit)
     )
@@ -712,6 +716,7 @@ async def list_skill_configs_async(
             (models.UserSkill.user_uuid == user_uuid)
             | (models.UserSkill.user_uuid == None)  # noqa E711
         )
+        .order_by(models.UserSkill.id.asc())
         .offset(skip)
         .limit(limit)
     )
@@ -844,7 +849,13 @@ async def list_questions_async(
     if is_active is not None:
         conditions.append(models.UserQuestion.is_active == is_active)
 
-    statement = select(models.UserQuestion).where(*conditions).offset(skip).limit(limit)
+    statement = (
+        select(models.UserQuestion)
+        .where(*conditions)
+        .order_by(models.UserQuestion.id.asc())
+        .offset(skip)
+        .limit(limit)
+    )
     result = await session.execute(statement)
     return list(result.scalars().all())
 
