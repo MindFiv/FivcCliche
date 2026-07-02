@@ -17,7 +17,11 @@ from fivcglue.implements.utils import load_component_site
 
 # Import models to ensure they're registered with SQLModel
 from fivccliche.modules.users.models import User
-from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage  # noqa: F401
+from fivccliche.modules.agent_chats.models import (  # noqa: F401
+    UserChat,
+    UserChatMessage,
+    UserChatMessageCard,
+)
 
 
 @pytest.fixture
@@ -356,6 +360,205 @@ class TestChatMessageAPI:
         # Test with skip and limit parameters
         response = client.get("/chats/somechat/messages/?skip=0&limit=10", headers=headers)
         # Should return 404 because chat doesn't exist
+        assert response.status_code == 404
+
+    def test_list_messages_does_not_include_cards(self, client: TestClient, auth_token: str):
+        """Test message listing does not include cards."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=None,
+                agent_id="test-agent",
+            )
+            message = await chat_methods.create_chat_message_async(
+                session=session,
+                chat_uuid=str(chat.uuid),
+                query={"content": "message list stays lean"},
+            )
+            await chat_methods.create_chat_message_card_async(
+                session=session,
+                message_uuid=str(message.uuid),
+                context={"kind": "link", "href": "https://example.com"},
+                card_uuid="card-not-in-list",
+            )
+            return str(chat.uuid), str(message.uuid)
+
+        chat_uuid, message_uuid = loop.run_until_complete(setup())
+
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.get(f"/chats/{chat_uuid}/messages/", headers=headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert data["results"][0]["uuid"] == message_uuid
+        assert "cards" not in data["results"][0]
+
+    def test_list_message_cards_returns_empty_results_when_message_has_no_cards(
+        self, client: TestClient, auth_token: str
+    ):
+        """Test card endpoint returns an empty list for messages without cards."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=None,
+                agent_id="test-agent",
+            )
+            message = await chat_methods.create_chat_message_async(
+                session=session,
+                chat_uuid=str(chat.uuid),
+                query={"content": "message without cards"},
+            )
+            return str(chat.uuid), str(message.uuid)
+
+        chat_uuid, message_uuid = loop.run_until_complete(setup())
+
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.get(
+            f"/chats/{chat_uuid}/messages/{message_uuid}/cards/",
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 0
+        assert data["results"] == []
+
+    def test_list_message_cards_returns_cards_with_arbitrary_context(
+        self, client: TestClient, auth_token: str
+    ):
+        """Test card endpoint returns cards and preserves arbitrary context."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        session = client.async_session
+        loop = client.loop
+        context = {
+            "kind": "link",
+            "label": "Open report",
+            "href": "https://example.com/report",
+            "extra": {"source": "agent"},
+        }
+
+        async def setup():
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=None,
+                agent_id="test-agent",
+            )
+            message = await chat_methods.create_chat_message_async(
+                session=session,
+                chat_uuid=str(chat.uuid),
+                query={"content": "message with cards"},
+            )
+            card = await chat_methods.create_chat_message_card_async(
+                session=session,
+                message_uuid=str(message.uuid),
+                context=context,
+                card_uuid="card-api-1",
+            )
+            return str(chat.uuid), str(message.uuid), str(card.uuid)
+
+        chat_uuid, message_uuid, card_uuid = loop.run_until_complete(setup())
+
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.get(
+            f"/chats/{chat_uuid}/messages/{message_uuid}/cards/",
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert data["results"] == [
+            {
+                "uuid": card_uuid,
+                "message_uuid": message_uuid,
+                "context": context,
+            }
+        ]
+
+    def test_list_message_cards_unauthorized(self, client: TestClient):
+        """Test listing message cards without authentication."""
+        response = client.get("/chats/somechat/messages/somemessage/cards/")
+        assert response.status_code == 401
+
+    def test_list_message_cards_chat_not_found(self, client: TestClient, auth_token: str):
+        """Test listing cards for a non-existent chat."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.get(
+            "/chats/nonexistent/messages/somemessage/cards/",
+            headers=headers,
+        )
+        assert response.status_code == 404
+
+    def test_list_message_cards_message_not_found(self, client: TestClient, auth_token: str):
+        """Test listing cards for a non-existent message in an existing chat."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=None,
+                agent_id="test-agent",
+            )
+            return str(chat.uuid)
+
+        chat_uuid = loop.run_until_complete(setup())
+
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.get(
+            f"/chats/{chat_uuid}/messages/missing-message/cards/",
+            headers=headers,
+        )
+        assert response.status_code == 404
+
+    def test_list_message_cards_rejects_message_from_other_chat(
+        self, client: TestClient, auth_token: str
+    ):
+        """Test listing cards validates the message belongs to the chat."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            chat_1 = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=None,
+                agent_id="test-agent",
+            )
+            chat_2 = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=None,
+                agent_id="test-agent",
+            )
+            message = await chat_methods.create_chat_message_async(
+                session=session,
+                chat_uuid=str(chat_2.uuid),
+                query={"content": "wrong chat"},
+            )
+            return str(chat_1.uuid), str(message.uuid)
+
+        chat_uuid, message_uuid = loop.run_until_complete(setup())
+
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.get(
+            f"/chats/{chat_uuid}/messages/{message_uuid}/cards/",
+            headers=headers,
+        )
         assert response.status_code == 404
 
     def test_list_messages_invalid_pagination(self, client: TestClient, auth_token: str):

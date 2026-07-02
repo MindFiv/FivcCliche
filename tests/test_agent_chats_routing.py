@@ -191,6 +191,15 @@ class TestChatEndpointTrailingSlashes:
         response = client.get("/chats/nonexistent-uuid/messages/", headers=headers)
         assert response.status_code == 404
 
+    def test_get_chat_message_cards_with_trailing_slash(self, client: TestClient, auth_token: str):
+        """Test GET /chats/{uuid}/messages/{msg_uuid}/cards/ uses trailing slash."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.get(
+            "/chats/nonexistent-uuid/messages/nonexistent-msg/cards/",
+            headers=headers,
+        )
+        assert response.status_code == 404
+
     def test_delete_chat_message_with_trailing_slash(self, client: TestClient, auth_token: str):
         """Test DELETE /chats/{uuid}/messages/{msg_uuid}/ (with trailing slash)."""
         headers = {"Authorization": f"Bearer {auth_token}"}

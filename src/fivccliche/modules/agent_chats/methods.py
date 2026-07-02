@@ -252,3 +252,82 @@ async def delete_chat_message_async(
     """Delete a chat message."""
     await session.delete(message)
     await session.commit()
+
+
+async def create_chat_message_card_async(
+    session: AsyncSession,
+    message_uuid: str,
+    context: dict | None = None,
+    card_uuid: str | None = None,
+    **kwargs,  # ignore additional arguments
+) -> models.UserChatMessageCard:
+    """Create a new chat message card."""
+    if not message_uuid:
+        raise ValueError("Message UUID is required to create a card")
+
+    card = models.UserChatMessageCard(
+        uuid=card_uuid,
+        message_uuid=message_uuid,
+        context=context or {},
+    )
+    session.add(card)
+    await session.commit()
+    await session.refresh(card)
+    return card
+
+
+async def get_chat_message_card_async(
+    session: AsyncSession,
+    card_uuid: str,
+    message_uuid: str,
+    **kwargs,  # ignore additional arguments
+) -> models.UserChatMessageCard | None:
+    """Get a chat message card by UUID."""
+    statement = select(models.UserChatMessageCard).where(
+        models.UserChatMessageCard.uuid == card_uuid,
+        models.UserChatMessageCard.message_uuid == message_uuid,
+    )
+    result = await session.execute(statement)
+    return result.scalars().first()
+
+
+async def list_chat_message_cards_async(
+    session: AsyncSession,
+    message_uuid: str,
+    skip: int = 0,
+    limit: int = 100,
+    **kwargs,  # ignore additional arguments
+) -> list[models.UserChatMessageCard]:
+    """List all cards for a chat message with pagination."""
+    statement = (
+        select(models.UserChatMessageCard)
+        .where(models.UserChatMessageCard.message_uuid == message_uuid)
+        .order_by(models.UserChatMessageCard.uuid)
+        .offset(skip)
+        .limit(limit)
+    )
+    result = await session.execute(statement)
+    return list(result.scalars().all())
+
+
+async def count_chat_message_cards_async(
+    session: AsyncSession,
+    message_uuid: str,
+    **kwargs,  # ignore additional arguments
+) -> int:
+    """Count the number of cards for a chat message."""
+    statement = select(func.count(models.UserChatMessageCard.uuid)).where(
+        models.UserChatMessageCard.message_uuid == message_uuid
+    )
+    result = await session.execute(statement)
+    return result.scalar() or 0
+
+
+async def delete_chat_message_card_async(
+    session: AsyncSession,
+    card: models.UserChatMessageCard,
+    **kwargs,  # ignore additional arguments
+) -> None:
+    """Delete a chat message card."""
+    await session.delete(card)
+    await session.commit()

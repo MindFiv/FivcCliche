@@ -77,6 +77,18 @@ or delete.
 tables. Existing databases created before `user_llm.enable_thinking` was added need a
 manual nullable boolean column on `user_llm` or a table rebuild.
 
+### Chat Message Cards
+
+Chat messages can have persisted UI cards for agent-built experiences such as questions,
+images, charts, or external links. `GET /chats/{chat_uuid}/messages/` returns message
+history without loading cards. Use `GET /chats/{chat_uuid}/messages/{message_uuid}/cards/`
+to list the cards for one message. Each card contains `uuid`, `message_uuid`, and a
+`context` object.
+
+Card `context` is arbitrary user/application-defined JSON. FivcCliche stores and returns it
+without enforcing a backend card shape. There are no public card write endpoints; card rows
+are created through internal application logic or direct service/model usage.
+
 ### CLI Options
 
 ```bash
