@@ -1376,13 +1376,17 @@ class TestCreateChatMessages:
         return user
 
     @staticmethod
-    def _mock_chat(chat_uuid: str = "chat-123", user_uuid: str | None = "user-123"):
+    def _mock_chat(
+        chat_uuid: str = "chat-123",
+        user_uuid: str | None = "user-123",
+        context: dict | None = None,
+    ):
 
         return UserChat(
             uuid=chat_uuid,
             user_uuid=user_uuid,
             agent_id="test-agent",
-            context=None,
+            context=context,
         )
 
     @staticmethod
@@ -1433,13 +1437,13 @@ class TestCreateChatMessages:
             yield b"data: done\n\n"
 
         chat_provider = MagicMock()
-        chat_provider.get_chat_context.return_value = None
+        context = {"scope": "router"}
 
         with (
             patch(
                 "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
                 new_callable=AsyncMock,
-                return_value=self._mock_chat(),
+                return_value=self._mock_chat(context=context),
             ),
             patch(
                 "fivccliche.modules.agent_chats.routers.create_chat_streaming_generator_async",
@@ -1460,6 +1464,11 @@ class TestCreateChatMessages:
 
         assert chunks == [b"data: done\n\n"]
         mock_create_streaming.assert_called_once()
+        _, kwargs = mock_create_streaming.call_args
+        assert kwargs["chat_context"] == context
+        assert "chat_tools" not in kwargs
+        assert kwargs["chat_skills_enabled"] is True
+        chat_provider.get_chat_context.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_create_message_falls_back_when_mutex_unavailable(self):
@@ -1473,7 +1482,6 @@ class TestCreateChatMessages:
         mock_mutex_site = MagicMock()
         mock_mutex_site.get_mutex.return_value = None
         chat_provider = MagicMock()
-        chat_provider.get_chat_context.return_value = None
 
         with (
             patch(
@@ -1513,7 +1521,6 @@ class TestCreateChatMessages:
         mock_mutex_site = MagicMock()
         mock_mutex_site.get_mutex.return_value = mock_mutex
         chat_provider = MagicMock()
-        chat_provider.get_chat_context.return_value = None
 
         with (
             patch(
@@ -1557,7 +1564,6 @@ class TestCreateChatMessages:
         mock_mutex_site = MagicMock()
         mock_mutex_site.get_mutex.return_value = mock_mutex
         chat_provider = MagicMock()
-        chat_provider.get_chat_context.return_value = None
 
         with (
             patch(
@@ -1600,7 +1606,6 @@ class TestCreateChatMessages:
         mock_mutex_site = MagicMock()
         mock_mutex_site.get_mutex.return_value = mock_mutex
         chat_provider = MagicMock()
-        chat_provider.get_chat_context.return_value = None
 
         with (
             patch(
@@ -1639,7 +1644,6 @@ class TestCreateChatMessages:
         mock_mutex_site = MagicMock()
         mock_mutex_site.get_mutex.return_value = mock_mutex
         chat_provider = MagicMock()
-        chat_provider.get_chat_context.return_value = None
 
         with (
             patch(

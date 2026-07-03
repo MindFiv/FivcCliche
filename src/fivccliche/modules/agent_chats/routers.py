@@ -229,20 +229,6 @@ async def create_chat_messages_async(
     chat_agent_id = chat.agent_id
     print(f"🤖 [AGENT] Creating agent with ID: {chat_agent_id}")
 
-    chat_context = {**chat.context} if chat.context else {}
-    chat_context = chat_provider.get_chat_context(
-        user_uuid=user.uuid,
-        session=session,
-        context=chat_context,
-        config_provider=config_provider,
-    )
-    if chat_context:
-        chat_tools = await chat_context.get_tools_async()
-        chat_skills_enabled = await chat_context.get_is_skills_enabled_async()
-    else:
-        chat_tools = None
-        chat_skills_enabled = True  # enable skills by default if no context
-
     mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
     if mutex:
         lock_acquired = mutex.acquire(
@@ -263,8 +249,8 @@ async def create_chat_messages_async(
             chat_uuid=chat_uuid,
             chat_query=chat_message.query,
             chat_agent_id=chat_agent_id,
-            chat_tools=chat_tools,
-            chat_skills_enabled=chat_skills_enabled,
+            chat_context=chat.context,
+            chat_skills_enabled=True,
             session=session,
         )
     except Exception:

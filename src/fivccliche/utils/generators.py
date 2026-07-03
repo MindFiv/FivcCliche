@@ -125,13 +125,30 @@ async def create_chat_streaming_generator_async(
     chat_agent_id: str = "default",
     chat_tools: list[Tool] | None = None,
     chat_skills_enabled: bool = False,
+    chat_context: dict | None = None,
     chat_finish_callback: (
         Callable[[AgentRun], None] | Callable[[AgentRun], Awaitable[None]] | None
     ) = None,
     session: AsyncSession | None = None,
     **kwargs,
 ):
-    chat_tool_ids = [tool.name for tool in chat_tools] if chat_tools else []
+    context_tools = None
+    resolved_chat_skills_enabled = chat_skills_enabled
+    context_copy = {**chat_context} if chat_context else {}
+    resolved_chat_context = user_chat_provider.get_chat_context(
+        user_uuid=user.uuid,
+        session=session,
+        context=context_copy,
+        config_provider=user_config_provider,
+    )
+    if resolved_chat_context:
+        context_tools = await resolved_chat_context.get_tools_async()
+        resolved_chat_skills_enabled = await resolved_chat_context.get_is_skills_enabled_async()
+
+    tools_by_name = {tool.name: tool for tool in context_tools or []}
+    tools_by_name.update({tool.name: tool for tool in chat_tools or []})
+    resolved_chat_tools = list(tools_by_name.values()) or None
+    chat_tool_ids = [tool.name for tool in resolved_chat_tools] if resolved_chat_tools else []
     agent = await create_agent_async(
         model_backend=user_config_provider.get_model_backend(),
         model_config_repository=user_config_provider.get_model_repository(
@@ -145,7 +162,7 @@ async def create_chat_streaming_generator_async(
     )
     agent_tools = await create_tool_retriever_async(
         tool_backend=user_config_provider.get_tool_backend(),
-        tools=chat_tools,
+        tools=resolved_chat_tools,
         tool_config_repository=user_config_provider.get_tool_repository(
             user_uuid=user.uuid, session=session
         ),
@@ -167,7 +184,7 @@ async def create_chat_streaming_generator_async(
             ),
             space_id=user.uuid,
         )
-        if chat_skills_enabled
+        if resolved_chat_skills_enabled
         else None
     )
     chat_queue = asyncio.Queue()
