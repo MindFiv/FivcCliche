@@ -3,7 +3,6 @@ __all__ = [
     "AgentRunStatus",
     "AgentRunToolCall",
     "UserChatCreateSchema",
-    "UserChatMessageCardSchema",
     "UserChatMessageCreateSchema",
     "UserChatMessageSchema",
     "UserChatSchema",
@@ -42,16 +41,6 @@ class UserChatMessageSchema(AgentRun):
 
     uuid: str = Field(default=None, description="Chat message UUID (globally unique)")
     chat_uuid: str = Field(default=None, description="Chat UUID")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class UserChatMessageCardSchema(BaseModel):
-    """Schema for reading user chat message card data."""
-
-    uuid: str = Field(default=None, description="Chat message card UUID (globally unique)")
-    message_uuid: str = Field(default=None, description="Chat message UUID")
-    context: dict | None = Field(default=None, description="User-defined card context")
 
     model_config = ConfigDict(from_attributes=True)
 

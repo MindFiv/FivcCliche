@@ -14,7 +14,7 @@ from sqlmodel import SQLModel
 
 from fivccliche.modules.agent_chats import methods
 from fivccliche.modules.users.models import User  # noqa: F401
-from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage, UserChatMessageCard
+from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage
 from fivccliche.services.interfaces.agent_chats import IUserChatContext
 
 if TYPE_CHECKING:
@@ -546,99 +546,6 @@ class TestChatMessageMethods:
         messages2 = await methods.list_chat_messages_async(session, chat2.uuid)
         assert len(messages2) == 2
         assert all(m.chat_uuid == chat2.uuid for m in messages2)
-
-    async def test_create_get_list_count_delete_chat_message_cards_async(
-        self, session: AsyncSession, test_chat: UserChat
-    ):
-        """Test creating, reading, listing, counting, and deleting message cards."""
-        message = await methods.create_chat_message_async(
-            session,
-            chat_uuid=test_chat.uuid,
-            query={"content": "show a card"},
-        )
-        context = {
-            "kind": "question",
-            "prompt": "Which option should we use?",
-            "options": ["A", "B"],
-        }
-
-        card = await methods.create_chat_message_card_async(
-            session,
-            message_uuid=message.uuid,
-            context=context,
-            card_uuid="card-1",
-        )
-
-        assert card.uuid == "card-1"
-        assert card.message_uuid == message.uuid
-        assert card.context == context
-
-        retrieved = await methods.get_chat_message_card_async(session, "card-1", message.uuid)
-        assert retrieved is not None
-        assert retrieved.context == context
-
-        cards = await methods.list_chat_message_cards_async(session, message.uuid)
-        assert [c.uuid for c in cards] == ["card-1"]
-
-        count = await methods.count_chat_message_cards_async(session, message.uuid)
-        assert count == 1
-
-        await methods.delete_chat_message_card_async(session, card)
-        assert await methods.get_chat_message_card_async(session, "card-1", message.uuid) is None
-        assert await methods.count_chat_message_cards_async(session, message.uuid) == 0
-
-    async def test_chat_message_card_to_schema_preserves_arbitrary_context(
-        self, session: AsyncSession, test_chat: UserChat
-    ):
-        """Test card schema conversion preserves user-defined JSON context."""
-        message = await methods.create_chat_message_async(
-            session,
-            chat_uuid=test_chat.uuid,
-            query={"content": "show arbitrary card"},
-        )
-        context = {
-            "type": "chart",
-            "data": {"series": [{"name": "alpha", "values": [1, 2, 3]}]},
-            "external": {"href": "https://example.com/report"},
-        }
-        card = UserChatMessageCard(
-            uuid="card-schema",
-            message_uuid=message.uuid,
-            context=context,
-        )
-
-        schema = card.to_schema()
-
-        assert schema.uuid == "card-schema"
-        assert schema.message_uuid == message.uuid
-        assert schema.context == context
-
-    async def test_delete_chat_message_cascades_message_cards(
-        self, session: AsyncSession, test_chat: UserChat
-    ):
-        """Test deleting a chat message removes its cards through the FK cascade."""
-        message = await methods.create_chat_message_async(
-            session,
-            chat_uuid=test_chat.uuid,
-            query={"content": "delete me"},
-        )
-        await methods.create_chat_message_card_async(
-            session,
-            message_uuid=message.uuid,
-            context={"kind": "image", "url": "https://example.com/image.png"},
-            card_uuid="card-cascade",
-        )
-
-        await methods.delete_chat_message_async(session, message)
-
-        assert (
-            await methods.get_chat_message_card_async(
-                session,
-                "card-cascade",
-                message.uuid,
-            )
-            is None
-        )
 
 
 # ============================================================================

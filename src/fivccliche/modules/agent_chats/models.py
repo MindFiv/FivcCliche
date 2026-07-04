@@ -122,33 +122,3 @@ class UserChatMessage(SQLModel, table=True):
             reply=self.reply,
             tool_calls=self.tool_calls or {},  # Default to empty dict if None
         )
-
-
-class UserChatMessageCard(SQLModel, table=True):
-    """User chat message card model."""
-
-    __tablename__ = "chat_message_card"
-
-    uuid: str = Field(
-        default_factory=lambda: str(uuid4()),
-        primary_key=True,
-        max_length=36,
-        description="Chat message card UUID (globally unique).",
-    )
-    message_uuid: str = Field(
-        sa_column=Column(String(36), ForeignKey("chat_message.uuid", ondelete="CASCADE")),
-        description="Chat message UUID.",
-    )
-    context: dict = Field(
-        sa_type=JSON,
-        default_factory=dict,
-        description="Chat message card context.",
-    )
-
-    def to_schema(self) -> schemas.UserChatMessageCardSchema:
-        """Convert UserChatMessageCard to response schema."""
-        return schemas.UserChatMessageCardSchema(
-            uuid=self.uuid,
-            message_uuid=self.message_uuid,
-            context=self.context,
-        )

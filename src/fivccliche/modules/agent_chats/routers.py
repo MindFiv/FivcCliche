@@ -310,53 +310,6 @@ async def list_chat_messages_async(
     )
 
 
-@router_messages.get(
-    "/{chat_uuid}/messages/{message_uuid}/cards/",
-    summary="List all cards for a chat message.",
-    response_model=PaginatedResponse[schemas.UserChatMessageCardSchema],
-)
-async def list_chat_message_cards_async(
-    message_uuid: str,
-    chat_uuid: str,
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=1000),
-    user: IUser = Depends(get_authenticated_user_async),
-    session: AsyncSession = Depends(get_db_session_async),
-) -> PaginatedResponse[schemas.UserChatMessageCardSchema]:
-    """List all cards for a chat message."""
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
-
-    chat = await methods.get_chat_async(session, chat_uuid, user.uuid)
-    if not chat:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Chat not found",
-        )
-
-    message = await methods.get_chat_message_async(session, message_uuid, chat.uuid)
-    if not message:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Chat message not found",
-        )
-
-    cards = await methods.list_chat_message_cards_async(
-        session,
-        message.uuid,
-        skip=skip,
-        limit=limit,
-    )
-    total = await methods.count_chat_message_cards_async(session, message.uuid)
-    return PaginatedResponse[schemas.UserChatMessageCardSchema](
-        total=total,
-        results=[card.to_schema() for card in cards],
-    )
-
-
 @router_messages.delete(
     "/{chat_uuid}/messages/{message_uuid}/",
     summary="Delete a chat message.",
