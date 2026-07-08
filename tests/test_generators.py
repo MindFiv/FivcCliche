@@ -402,6 +402,7 @@ class TestCreateChatStreamingGenerator:
         )
 
         mock_create_skill_retriever.assert_not_called()
+        chat_provider.get_chat_context.assert_not_called()
         _, kwargs = mock_agent.run_async.call_args
         assert kwargs["skill_retriever"] is None
         assert isinstance(result, _ChatStreamingGenerator)
@@ -435,6 +436,7 @@ class TestCreateChatStreamingGenerator:
         )
 
         mock_create_skill_retriever.assert_called_once()
+        chat_provider.get_chat_context.assert_not_called()
         _, kwargs = mock_agent.run_async.call_args
         assert kwargs["skill_retriever"] is mock_skill_retriever
         assert isinstance(result, _ChatStreamingGenerator)
@@ -443,10 +445,10 @@ class TestCreateChatStreamingGenerator:
     @patch("fivccliche.utils.generators.create_skill_retriever_async")
     @patch("fivccliche.utils.generators.create_tool_retriever_async")
     @patch("fivccliche.utils.generators.create_agent_async")
-    async def test_create_generator_gets_tools_from_chat_context(
+    async def test_create_generator_passes_chat_context_without_provider_lookup(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
-        """Chat context is resolved inside the streaming generator."""
+        """Chat context is passed to the agent without provider context resolution."""
         mock_agent = AsyncMock()
         mock_agent.run_async = AsyncMock()
         mock_create_agent.return_value = mock_agent
@@ -458,12 +460,7 @@ class TestCreateChatStreamingGenerator:
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
         session = Mock()
-        tool = self._make_mock_tool("context-tool")
         context = {"project": "alpha"}
-        chat_context = Mock()
-        chat_context.get_tools_async = AsyncMock(return_value=[tool])
-        chat_context.get_is_skills_enabled_async = AsyncMock(return_value=True)
-        chat_provider.get_chat_context.return_value = chat_context
 
         result = await create_chat_streaming_generator_async(
             user,
@@ -475,18 +472,17 @@ class TestCreateChatStreamingGenerator:
             session=session,
         )
 
-        chat_provider.get_chat_context.assert_called_once_with(
-            user_uuid=user.uuid,
-            session=session,
-            context=context,
-            config_provider=config_provider,
-        )
-        chat_context.get_tools_async.assert_awaited_once()
-        chat_context.get_is_skills_enabled_async.assert_awaited_once()
+        chat_provider.get_chat_context.assert_not_called()
         _, tool_kwargs = mock_create_tool_retriever.call_args
-        assert tool_kwargs["tools"] == [tool]
+        assert tool_kwargs["tools"] is None
         _, run_kwargs = mock_agent.run_async.call_args
-        assert run_kwargs["tool_ids"] == ["context-tool"]
+        assert run_kwargs["context"] == {
+            "project": "alpha",
+            "user_uuid": user.uuid,
+            "chat_uuid": "chat-uuid-context",
+            "session": session,
+        }
+        assert run_kwargs["tool_ids"] == []
         assert run_kwargs["skill_retriever"] is mock_skill_retriever
         assert isinstance(result, _ChatStreamingGenerator)
 
@@ -494,10 +490,10 @@ class TestCreateChatStreamingGenerator:
     @patch("fivccliche.utils.generators.create_skill_retriever_async")
     @patch("fivccliche.utils.generators.create_tool_retriever_async")
     @patch("fivccliche.utils.generators.create_agent_async")
-    async def test_create_generator_merges_external_and_context_tools_by_name(
+    async def test_create_generator_uses_only_explicit_chat_tools(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
-        """External tools win over same-named context tools."""
+        """Only explicitly supplied chat tools are passed to the tool retriever."""
         mock_agent = AsyncMock()
         mock_agent.run_async = AsyncMock()
         mock_create_agent.return_value = mock_agent
@@ -509,10 +505,10 @@ class TestCreateChatStreamingGenerator:
         chat_provider = self._make_mock_chat_provider()
         external_primary = self._make_mock_tool("shared-tool")
         external_secondary = self._make_mock_tool("external-only")
-        context_duplicate = self._make_mock_tool("shared-tool")
-        context_only = self._make_mock_tool("context-only")
         chat_context = Mock()
-        chat_context.get_tools_async = AsyncMock(return_value=[context_duplicate, context_only])
+        chat_context.get_tools_async = AsyncMock(
+            return_value=[self._make_mock_tool("context-only")]
+        )
         chat_context.get_is_skills_enabled_async = AsyncMock(return_value=False)
         chat_provider.get_chat_context.return_value = chat_context
 
@@ -526,30 +522,33 @@ class TestCreateChatStreamingGenerator:
             chat_context={"scope": "tools"},
         )
 
+        chat_provider.get_chat_context.assert_not_called()
+        chat_context.get_tools_async.assert_not_awaited()
+        chat_context.get_is_skills_enabled_async.assert_not_awaited()
         _, tool_kwargs = mock_create_tool_retriever.call_args
         resolved_tools_by_name = {tool.name: tool for tool in tool_kwargs["tools"]}
         assert resolved_tools_by_name == {
             "shared-tool": external_primary,
             "external-only": external_secondary,
-            "context-only": context_only,
         }
         _, run_kwargs = mock_agent.run_async.call_args
-        assert set(run_kwargs["tool_ids"]) == {"shared-tool", "external-only", "context-only"}
-        mock_create_skill_retriever.assert_not_called()
+        assert set(run_kwargs["tool_ids"]) == {"shared-tool", "external-only"}
+        mock_create_skill_retriever.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("fivccliche.utils.generators.create_skill_retriever_async")
     @patch("fivccliche.utils.generators.create_tool_retriever_async")
     @patch("fivccliche.utils.generators.create_agent_async")
-    async def test_create_generator_uses_context_skill_setting(
+    async def test_create_generator_uses_explicit_skill_setting(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
-        """Context skill settings override the default generator setting."""
+        """Provider context skill settings do not override explicit generator settings."""
         mock_agent = AsyncMock()
         mock_agent.run_async = AsyncMock()
         mock_create_agent.return_value = mock_agent
         mock_create_tool_retriever.return_value = AsyncMock()
-        mock_create_skill_retriever.return_value = AsyncMock()
+        mock_skill_retriever = AsyncMock()
+        mock_create_skill_retriever.return_value = mock_skill_retriever
 
         user = self._make_mock_user()
         config_provider = self._make_mock_config_provider()
@@ -569,9 +568,12 @@ class TestCreateChatStreamingGenerator:
             chat_skills_enabled=True,
         )
 
-        mock_create_skill_retriever.assert_not_called()
+        chat_provider.get_chat_context.assert_not_called()
+        chat_context.get_tools_async.assert_not_awaited()
+        chat_context.get_is_skills_enabled_async.assert_not_awaited()
+        mock_create_skill_retriever.assert_called_once()
         _, run_kwargs = mock_agent.run_async.call_args
-        assert run_kwargs["skill_retriever"] is None
+        assert run_kwargs["skill_retriever"] is mock_skill_retriever
 
     @pytest.mark.asyncio
     @patch("fivccliche.utils.generators.create_skill_retriever_async")
