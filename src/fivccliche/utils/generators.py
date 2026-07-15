@@ -7,10 +7,12 @@ from fivcglue.interfaces.mutexes import IMutex
 from fivcplayground.agents import AgentRun, AgentRunEvent, create_agent_async
 from fivcplayground.skills import create_skill_retriever_async
 from fivcplayground.tools import Tool, create_tool_retriever_async
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.services.interfaces.auth import IUser
+from fivccliche.services.interfaces.db import IDatabase
 from fivccliche.utils.deps import default_db
 
 
@@ -124,12 +126,16 @@ async def create_chat_streaming_generator_async(
     chat_skills_enabled: bool = True,
     chat_context: dict | None = None,
     chat_finish_callback: (
-        Callable[[AgentRun], None] | Callable[[AgentRun], Awaitable[None]] | None
+        Callable[[AgentRun, AsyncSession], None]
+        | Callable[[AgentRun, AsyncSession], Awaitable[None]]
+        | None
     ) = None,
     chat_mutex: IMutex | None = None,
+    chat_db: IDatabase | None = None,
     **kwargs,
 ):
     try:
+        chat_db = chat_db or default_db()
         tools_by_name = {tool.name: tool for tool in chat_tools or []}
         resolved_chat_tools = list(tools_by_name.values()) or None
         chat_tool_ids = [tool.name for tool in resolved_chat_tools] if resolved_chat_tools else []
@@ -137,7 +143,7 @@ async def create_chat_streaming_generator_async(
         base_context = {**(chat_context or {}), "user_uuid": user.uuid, "chat_uuid": chat_uuid}
 
         async def _run_chat_task():
-            owned_session = default_db().create_session()
+            owned_session = chat_db.create_session()
             finish_run = None
             try:
                 context_copy = {**base_context, "session": owned_session}
@@ -201,7 +207,7 @@ async def create_chat_streaming_generator_async(
             finally:
                 try:
                     if chat_finish_callback and finish_run is not None:
-                        callback_result = chat_finish_callback(finish_run)
+                        callback_result = chat_finish_callback(finish_run, owned_session)
                         if inspect.iscoroutine(callback_result):
                             await callback_result
                 finally:

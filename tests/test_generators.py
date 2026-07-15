@@ -702,7 +702,7 @@ class TestCreateChatStreamingGenerator:
             chunks.append(chunk)
 
         await result.wait_async()
-        callback.assert_called_once_with(finish_run)
+        callback.assert_called_once_with(finish_run, owned_session)
         owned_session.close.assert_awaited()
         assert any('"event": "finish"' in chunk for chunk in chunks)
 
@@ -751,7 +751,7 @@ class TestCreateChatStreamingGenerator:
         await agen.aclose()
 
         await result.wait_async()
-        callback.assert_called_once_with(finish_run)
+        callback.assert_called_once_with(finish_run, owned_session)
         owned_session.close.assert_awaited()
 
     @pytest.mark.asyncio
@@ -767,7 +767,7 @@ class TestCreateChatStreamingGenerator:
         mock_default_db,
     ):
         """Async finish callbacks are awaited."""
-        _, mock_db = self._patch_owned_session()
+        owned_session, mock_db = self._patch_owned_session()
         mock_default_db.return_value = mock_db
         finish_run = self._finish_run_mock()
         callback = AsyncMock()
@@ -795,7 +795,7 @@ class TestCreateChatStreamingGenerator:
             pass
 
         await result.wait_async()
-        callback.assert_awaited_once_with(finish_run)
+        callback.assert_awaited_once_with(finish_run, owned_session)
 
     @pytest.mark.asyncio
     @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
@@ -893,6 +893,51 @@ class TestCreateChatStreamingGenerator:
         config_provider.get_model_repository.assert_called_with(
             user_uuid=user.uuid, session=owned_session
         )
+        owned_session.close.assert_awaited()
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.generators.create_skill_retriever_async")
+    @patch("fivccliche.utils.generators.create_tool_retriever_async")
+    @patch("fivccliche.utils.generators.create_agent_async")
+    async def test_run_uses_injected_chat_db_when_provided(
+        self,
+        mock_create_agent,
+        mock_create_tool_retriever,
+        mock_create_skill_retriever,
+        mock_default_db,
+    ):
+        """Explicit chat_db is used for owned session; default_db is not called."""
+        owned_session, chat_db = self._patch_owned_session()
+
+        async def run_async(**kwargs):
+            kwargs["event_callback"](AgentRunEvent.FINISH, self._finish_run_mock())
+
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock(side_effect=run_async)
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_create_skill_retriever.return_value = AsyncMock()
+
+        user = self._make_mock_user()
+        config_provider = self._make_mock_config_provider()
+        chat_provider = self._make_mock_chat_provider()
+
+        result = await create_chat_streaming_generator_async(
+            user,
+            config_provider,
+            chat_provider,
+            chat_uuid="chat-injected-db",
+            chat_query="hello",
+            chat_skills_enabled=False,
+            chat_db=chat_db,
+        )
+
+        await result.wait_async()
+        mock_default_db.assert_not_called()
+        chat_db.create_session.assert_called_once_with()
+        _, run_kwargs = mock_agent.run_async.call_args
+        assert run_kwargs["context"]["session"] is owned_session
         owned_session.close.assert_awaited()
 
     @pytest.mark.asyncio
