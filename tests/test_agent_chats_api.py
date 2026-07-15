@@ -483,9 +483,8 @@ class TestTaskStreamingGenerator:
             queue = asyncio.Queue()
 
             generator = _ChatStreamingGenerator(task, queue)
-            assert generator.chat_task == task
-            assert generator.chat_queue == queue
-            assert hasattr(generator, "__call__")  # noqa
+            assert callable(generator)
+            assert asyncio.iscoroutinefunction(generator.wait_async)
 
             # Clean up the task
             task.cancel()
@@ -526,8 +525,8 @@ class TestTaskStreamingGenerator:
         finally:
             loop.close()
 
-    def test_task_streaming_generator_attributes(self):
-        """Test _ChatStreamingGenerator has required attributes."""
+    def test_task_streaming_generator_public_api(self):
+        """Test _ChatStreamingGenerator exposes only the public streaming API."""
         import asyncio
         from fivccliche.utils.generators import _ChatStreamingGenerator
 
@@ -541,11 +540,11 @@ class TestTaskStreamingGenerator:
             queue = asyncio.Queue()
 
             generator = _ChatStreamingGenerator(task, queue)
-            # Verify attributes
-            assert hasattr(generator, "chat_task")
-            assert hasattr(generator, "chat_queue")
-            assert generator.chat_task is task
-            assert generator.chat_queue is queue
+            assert callable(generator)
+            assert asyncio.iscoroutinefunction(generator.wait_async)
+            assert not hasattr(generator, "chat_task")
+            assert not hasattr(generator, "chat_queue")
+            assert not hasattr(generator, "chat_uuid")
 
             # Clean up the task
             task.cancel()
@@ -1263,6 +1262,7 @@ class TestCreateChatMessages:
         mock_create_streaming.assert_called_once()
         _, kwargs = mock_create_streaming.call_args
         assert kwargs["chat_context"] == context
+        assert kwargs["chat_mutex"] is None
         assert "chat_tools" not in kwargs
         assert kwargs["chat_skills_enabled"] is True
         chat_provider.get_chat_context.assert_not_called()
@@ -1306,6 +1306,8 @@ class TestCreateChatMessages:
         assert chunks == [b"data: done\n\n"]
         mock_mutex_site.get_mutex.assert_called_once_with("chats:message:chat-123")
         mock_create_streaming.assert_called_once()
+        _, kwargs = mock_create_streaming.call_args
+        assert kwargs["chat_mutex"] is None
 
     @pytest.mark.asyncio
     async def test_create_message_returns_409_when_chat_mutex_locked(self):
@@ -1348,8 +1350,8 @@ class TestCreateChatMessages:
         mock_create_streaming.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_create_message_releases_mutex_after_stream_finishes(self):
-        """The chat lock is released after the SSE stream finishes."""
+    async def test_create_message_passes_acquired_mutex_to_streaming_generator(self):
+        """Router acquires the lock and hands the mutex to the streaming factory."""
         from fivccliche.modules.agent_chats.routers import create_chat_messages_async
         from fivccliche.modules.agent_chats.schemas import UserChatMessageCreateSchema
 
@@ -1372,7 +1374,7 @@ class TestCreateChatMessages:
                 "fivccliche.modules.agent_chats.routers.create_chat_streaming_generator_async",
                 new_callable=AsyncMock,
                 return_value=lambda: mock_generator(),
-            ),
+            ) as mock_create_streaming,
         ):
             response = await create_chat_messages_async(
                 chat_uuid="chat-123",
@@ -1386,11 +1388,16 @@ class TestCreateChatMessages:
             chunks = await self._consume_response(response)
 
         assert chunks == [b"data: done\n\n"]
-        mock_mutex.release.assert_called_once()
+        mock_mutex.acquire.assert_called_once()
+        mock_create_streaming.assert_called_once()
+        _, kwargs = mock_create_streaming.call_args
+        assert kwargs["chat_mutex"] is mock_mutex
+        # Release is owned by the streaming factory, not the router.
+        mock_mutex.release.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_create_message_releases_mutex_when_stream_raises(self):
-        """The chat lock is released when the SSE stream raises."""
+    async def test_create_message_passes_mutex_even_when_stream_raises(self):
+        """Router still passes the acquired mutex when the mocked stream raises."""
         from fivccliche.modules.agent_chats.routers import create_chat_messages_async
         from fivccliche.modules.agent_chats.schemas import UserChatMessageCreateSchema
 
@@ -1414,7 +1421,7 @@ class TestCreateChatMessages:
                 "fivccliche.modules.agent_chats.routers.create_chat_streaming_generator_async",
                 new_callable=AsyncMock,
                 return_value=lambda: mock_generator(),
-            ),
+            ) as mock_create_streaming,
         ):
             response = await create_chat_messages_async(
                 chat_uuid="chat-123",
@@ -1428,11 +1435,13 @@ class TestCreateChatMessages:
             with pytest.raises(RuntimeError, match="stream failed"):
                 await self._consume_response(response)
 
-        mock_mutex.release.assert_called_once()
+        _, kwargs = mock_create_streaming.call_args
+        assert kwargs["chat_mutex"] is mock_mutex
+        mock_mutex.release.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_create_message_releases_mutex_when_streaming_generator_creation_fails(self):
-        """The chat lock is released if agent streaming setup fails."""
+    async def test_create_message_does_not_release_mutex_when_factory_mocked_to_fail(self):
+        """When the factory is mocked, router does not own mutex release on setup failure."""
         from fivccliche.modules.agent_chats.routers import create_chat_messages_async
         from fivccliche.modules.agent_chats.schemas import UserChatMessageCreateSchema
 
@@ -1452,7 +1461,7 @@ class TestCreateChatMessages:
                 "fivccliche.modules.agent_chats.routers.create_chat_streaming_generator_async",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("setup failed"),
-            ),
+            ) as mock_create_streaming,
         ):
             with pytest.raises(RuntimeError, match="setup failed"):
                 await create_chat_messages_async(
@@ -1465,7 +1474,11 @@ class TestCreateChatMessages:
                     mutex_site=mock_mutex_site,
                 )
 
-        mock_mutex.release.assert_called_once()
+        mock_create_streaming.assert_called_once()
+        _, kwargs = mock_create_streaming.call_args
+        assert kwargs["chat_mutex"] is mock_mutex
+        # Real factory would release; mocked factory failure leaves release to generators tests.
+        mock_mutex.release.assert_not_called()
 
     def test_create_message_unauthorized(self, client: TestClient):
         """Test creating message without authentication."""

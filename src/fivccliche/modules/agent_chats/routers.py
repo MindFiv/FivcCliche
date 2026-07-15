@@ -229,45 +229,30 @@ async def create_chat_messages_async(
     chat_agent_id = chat.agent_id
     print(f"🤖 [AGENT] Creating agent with ID: {chat_agent_id}")
 
-    mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
-    if mutex:
-        lock_acquired = mutex.acquire(
-            expire=CHAT_MESSAGE_LOCK_EXPIRE,
-            method="non-blocking",
+    chat_mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
+    if chat_mutex and not chat_mutex.acquire(
+        expire=CHAT_MESSAGE_LOCK_EXPIRE,
+        method="non-blocking",
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Chat message processing already running",
         )
-        if not lock_acquired:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Chat message processing already running",
-            )
 
-    try:
-        chat_gen = await create_chat_streaming_generator_async(
-            user,
-            config_provider,
-            chat_provider,
-            chat_uuid=chat_uuid,
-            chat_query=chat_message.query,
-            chat_agent_id=chat_agent_id,
-            chat_context=chat.context,
-            chat_skills_enabled=True,
-            session=session,
-        )
-    except Exception:
-        if mutex:
-            mutex.release()
-        raise
-
-    async def locked_chat_gen():
-        try:
-            async for chunk in chat_gen():
-                yield chunk
-        finally:
-            if mutex:
-                mutex.release()
+    chat_gen = await create_chat_streaming_generator_async(
+        user,
+        config_provider,
+        chat_provider,
+        chat_uuid=chat_uuid,
+        chat_query=chat_message.query,
+        chat_agent_id=chat_agent_id,
+        chat_context=chat.context,
+        chat_skills_enabled=True,
+        chat_mutex=chat_mutex,
+    )
 
     return responses.StreamingResponse(
-        locked_chat_gen(),
+        chat_gen(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

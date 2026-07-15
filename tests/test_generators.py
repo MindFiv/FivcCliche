@@ -42,15 +42,14 @@ class TestChatStreamingGenerator:
         )
 
     def test_initialization(self, mock_task, mock_queue):
-        """Test generator initializes correctly."""
+        """Test generator exposes only the public streaming/wait API."""
         generator = _ChatStreamingGenerator(
             chat_task=mock_task,
             chat_queue=mock_queue,
             chat_uuid="test-uuid",
         )
-        assert generator.chat_task == mock_task
-        assert generator.chat_queue == mock_queue
-        assert generator.chat_uuid == "test-uuid"
+        assert callable(generator)
+        assert asyncio.iscoroutinefunction(generator.wait_async)
 
     def test_initialization_without_chat_uuid(self, mock_task, mock_queue):
         """Test generator initializes correctly without chat_uuid."""
@@ -58,7 +57,8 @@ class TestChatStreamingGenerator:
             chat_task=mock_task,
             chat_queue=mock_queue,
         )
-        assert generator.chat_uuid is None
+        assert callable(generator)
+        assert asyncio.iscoroutinefunction(generator.wait_async)
 
     @pytest.mark.asyncio
     async def test_start_event_formatting(self, generator, mock_task, mock_queue):
@@ -392,14 +392,19 @@ class TestCreateChatStreamingGenerator:
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
 
-        result = await create_chat_streaming_generator_async(
-            user,
-            config_provider,
-            chat_provider,
-            chat_uuid="chat-uuid-1",
-            chat_query="hello",
-            chat_skills_enabled=False,
-        )
+        with patch("fivccliche.utils.generators.default_db", new_callable=Mock) as mock_default_db:
+            owned_session = AsyncMock()
+            owned_session.close = AsyncMock()
+            mock_default_db.return_value.create_session.return_value = owned_session
+            result = await create_chat_streaming_generator_async(
+                user,
+                config_provider,
+                chat_provider,
+                chat_uuid="chat-uuid-1",
+                chat_query="hello",
+                chat_skills_enabled=False,
+            )
+            await result.wait_async()
 
         mock_create_skill_retriever.assert_not_called()
         chat_provider.get_chat_context.assert_not_called()
@@ -426,14 +431,19 @@ class TestCreateChatStreamingGenerator:
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
 
-        result = await create_chat_streaming_generator_async(
-            user,
-            config_provider,
-            chat_provider,
-            chat_uuid="chat-uuid-2",
-            chat_query="hello",
-            chat_skills_enabled=True,
-        )
+        with patch("fivccliche.utils.generators.default_db", new_callable=Mock) as mock_default_db:
+            owned_session = AsyncMock()
+            owned_session.close = AsyncMock()
+            mock_default_db.return_value.create_session.return_value = owned_session
+            result = await create_chat_streaming_generator_async(
+                user,
+                config_provider,
+                chat_provider,
+                chat_uuid="chat-uuid-2",
+                chat_query="hello",
+                chat_skills_enabled=True,
+            )
+            await result.wait_async()
 
         mock_create_skill_retriever.assert_called_once()
         chat_provider.get_chat_context.assert_not_called()
@@ -459,18 +469,21 @@ class TestCreateChatStreamingGenerator:
         user = self._make_mock_user()
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
-        session = Mock()
         context = {"project": "alpha"}
+        owned_session = AsyncMock()
+        owned_session.close = AsyncMock()
 
-        result = await create_chat_streaming_generator_async(
-            user,
-            config_provider,
-            chat_provider,
-            chat_uuid="chat-uuid-context",
-            chat_query="hello",
-            chat_context=context,
-            session=session,
-        )
+        with patch("fivccliche.utils.generators.default_db", new_callable=Mock) as mock_default_db:
+            mock_default_db.return_value.create_session.return_value = owned_session
+            result = await create_chat_streaming_generator_async(
+                user,
+                config_provider,
+                chat_provider,
+                chat_uuid="chat-uuid-context",
+                chat_query="hello",
+                chat_context=context,
+            )
+            await result.wait_async()
 
         chat_provider.get_chat_context.assert_not_called()
         _, tool_kwargs = mock_create_tool_retriever.call_args
@@ -480,11 +493,17 @@ class TestCreateChatStreamingGenerator:
             "project": "alpha",
             "user_uuid": user.uuid,
             "chat_uuid": "chat-uuid-context",
-            "session": session,
+            "session": owned_session,
         }
         assert run_kwargs["tool_ids"] == []
         assert run_kwargs["skill_retriever"] is mock_skill_retriever
         assert isinstance(result, _ChatStreamingGenerator)
+        config_provider.get_model_repository.assert_called_with(
+            user_uuid=user.uuid, session=owned_session
+        )
+        config_provider.get_agent_repository.assert_called_with(
+            user_uuid=user.uuid, session=owned_session
+        )
 
     @pytest.mark.asyncio
     @patch("fivccliche.utils.generators.create_skill_retriever_async")
@@ -512,15 +531,20 @@ class TestCreateChatStreamingGenerator:
         chat_context.get_is_skills_enabled_async = AsyncMock(return_value=False)
         chat_provider.get_chat_context.return_value = chat_context
 
-        await create_chat_streaming_generator_async(
-            user,
-            config_provider,
-            chat_provider,
-            chat_uuid="chat-uuid-tools",
-            chat_query="hello",
-            chat_tools=[external_primary, external_secondary],
-            chat_context={"scope": "tools"},
-        )
+        with patch("fivccliche.utils.generators.default_db", new_callable=Mock) as mock_default_db:
+            owned_session = AsyncMock()
+            owned_session.close = AsyncMock()
+            mock_default_db.return_value.create_session.return_value = owned_session
+            result = await create_chat_streaming_generator_async(
+                user,
+                config_provider,
+                chat_provider,
+                chat_uuid="chat-uuid-tools",
+                chat_query="hello",
+                chat_tools=[external_primary, external_secondary],
+                chat_context={"scope": "tools"},
+            )
+            await result.wait_async()
 
         chat_provider.get_chat_context.assert_not_called()
         chat_context.get_tools_async.assert_not_awaited()
@@ -558,15 +582,20 @@ class TestCreateChatStreamingGenerator:
         chat_context.get_is_skills_enabled_async = AsyncMock(return_value=False)
         chat_provider.get_chat_context.return_value = chat_context
 
-        await create_chat_streaming_generator_async(
-            user,
-            config_provider,
-            chat_provider,
-            chat_uuid="chat-uuid-no-skills",
-            chat_query="hello",
-            chat_context={"skills": "disabled"},
-            chat_skills_enabled=True,
-        )
+        with patch("fivccliche.utils.generators.default_db", new_callable=Mock) as mock_default_db:
+            owned_session = AsyncMock()
+            owned_session.close = AsyncMock()
+            mock_default_db.return_value.create_session.return_value = owned_session
+            result = await create_chat_streaming_generator_async(
+                user,
+                config_provider,
+                chat_provider,
+                chat_uuid="chat-uuid-no-skills",
+                chat_query="hello",
+                chat_context={"skills": "disabled"},
+                chat_skills_enabled=True,
+            )
+            await result.wait_async()
 
         chat_provider.get_chat_context.assert_not_called()
         chat_context.get_tools_async.assert_not_awaited()
@@ -582,9 +611,257 @@ class TestCreateChatStreamingGenerator:
     async def test_create_generator_returns_streaming_generator(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
-        """Returns a _ChatStreamingGenerator with the correct chat_uuid."""
+        """Returns a callable _ChatStreamingGenerator with wait_async."""
         mock_agent = AsyncMock()
         mock_agent.run_async = AsyncMock()
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_create_skill_retriever.return_value = AsyncMock()
+
+        user = self._make_mock_user()
+        config_provider = self._make_mock_config_provider()
+        chat_provider = self._make_mock_chat_provider()
+
+        with patch("fivccliche.utils.generators.default_db", new_callable=Mock) as mock_default_db:
+            owned_session = AsyncMock()
+            owned_session.close = AsyncMock()
+            mock_default_db.return_value.create_session.return_value = owned_session
+            result = await create_chat_streaming_generator_async(
+                user,
+                config_provider,
+                chat_provider,
+                chat_uuid="my-chat-uuid",
+                chat_query="test query",
+            )
+            await result.wait_async()
+
+        assert isinstance(result, _ChatStreamingGenerator)
+        assert callable(result)
+        assert asyncio.iscoroutinefunction(result.wait_async)
+
+    def _patch_owned_session(self):
+        owned_session = AsyncMock()
+        owned_session.close = AsyncMock()
+        mock_db = Mock()
+        mock_db.create_session.return_value = owned_session
+        return owned_session, mock_db
+
+    @staticmethod
+    def _finish_run_mock():
+        mock_run = Mock()
+        mock_run.model_dump.return_value = {
+            "id": "run-finish",
+            "agent_id": "agent-1",
+            "started_at": "2024-01-01T00:00:00",
+            "completed_at": "2024-01-01T00:00:01",
+            "query": "hello",
+            "reply": "world",
+            "tool_calls": [],
+        }
+        return mock_run
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.generators.create_skill_retriever_async")
+    @patch("fivccliche.utils.generators.create_tool_retriever_async")
+    @patch("fivccliche.utils.generators.create_agent_async")
+    async def test_finish_callback_called_once_on_normal_completion(
+        self,
+        mock_create_agent,
+        mock_create_tool_retriever,
+        mock_create_skill_retriever,
+        mock_default_db,
+    ):
+        """Finish callback runs exactly once when the agent emits FINISH."""
+        owned_session, mock_db = self._patch_owned_session()
+        mock_default_db.return_value = mock_db
+        finish_run = self._finish_run_mock()
+        callback = Mock()
+
+        async def run_async(**kwargs):
+            kwargs["event_callback"](AgentRunEvent.FINISH, finish_run)
+
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock(side_effect=run_async)
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_create_skill_retriever.return_value = AsyncMock()
+
+        result = await create_chat_streaming_generator_async(
+            self._make_mock_user(),
+            self._make_mock_config_provider(),
+            self._make_mock_chat_provider(),
+            chat_uuid="chat-callback-ok",
+            chat_query="hello",
+            chat_finish_callback=callback,
+            chat_skills_enabled=False,
+        )
+
+        chunks = []
+        async for chunk in result():
+            chunks.append(chunk)
+
+        await result.wait_async()
+        callback.assert_called_once_with(finish_run)
+        owned_session.close.assert_awaited()
+        assert any('"event": "finish"' in chunk for chunk in chunks)
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.generators.create_skill_retriever_async")
+    @patch("fivccliche.utils.generators.create_tool_retriever_async")
+    @patch("fivccliche.utils.generators.create_agent_async")
+    async def test_finish_callback_called_after_generator_aclose(
+        self,
+        mock_create_agent,
+        mock_create_tool_retriever,
+        mock_create_skill_retriever,
+        mock_default_db,
+    ):
+        """Client disconnect (aclose) still invokes finish callback after FINISH."""
+        owned_session, mock_db = self._patch_owned_session()
+        mock_default_db.return_value = mock_db
+        finish_run = self._finish_run_mock()
+        callback = Mock()
+        started = asyncio.Event()
+
+        async def run_async(**kwargs):
+            started.set()
+            await asyncio.sleep(0.05)
+            kwargs["event_callback"](AgentRunEvent.FINISH, finish_run)
+
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock(side_effect=run_async)
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_create_skill_retriever.return_value = AsyncMock()
+
+        result = await create_chat_streaming_generator_async(
+            self._make_mock_user(),
+            self._make_mock_config_provider(),
+            self._make_mock_chat_provider(),
+            chat_uuid="chat-callback-disconnect",
+            chat_query="hello",
+            chat_finish_callback=callback,
+            chat_skills_enabled=False,
+        )
+
+        agen = result()
+        await started.wait()
+        await agen.aclose()
+
+        await result.wait_async()
+        callback.assert_called_once_with(finish_run)
+        owned_session.close.assert_awaited()
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.generators.create_skill_retriever_async")
+    @patch("fivccliche.utils.generators.create_tool_retriever_async")
+    @patch("fivccliche.utils.generators.create_agent_async")
+    async def test_async_finish_callback_awaited(
+        self,
+        mock_create_agent,
+        mock_create_tool_retriever,
+        mock_create_skill_retriever,
+        mock_default_db,
+    ):
+        """Async finish callbacks are awaited."""
+        _, mock_db = self._patch_owned_session()
+        mock_default_db.return_value = mock_db
+        finish_run = self._finish_run_mock()
+        callback = AsyncMock()
+
+        async def run_async(**kwargs):
+            kwargs["event_callback"](AgentRunEvent.FINISH, finish_run)
+
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock(side_effect=run_async)
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_create_skill_retriever.return_value = AsyncMock()
+
+        result = await create_chat_streaming_generator_async(
+            self._make_mock_user(),
+            self._make_mock_config_provider(),
+            self._make_mock_chat_provider(),
+            chat_uuid="chat-callback-async",
+            chat_query="hello",
+            chat_finish_callback=callback,
+            chat_skills_enabled=False,
+        )
+
+        async for _ in result():
+            pass
+
+        await result.wait_async()
+        callback.assert_awaited_once_with(finish_run)
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.generators.create_skill_retriever_async")
+    @patch("fivccliche.utils.generators.create_tool_retriever_async")
+    @patch("fivccliche.utils.generators.create_agent_async")
+    async def test_finish_callback_not_called_without_finish_event(
+        self,
+        mock_create_agent,
+        mock_create_tool_retriever,
+        mock_create_skill_retriever,
+        mock_default_db,
+    ):
+        """Finish callback is skipped when the agent run fails before FINISH."""
+        _, mock_db = self._patch_owned_session()
+        mock_default_db.return_value = mock_db
+        callback = Mock()
+
+        async def run_async(**kwargs):
+            raise RuntimeError("agent failed")
+
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock(side_effect=run_async)
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_create_skill_retriever.return_value = AsyncMock()
+
+        result = await create_chat_streaming_generator_async(
+            self._make_mock_user(),
+            self._make_mock_config_provider(),
+            self._make_mock_chat_provider(),
+            chat_uuid="chat-callback-error",
+            chat_query="hello",
+            chat_finish_callback=callback,
+            chat_skills_enabled=False,
+        )
+
+        chunks = []
+        async for chunk in result():
+            chunks.append(chunk)
+
+        await result.wait_async()
+        callback.assert_not_called()
+        assert any('"event": "error"' in chunk for chunk in chunks)
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.generators.create_skill_retriever_async")
+    @patch("fivccliche.utils.generators.create_tool_retriever_async")
+    @patch("fivccliche.utils.generators.create_agent_async")
+    async def test_run_uses_owned_session_not_request_session(
+        self,
+        mock_create_agent,
+        mock_create_tool_retriever,
+        mock_create_skill_retriever,
+        mock_default_db,
+    ):
+        """Agent run binds repositories/context to an owned session."""
+        owned_session, mock_db = self._patch_owned_session()
+        mock_default_db.return_value = mock_db
+
+        async def run_async(**kwargs):
+            kwargs["event_callback"](AgentRunEvent.FINISH, self._finish_run_mock())
+
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock(side_effect=run_async)
         mock_create_agent.return_value = mock_agent
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
@@ -597,9 +874,134 @@ class TestCreateChatStreamingGenerator:
             user,
             config_provider,
             chat_provider,
-            chat_uuid="my-chat-uuid",
-            chat_query="test query",
+            chat_uuid="chat-owned-session",
+            chat_query="hello",
+            chat_context={"project": "alpha"},
+            chat_skills_enabled=False,
         )
 
-        assert isinstance(result, _ChatStreamingGenerator)
-        assert result.chat_uuid == "my-chat-uuid"
+        await result.wait_async()
+        _, run_kwargs = mock_agent.run_async.call_args
+        assert run_kwargs["context"]["session"] is owned_session
+        assert run_kwargs["context"]["project"] == "alpha"
+        chat_provider.get_chat_repository.assert_called_with(
+            user_uuid=user.uuid, session=owned_session
+        )
+        config_provider.get_tool_repository.assert_any_call(
+            user_uuid=user.uuid, session=owned_session
+        )
+        config_provider.get_model_repository.assert_called_with(
+            user_uuid=user.uuid, session=owned_session
+        )
+        owned_session.close.assert_awaited()
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.generators.create_skill_retriever_async")
+    @patch("fivccliche.utils.generators.create_tool_retriever_async")
+    @patch("fivccliche.utils.generators.create_agent_async")
+    async def test_mutex_released_after_normal_completion(
+        self,
+        mock_create_agent,
+        mock_create_tool_retriever,
+        mock_create_skill_retriever,
+        mock_default_db,
+    ):
+        """Acquired mutex is released once when the chat task finishes."""
+        _, mock_db = self._patch_owned_session()
+        mock_default_db.return_value = mock_db
+        mutex = Mock()
+
+        async def run_async(**kwargs):
+            kwargs["event_callback"](AgentRunEvent.FINISH, self._finish_run_mock())
+
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock(side_effect=run_async)
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_create_skill_retriever.return_value = AsyncMock()
+
+        result = await create_chat_streaming_generator_async(
+            self._make_mock_user(),
+            self._make_mock_config_provider(),
+            self._make_mock_chat_provider(),
+            chat_uuid="chat-mutex-ok",
+            chat_query="hello",
+            chat_skills_enabled=False,
+            chat_mutex=mutex,
+        )
+
+        async for _ in result():
+            pass
+
+        await result.wait_async()
+        mutex.release.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.generators.create_skill_retriever_async")
+    @patch("fivccliche.utils.generators.create_tool_retriever_async")
+    @patch("fivccliche.utils.generators.create_agent_async")
+    async def test_mutex_released_after_generator_aclose(
+        self,
+        mock_create_agent,
+        mock_create_tool_retriever,
+        mock_create_skill_retriever,
+        mock_default_db,
+    ):
+        """Mutex is still released when the SSE consumer disconnects early."""
+        _, mock_db = self._patch_owned_session()
+        mock_default_db.return_value = mock_db
+        mutex = Mock()
+        started = asyncio.Event()
+
+        async def run_async(**kwargs):
+            started.set()
+            await asyncio.sleep(0.05)
+            kwargs["event_callback"](AgentRunEvent.FINISH, self._finish_run_mock())
+
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock(side_effect=run_async)
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_create_skill_retriever.return_value = AsyncMock()
+
+        result = await create_chat_streaming_generator_async(
+            self._make_mock_user(),
+            self._make_mock_config_provider(),
+            self._make_mock_chat_provider(),
+            chat_uuid="chat-mutex-disconnect",
+            chat_query="hello",
+            chat_skills_enabled=False,
+            chat_mutex=mutex,
+        )
+
+        agen = result()
+        await started.wait()
+        await agen.aclose()
+        await result.wait_async()
+        mutex.release.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.generators.create_agent_async")
+    async def test_mutex_released_when_agent_setup_fails(self, mock_create_agent, mock_default_db):
+        """Mutex is released when agent setup fails inside the chat task."""
+        owned_session, mock_db = self._patch_owned_session()
+        mock_default_db.return_value = mock_db
+        mock_create_agent.side_effect = RuntimeError("setup failed")
+        mutex = Mock()
+
+        result = await create_chat_streaming_generator_async(
+            self._make_mock_user(),
+            self._make_mock_config_provider(),
+            self._make_mock_chat_provider(),
+            chat_uuid="chat-mutex-create-fail",
+            chat_query="hello",
+            chat_skills_enabled=False,
+            chat_mutex=mutex,
+        )
+
+        await result.wait_async()
+        mutex.release.assert_called_once()
+        owned_session.close.assert_awaited()
