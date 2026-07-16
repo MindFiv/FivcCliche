@@ -56,9 +56,22 @@ class SafeMutex(mutexes.IMutex):
     def acquire(
         self,
         expire: timedelta,
-        method: str = "blocking",
+        timeout: timedelta | None = None,
+        **kwargs,
     ) -> bool:
-        acquired = self._mutex.acquire(expire=expire, method=method)
+        acquired = self._mutex.acquire(expire=expire, timeout=timeout, **kwargs)
+        if acquired:
+            self._acquired = True
+            self._released = False
+        return acquired
+
+    async def acquire_async(
+        self,
+        expire: timedelta,
+        timeout: timedelta | None = None,
+        **kwargs,
+    ) -> bool:
+        acquired = await self._mutex.acquire_async(expire=expire, timeout=timeout, **kwargs)
         if acquired:
             self._acquired = True
             self._released = False
@@ -71,6 +84,17 @@ class SafeMutex(mutexes.IMutex):
             return True
 
         released = self._mutex.release()
+        if released:
+            self._released = True
+        return released
+
+    async def release_async(self) -> bool:
+        if not self._acquired:
+            return False
+        if self._released:
+            return True
+
+        released = await self._mutex.release_async()
         if released:
             self._released = True
         return released

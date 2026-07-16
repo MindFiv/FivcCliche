@@ -7,63 +7,42 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 from fivcplayground.agents import AgentRunEvent
 
-from fivccliche.utils.generators import (
-    _ChatStreamingGenerator,
-    create_chat_streaming_generator_async,
-)
+from fivccliche.utils.chats import ChatTask
 
 
-class TestChatStreamingGenerator:
-    """Test the _ChatStreamingGenerator class."""
+class TestChatTaskGetStream:
+    """Test ChatTask.get_stream_async() SSE formatting."""
 
-    @pytest.fixture
-    def mock_task(self):
-        """Create a mock asyncio.Task."""
-        task = MagicMock(spec=asyncio.Task)
-        task.done.return_value = False
-        task.result.return_value = None
-        return task
+    def _make_chat_task(self, chat_uuid: str | None = "test-chat-uuid"):
+        user = Mock()
+        user.uuid = "user-1"
+        with patch("fivccliche.utils.chats.default_db", new_callable=Mock) as mock_db:
+            mock_db.return_value.create_session.return_value = AsyncMock()
+            chat_task = ChatTask(user, Mock(), Mock(), chat_uuid=chat_uuid)
+        chat_task._asyncio_task = MagicMock(spec=asyncio.Task)
+        chat_task._asyncio_task.done.return_value = False
+        chat_task._asyncio_task.result.return_value = None
+        chat_task._chat_queue = MagicMock()
+        chat_task._chat_queue.empty = Mock(return_value=False)
+        chat_task._chat_queue.task_done = Mock()
+        return chat_task
 
-    @pytest.fixture
-    def mock_queue(self):
-        """Create a mock asyncio.Queue."""
-        queue = MagicMock()
-        queue.empty = Mock(return_value=False)
-        queue.task_done = Mock()
-        return queue
+    def test_get_stream_returns_async_generator(self):
+        """get_stream_async() returns an async generator."""
+        chat_task = self._make_chat_task()
+        stream = chat_task.get_stream_async()
+        assert hasattr(stream, "__aiter__")
 
-    @pytest.fixture
-    def generator(self, mock_task, mock_queue):
-        """Create a generator instance."""
-        return _ChatStreamingGenerator(
-            chat_task=mock_task,
-            chat_queue=mock_queue,
-            chat_uuid="test-chat-uuid",
-        )
-
-    def test_initialization(self, mock_task, mock_queue):
-        """Test generator exposes only the public streaming/wait API."""
-        generator = _ChatStreamingGenerator(
-            chat_task=mock_task,
-            chat_queue=mock_queue,
-            chat_uuid="test-uuid",
-        )
-        assert callable(generator)
-        assert asyncio.iscoroutinefunction(generator.wait_async)
-
-    def test_initialization_without_chat_uuid(self, mock_task, mock_queue):
-        """Test generator initializes correctly without chat_uuid."""
-        generator = _ChatStreamingGenerator(
-            chat_task=mock_task,
-            chat_queue=mock_queue,
-        )
-        assert callable(generator)
-        assert asyncio.iscoroutinefunction(generator.wait_async)
+    def test_get_stream_without_chat_uuid(self):
+        """get_stream works when chat_uuid is None."""
+        chat_task = self._make_chat_task(chat_uuid=None)
+        stream = chat_task.get_stream_async()
+        assert hasattr(stream, "__aiter__")
 
     @pytest.mark.asyncio
-    async def test_start_event_formatting(self, generator, mock_task, mock_queue):
+    async def test_start_event_formatting(self):
         """Test START event is formatted correctly."""
-        # Create mock agent run
+        chat_task = self._make_chat_task()
         mock_run = Mock()
         mock_run.model_dump.return_value = {
             "id": "run-1",
@@ -75,30 +54,28 @@ class TestChatStreamingGenerator:
             "tool_calls": [],
         }
 
-        # Setup queue to return START event then finish
         async def mock_wait_for(coro, timeout):
-            if mock_task.done.return_value:
+            if chat_task._asyncio_task.done.return_value:
                 raise asyncio.TimeoutError()
-            mock_task.done.return_value = True
+            chat_task._asyncio_task.done.return_value = True
             return (AgentRunEvent.START, mock_run)
 
-        mock_queue.empty.return_value = True
-
-        # Patch asyncio.wait_for
+        chat_task._chat_queue.empty.return_value = True
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in generator():
+            async for chunk in chat_task.get_stream_async():
                 results.append(chunk)
 
-            assert len(results) == 1
-            data = json.loads(results[0].replace("data: ", "").strip())
-            assert data["event"] == "start"
-            assert data["info"]["chat_uuid"] == "test-chat-uuid"
-            assert data["info"]["id"] == "run-1"
+        assert len(results) == 1
+        data = json.loads(results[0].replace("data: ", "").strip())
+        assert data["event"] == "start"
+        assert data["info"]["chat_uuid"] == "test-chat-uuid"
+        assert data["info"]["id"] == "run-1"
 
     @pytest.mark.asyncio
-    async def test_finish_event_formatting(self, generator, mock_task, mock_queue):
+    async def test_finish_event_formatting(self):
         """Test FINISH event is formatted correctly."""
+        chat_task = self._make_chat_task()
         mock_run = Mock()
         mock_run.model_dump.return_value = {
             "id": "run-1",
@@ -111,30 +88,29 @@ class TestChatStreamingGenerator:
         }
 
         async def mock_wait_for(coro, timeout):
-            if mock_task.done.return_value:
+            if chat_task._asyncio_task.done.return_value:
                 raise asyncio.TimeoutError()
-            mock_task.done.return_value = True
+            chat_task._asyncio_task.done.return_value = True
             return (AgentRunEvent.FINISH, mock_run)
 
-        mock_queue.empty.return_value = True
-
+        chat_task._chat_queue.empty.return_value = True
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in generator():
+            async for chunk in chat_task.get_stream_async():
                 results.append(chunk)
 
-            assert len(results) == 1
-            data = json.loads(results[0].replace("data: ", "").strip())
-            assert data["event"] == "finish"
-            assert data["info"]["chat_uuid"] == "test-chat-uuid"
-            assert data["info"]["reply"] == "test reply"
+        assert len(results) == 1
+        data = json.loads(results[0].replace("data: ", "").strip())
+        assert data["event"] == "finish"
+        assert data["info"]["chat_uuid"] == "test-chat-uuid"
+        assert data["info"]["reply"] == "test reply"
 
     @pytest.mark.asyncio
-    async def test_stream_event_with_delta(self, generator, mock_task, mock_queue):
+    async def test_stream_event_with_delta(self):
         """Test STREAM event with delta is formatted correctly."""
+        chat_task = self._make_chat_task()
         mock_delta = Mock()
         mock_delta.model_dump.return_value = {"content": "partial text"}
-
         mock_run = Mock()
         mock_run.model_dump.return_value = {
             "id": "run-1",
@@ -148,27 +124,27 @@ class TestChatStreamingGenerator:
         mock_run.delta = mock_delta
 
         async def mock_wait_for(coro, timeout):
-            if mock_task.done.return_value:
+            if chat_task._asyncio_task.done.return_value:
                 raise asyncio.TimeoutError()
-            mock_task.done.return_value = True
+            chat_task._asyncio_task.done.return_value = True
             return (AgentRunEvent.STREAM, mock_run)
 
-        mock_queue.empty.return_value = True
-
+        chat_task._chat_queue.empty.return_value = True
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in generator():
+            async for chunk in chat_task.get_stream_async():
                 results.append(chunk)
 
-            assert len(results) == 1
-            data = json.loads(results[0].replace("data: ", "").strip())
-            assert data["event"] == "stream"
-            assert data["info"]["chat_uuid"] == "test-chat-uuid"
-            assert data["info"]["delta"] == {"content": "partial text"}
+        assert len(results) == 1
+        data = json.loads(results[0].replace("data: ", "").strip())
+        assert data["event"] == "stream"
+        assert data["info"]["chat_uuid"] == "test-chat-uuid"
+        assert data["info"]["delta"] == {"content": "partial text"}
 
     @pytest.mark.asyncio
-    async def test_stream_event_without_delta(self, generator, mock_task, mock_queue):
+    async def test_stream_event_without_delta(self):
         """Test STREAM event without delta is formatted correctly."""
+        chat_task = self._make_chat_task()
         mock_run = Mock()
         mock_run.model_dump.return_value = {
             "id": "run-1",
@@ -182,26 +158,26 @@ class TestChatStreamingGenerator:
         mock_run.delta = None
 
         async def mock_wait_for(coro, timeout):
-            if mock_task.done.return_value:
+            if chat_task._asyncio_task.done.return_value:
                 raise asyncio.TimeoutError()
-            mock_task.done.return_value = True
+            chat_task._asyncio_task.done.return_value = True
             return (AgentRunEvent.STREAM, mock_run)
 
-        mock_queue.empty.return_value = True
-
+        chat_task._chat_queue.empty.return_value = True
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in generator():
+            async for chunk in chat_task.get_stream_async():
                 results.append(chunk)
 
-            assert len(results) == 1
-            data = json.loads(results[0].replace("data: ", "").strip())
-            assert data["event"] == "stream"
-            assert data["info"]["delta"] is None
+        assert len(results) == 1
+        data = json.loads(results[0].replace("data: ", "").strip())
+        assert data["event"] == "stream"
+        assert data["info"]["delta"] is None
 
     @pytest.mark.asyncio
-    async def test_tool_event_formatting(self, generator, mock_task, mock_queue):
+    async def test_tool_event_formatting(self):
         """Test TOOL event is formatted correctly."""
+        chat_task = self._make_chat_task()
         mock_run = Mock()
         mock_run.model_dump.return_value = {
             "id": "run-1",
@@ -214,48 +190,46 @@ class TestChatStreamingGenerator:
         }
 
         async def mock_wait_for(coro, timeout):
-            if mock_task.done.return_value:
+            if chat_task._asyncio_task.done.return_value:
                 raise asyncio.TimeoutError()
-            mock_task.done.return_value = True
+            chat_task._asyncio_task.done.return_value = True
             return (AgentRunEvent.TOOL, mock_run)
 
-        mock_queue.empty.return_value = True
-
+        chat_task._chat_queue.empty.return_value = True
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in generator():
+            async for chunk in chat_task.get_stream_async():
                 results.append(chunk)
 
-            assert len(results) == 1
-            data = json.loads(results[0].replace("data: ", "").strip())
-            assert data["event"] == "tool"
-            assert data["info"]["chat_uuid"] == "test-chat-uuid"
-            assert len(data["info"]["tool_calls"]) == 1
+        assert len(results) == 1
+        data = json.loads(results[0].replace("data: ", "").strip())
+        assert data["event"] == "tool"
+        assert data["info"]["chat_uuid"] == "test-chat-uuid"
+        assert len(data["info"]["tool_calls"]) == 1
 
     @pytest.mark.asyncio
-    async def test_error_handling(self, generator, mock_task, mock_queue):
+    async def test_error_handling(self):
         """Test error event is generated on exception."""
+        chat_task = self._make_chat_task()
 
-        # Make wait_for raise an exception
         async def mock_wait_for(coro, timeout):
             raise ValueError("Test error")
 
-        mock_queue.empty.return_value = False
-
+        chat_task._chat_queue.empty.return_value = False
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in generator():
+            async for chunk in chat_task.get_stream_async():
                 results.append(chunk)
 
-            assert len(results) == 1
-            data = json.loads(results[0].replace("data: ", "").strip())
-            assert data["event"] == "error"
-            assert "Test error" in data["info"]["message"]
+        assert len(results) == 1
+        data = json.loads(results[0].replace("data: ", "").strip())
+        assert data["event"] == "error"
+        assert "Test error" in data["info"]["message"]
 
     @pytest.mark.asyncio
-    async def test_timeout_handling(self, generator, mock_task, mock_queue):
+    async def test_timeout_handling(self):
         """Test timeout behavior when queue is empty."""
-        # First call times out, second call task is done
+        chat_task = self._make_chat_task()
         call_count = 0
 
         async def mock_wait_for(coro, timeout):
@@ -263,31 +237,28 @@ class TestChatStreamingGenerator:
             call_count += 1
             if call_count == 1:
                 raise asyncio.TimeoutError()
-            # Second call, task is done
-            mock_task.done.return_value = True
+            chat_task._asyncio_task.done.return_value = True
             raise asyncio.TimeoutError()
 
-        mock_queue.empty.return_value = True
-
+        chat_task._chat_queue.empty.return_value = True
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in generator():
+            async for chunk in chat_task.get_stream_async():
                 results.append(chunk)
 
-            # Should exit cleanly without yielding anything
-            assert len(results) == 0
-            assert call_count == 2
+        assert len(results) == 0
+        assert call_count == 2
 
     @pytest.mark.asyncio
-    async def test_chat_uuid_added_to_all_events(self, generator, mock_task, mock_queue):
+    async def test_chat_uuid_added_to_all_events(self):
         """Test chat_uuid is added to all event types."""
+        chat_task = self._make_chat_task()
         events = [
             (AgentRunEvent.START, Mock()),
             (AgentRunEvent.STREAM, Mock()),
             (AgentRunEvent.TOOL, Mock()),
             (AgentRunEvent.FINISH, Mock()),
         ]
-
         for event_mock in events:
             event_mock[1].model_dump.return_value = {
                 "id": "run-1",
@@ -305,44 +276,43 @@ class TestChatStreamingGenerator:
         async def mock_wait_for(coro, timeout):
             nonlocal event_index
             if event_index >= len(events):
-                mock_task.done.return_value = True
+                chat_task._asyncio_task.done.return_value = True
                 raise asyncio.TimeoutError()
             event = events[event_index]
             event_index += 1
             return event
 
-        # Make empty() return True after all events are processed
         def mock_empty():
             return event_index >= len(events)
 
-        mock_queue.empty.side_effect = mock_empty
-
+        chat_task._chat_queue.empty.side_effect = mock_empty
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in generator():
+            async for chunk in chat_task.get_stream_async():
                 results.append(chunk)
 
-            assert len(results) == 4
-            for result in results:
-                data = json.loads(result.replace("data: ", "").strip())
-                assert data["info"]["chat_uuid"] == "test-chat-uuid"
+        assert len(results) == 4
+        for result in results:
+            data = json.loads(result.replace("data: ", "").strip())
+            assert data["info"]["chat_uuid"] == "test-chat-uuid"
 
     @pytest.mark.asyncio
-    async def test_task_done_and_queue_empty_exits(self, generator, mock_task, mock_queue):
+    async def test_task_done_and_queue_empty_exits(self):
         """Test generator exits when task is done and queue is empty."""
-        mock_task.done.return_value = True
-        mock_queue.empty.return_value = True
+        chat_task = self._make_chat_task()
+        chat_task._asyncio_task.done.return_value = True
+        chat_task._chat_queue.empty.return_value = True
 
         results = []
-        async for chunk in generator():
+        async for chunk in chat_task.get_stream_async():
             results.append(chunk)
 
         assert len(results) == 0
-        mock_task.result.assert_called_once()  # Should check for exceptions
+        chat_task._asyncio_task.result.assert_called_once()
 
 
-class TestCreateChatStreamingGenerator:
-    """Test the create_chat_streaming_generator_async factory function."""
+class TestChatTask:
+    """Test ChatTask agent execution and get_stream integration."""
 
     def _make_mock_user(self):
         user = Mock()
@@ -374,10 +344,16 @@ class TestCreateChatStreamingGenerator:
         tool.name = name
         return tool
 
+    def _start_chat_task(self, user, user_config_provider, user_chat_provider, **kwargs):
+        """Construct ChatTask, start it, return (chat_task, stream)."""
+        chat_task = ChatTask(user, user_config_provider, user_chat_provider, **kwargs)
+        chat_task.start()
+        return chat_task, chat_task.get_stream_async()
+
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.create_skill_retriever_async")
-    @patch("fivccliche.utils.generators.create_tool_retriever_async")
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_create_generator_skills_disabled_by_default(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -392,11 +368,11 @@ class TestCreateChatStreamingGenerator:
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
 
-        with patch("fivccliche.utils.generators.default_db", new_callable=Mock) as mock_default_db:
+        with patch("fivccliche.utils.chats.default_db", new_callable=Mock) as mock_default_db:
             owned_session = AsyncMock()
             owned_session.close = AsyncMock()
             mock_default_db.return_value.create_session.return_value = owned_session
-            result = await create_chat_streaming_generator_async(
+            chat_task, result = self._start_chat_task(
                 user,
                 config_provider,
                 chat_provider,
@@ -404,18 +380,18 @@ class TestCreateChatStreamingGenerator:
                 chat_query="hello",
                 chat_skills_enabled=False,
             )
-            await result.wait_async()
+            await chat_task.join_async()
 
         mock_create_skill_retriever.assert_not_called()
         chat_provider.get_chat_context.assert_not_called()
         _, kwargs = mock_agent.run_async.call_args
         assert kwargs["skill_retriever"] is None
-        assert isinstance(result, _ChatStreamingGenerator)
+        assert hasattr(result, "__aiter__")
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.create_skill_retriever_async")
-    @patch("fivccliche.utils.generators.create_tool_retriever_async")
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_create_generator_skills_enabled(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -431,11 +407,11 @@ class TestCreateChatStreamingGenerator:
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
 
-        with patch("fivccliche.utils.generators.default_db", new_callable=Mock) as mock_default_db:
+        with patch("fivccliche.utils.chats.default_db", new_callable=Mock) as mock_default_db:
             owned_session = AsyncMock()
             owned_session.close = AsyncMock()
             mock_default_db.return_value.create_session.return_value = owned_session
-            result = await create_chat_streaming_generator_async(
+            chat_task, result = self._start_chat_task(
                 user,
                 config_provider,
                 chat_provider,
@@ -443,18 +419,18 @@ class TestCreateChatStreamingGenerator:
                 chat_query="hello",
                 chat_skills_enabled=True,
             )
-            await result.wait_async()
+            await chat_task.join_async()
 
         mock_create_skill_retriever.assert_called_once()
         chat_provider.get_chat_context.assert_not_called()
         _, kwargs = mock_agent.run_async.call_args
         assert kwargs["skill_retriever"] is mock_skill_retriever
-        assert isinstance(result, _ChatStreamingGenerator)
+        assert hasattr(result, "__aiter__")
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.create_skill_retriever_async")
-    @patch("fivccliche.utils.generators.create_tool_retriever_async")
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_create_generator_passes_chat_context_without_provider_lookup(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -473,9 +449,9 @@ class TestCreateChatStreamingGenerator:
         owned_session = AsyncMock()
         owned_session.close = AsyncMock()
 
-        with patch("fivccliche.utils.generators.default_db", new_callable=Mock) as mock_default_db:
+        with patch("fivccliche.utils.chats.default_db", new_callable=Mock) as mock_default_db:
             mock_default_db.return_value.create_session.return_value = owned_session
-            result = await create_chat_streaming_generator_async(
+            chat_task, result = self._start_chat_task(
                 user,
                 config_provider,
                 chat_provider,
@@ -483,7 +459,7 @@ class TestCreateChatStreamingGenerator:
                 chat_query="hello",
                 chat_context=context,
             )
-            await result.wait_async()
+            await chat_task.join_async()
 
         chat_provider.get_chat_context.assert_not_called()
         _, tool_kwargs = mock_create_tool_retriever.call_args
@@ -497,7 +473,7 @@ class TestCreateChatStreamingGenerator:
         }
         assert run_kwargs["tool_ids"] == []
         assert run_kwargs["skill_retriever"] is mock_skill_retriever
-        assert isinstance(result, _ChatStreamingGenerator)
+        assert hasattr(result, "__aiter__")
         config_provider.get_model_repository.assert_called_with(
             user_uuid=user.uuid, session=owned_session
         )
@@ -506,9 +482,9 @@ class TestCreateChatStreamingGenerator:
         )
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.create_skill_retriever_async")
-    @patch("fivccliche.utils.generators.create_tool_retriever_async")
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_create_generator_uses_only_explicit_chat_tools(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -531,11 +507,11 @@ class TestCreateChatStreamingGenerator:
         chat_context.get_is_skills_enabled_async = AsyncMock(return_value=False)
         chat_provider.get_chat_context.return_value = chat_context
 
-        with patch("fivccliche.utils.generators.default_db", new_callable=Mock) as mock_default_db:
+        with patch("fivccliche.utils.chats.default_db", new_callable=Mock) as mock_default_db:
             owned_session = AsyncMock()
             owned_session.close = AsyncMock()
             mock_default_db.return_value.create_session.return_value = owned_session
-            result = await create_chat_streaming_generator_async(
+            chat_task, _ = self._start_chat_task(
                 user,
                 config_provider,
                 chat_provider,
@@ -544,7 +520,7 @@ class TestCreateChatStreamingGenerator:
                 chat_tools=[external_primary, external_secondary],
                 chat_context={"scope": "tools"},
             )
-            await result.wait_async()
+            await chat_task.join_async()
 
         chat_provider.get_chat_context.assert_not_called()
         chat_context.get_tools_async.assert_not_awaited()
@@ -560,9 +536,9 @@ class TestCreateChatStreamingGenerator:
         mock_create_skill_retriever.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.create_skill_retriever_async")
-    @patch("fivccliche.utils.generators.create_tool_retriever_async")
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_create_generator_uses_explicit_skill_setting(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -582,11 +558,11 @@ class TestCreateChatStreamingGenerator:
         chat_context.get_is_skills_enabled_async = AsyncMock(return_value=False)
         chat_provider.get_chat_context.return_value = chat_context
 
-        with patch("fivccliche.utils.generators.default_db", new_callable=Mock) as mock_default_db:
+        with patch("fivccliche.utils.chats.default_db", new_callable=Mock) as mock_default_db:
             owned_session = AsyncMock()
             owned_session.close = AsyncMock()
             mock_default_db.return_value.create_session.return_value = owned_session
-            result = await create_chat_streaming_generator_async(
+            chat_task, _ = self._start_chat_task(
                 user,
                 config_provider,
                 chat_provider,
@@ -595,7 +571,7 @@ class TestCreateChatStreamingGenerator:
                 chat_context={"skills": "disabled"},
                 chat_skills_enabled=True,
             )
-            await result.wait_async()
+            await chat_task.join_async()
 
         chat_provider.get_chat_context.assert_not_called()
         chat_context.get_tools_async.assert_not_awaited()
@@ -605,13 +581,13 @@ class TestCreateChatStreamingGenerator:
         assert run_kwargs["skill_retriever"] is mock_skill_retriever
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.create_skill_retriever_async")
-    @patch("fivccliche.utils.generators.create_tool_retriever_async")
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_create_generator_returns_streaming_generator(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
-        """Returns a callable _ChatStreamingGenerator with wait_async."""
+        """get_stream returns an async generator."""
         mock_agent = AsyncMock()
         mock_agent.run_async = AsyncMock()
         mock_create_agent.return_value = mock_agent
@@ -622,22 +598,21 @@ class TestCreateChatStreamingGenerator:
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
 
-        with patch("fivccliche.utils.generators.default_db", new_callable=Mock) as mock_default_db:
+        with patch("fivccliche.utils.chats.default_db", new_callable=Mock) as mock_default_db:
             owned_session = AsyncMock()
             owned_session.close = AsyncMock()
             mock_default_db.return_value.create_session.return_value = owned_session
-            result = await create_chat_streaming_generator_async(
+            chat_task, result = self._start_chat_task(
                 user,
                 config_provider,
                 chat_provider,
                 chat_uuid="my-chat-uuid",
                 chat_query="test query",
             )
-            await result.wait_async()
+            await chat_task.join_async()
 
-        assert isinstance(result, _ChatStreamingGenerator)
-        assert callable(result)
-        assert asyncio.iscoroutinefunction(result.wait_async)
+        assert hasattr(result, "__aiter__")
+        assert hasattr(result, "__aiter__")
 
     def _patch_owned_session(self):
         owned_session = AsyncMock()
@@ -661,10 +636,10 @@ class TestCreateChatStreamingGenerator:
         return mock_run
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
-    @patch("fivccliche.utils.generators.create_skill_retriever_async")
-    @patch("fivccliche.utils.generators.create_tool_retriever_async")
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_finish_callback_called_once_on_normal_completion(
         self,
         mock_create_agent,
@@ -687,7 +662,7 @@ class TestCreateChatStreamingGenerator:
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
 
-        result = await create_chat_streaming_generator_async(
+        chat_task, result = self._start_chat_task(
             self._make_mock_user(),
             self._make_mock_config_provider(),
             self._make_mock_chat_provider(),
@@ -698,19 +673,19 @@ class TestCreateChatStreamingGenerator:
         )
 
         chunks = []
-        async for chunk in result():
+        async for chunk in result:
             chunks.append(chunk)
 
-        await result.wait_async()
-        callback.assert_called_once_with(finish_run, owned_session)
+        await chat_task.join_async()
+        callback.assert_called_once_with(finish_run)
         owned_session.close.assert_awaited()
         assert any('"event": "finish"' in chunk for chunk in chunks)
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
-    @patch("fivccliche.utils.generators.create_skill_retriever_async")
-    @patch("fivccliche.utils.generators.create_tool_retriever_async")
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_finish_callback_called_after_generator_aclose(
         self,
         mock_create_agent,
@@ -736,7 +711,7 @@ class TestCreateChatStreamingGenerator:
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
 
-        result = await create_chat_streaming_generator_async(
+        chat_task, result = self._start_chat_task(
             self._make_mock_user(),
             self._make_mock_config_provider(),
             self._make_mock_chat_provider(),
@@ -746,19 +721,19 @@ class TestCreateChatStreamingGenerator:
             chat_skills_enabled=False,
         )
 
-        agen = result()
+        agen = result
         await started.wait()
         await agen.aclose()
 
-        await result.wait_async()
-        callback.assert_called_once_with(finish_run, owned_session)
+        await chat_task.join_async()
+        callback.assert_called_once_with(finish_run)
         owned_session.close.assert_awaited()
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
-    @patch("fivccliche.utils.generators.create_skill_retriever_async")
-    @patch("fivccliche.utils.generators.create_tool_retriever_async")
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_async_finish_callback_awaited(
         self,
         mock_create_agent,
@@ -767,7 +742,7 @@ class TestCreateChatStreamingGenerator:
         mock_default_db,
     ):
         """Async finish callbacks are awaited."""
-        owned_session, mock_db = self._patch_owned_session()
+        _, mock_db = self._patch_owned_session()
         mock_default_db.return_value = mock_db
         finish_run = self._finish_run_mock()
         callback = AsyncMock()
@@ -781,7 +756,7 @@ class TestCreateChatStreamingGenerator:
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
 
-        result = await create_chat_streaming_generator_async(
+        chat_task, result = self._start_chat_task(
             self._make_mock_user(),
             self._make_mock_config_provider(),
             self._make_mock_chat_provider(),
@@ -791,17 +766,17 @@ class TestCreateChatStreamingGenerator:
             chat_skills_enabled=False,
         )
 
-        async for _ in result():
+        async for _ in result:
             pass
 
-        await result.wait_async()
-        callback.assert_awaited_once_with(finish_run, owned_session)
+        await chat_task.join_async()
+        callback.assert_awaited_once_with(finish_run)
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
-    @patch("fivccliche.utils.generators.create_skill_retriever_async")
-    @patch("fivccliche.utils.generators.create_tool_retriever_async")
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_finish_callback_not_called_without_finish_event(
         self,
         mock_create_agent,
@@ -823,7 +798,7 @@ class TestCreateChatStreamingGenerator:
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
 
-        result = await create_chat_streaming_generator_async(
+        chat_task, result = self._start_chat_task(
             self._make_mock_user(),
             self._make_mock_config_provider(),
             self._make_mock_chat_provider(),
@@ -834,18 +809,18 @@ class TestCreateChatStreamingGenerator:
         )
 
         chunks = []
-        async for chunk in result():
+        async for chunk in result:
             chunks.append(chunk)
 
-        await result.wait_async()
+        await chat_task.join_async()
         callback.assert_not_called()
         assert any('"event": "error"' in chunk for chunk in chunks)
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
-    @patch("fivccliche.utils.generators.create_skill_retriever_async")
-    @patch("fivccliche.utils.generators.create_tool_retriever_async")
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_run_uses_owned_session_not_request_session(
         self,
         mock_create_agent,
@@ -870,7 +845,7 @@ class TestCreateChatStreamingGenerator:
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
 
-        result = await create_chat_streaming_generator_async(
+        chat_task, _ = self._start_chat_task(
             user,
             config_provider,
             chat_provider,
@@ -880,7 +855,7 @@ class TestCreateChatStreamingGenerator:
             chat_skills_enabled=False,
         )
 
-        await result.wait_async()
+        await chat_task.join_async()
         _, run_kwargs = mock_agent.run_async.call_args
         assert run_kwargs["context"]["session"] is owned_session
         assert run_kwargs["context"]["project"] == "alpha"
@@ -896,10 +871,10 @@ class TestCreateChatStreamingGenerator:
         owned_session.close.assert_awaited()
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
-    @patch("fivccliche.utils.generators.create_skill_retriever_async")
-    @patch("fivccliche.utils.generators.create_tool_retriever_async")
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_run_uses_injected_chat_db_when_provided(
         self,
         mock_create_agent,
@@ -923,7 +898,7 @@ class TestCreateChatStreamingGenerator:
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
 
-        result = await create_chat_streaming_generator_async(
+        chat_task, _ = self._start_chat_task(
             user,
             config_provider,
             chat_provider,
@@ -933,7 +908,7 @@ class TestCreateChatStreamingGenerator:
             chat_db=chat_db,
         )
 
-        await result.wait_async()
+        await chat_task.join_async()
         mock_default_db.assert_not_called()
         chat_db.create_session.assert_called_once_with()
         _, run_kwargs = mock_agent.run_async.call_args
@@ -941,10 +916,10 @@ class TestCreateChatStreamingGenerator:
         owned_session.close.assert_awaited()
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
-    @patch("fivccliche.utils.generators.create_skill_retriever_async")
-    @patch("fivccliche.utils.generators.create_tool_retriever_async")
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_mutex_released_after_normal_completion(
         self,
         mock_create_agent,
@@ -956,6 +931,7 @@ class TestCreateChatStreamingGenerator:
         _, mock_db = self._patch_owned_session()
         mock_default_db.return_value = mock_db
         mutex = Mock()
+        mutex.release_async = AsyncMock()
 
         async def run_async(**kwargs):
             kwargs["event_callback"](AgentRunEvent.FINISH, self._finish_run_mock())
@@ -966,7 +942,7 @@ class TestCreateChatStreamingGenerator:
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
 
-        result = await create_chat_streaming_generator_async(
+        chat_task, result = self._start_chat_task(
             self._make_mock_user(),
             self._make_mock_config_provider(),
             self._make_mock_chat_provider(),
@@ -976,17 +952,17 @@ class TestCreateChatStreamingGenerator:
             chat_mutex=mutex,
         )
 
-        async for _ in result():
+        async for _ in result:
             pass
 
-        await result.wait_async()
-        mutex.release.assert_called_once()
+        await chat_task.join_async()
+        mutex.release_async.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
-    @patch("fivccliche.utils.generators.create_skill_retriever_async")
-    @patch("fivccliche.utils.generators.create_tool_retriever_async")
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_mutex_released_after_generator_aclose(
         self,
         mock_create_agent,
@@ -998,6 +974,7 @@ class TestCreateChatStreamingGenerator:
         _, mock_db = self._patch_owned_session()
         mock_default_db.return_value = mock_db
         mutex = Mock()
+        mutex.release_async = AsyncMock()
         started = asyncio.Event()
 
         async def run_async(**kwargs):
@@ -1011,7 +988,7 @@ class TestCreateChatStreamingGenerator:
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
 
-        result = await create_chat_streaming_generator_async(
+        chat_task, result = self._start_chat_task(
             self._make_mock_user(),
             self._make_mock_config_provider(),
             self._make_mock_chat_provider(),
@@ -1021,23 +998,24 @@ class TestCreateChatStreamingGenerator:
             chat_mutex=mutex,
         )
 
-        agen = result()
+        agen = result
         await started.wait()
         await agen.aclose()
-        await result.wait_async()
-        mutex.release.assert_called_once()
+        await chat_task.join_async()
+        mutex.release_async.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.generators.default_db", new_callable=Mock)
-    @patch("fivccliche.utils.generators.create_agent_async")
+    @patch("fivccliche.utils.chats.default_db", new_callable=Mock)
+    @patch("fivccliche.utils.chats.create_agent_async")
     async def test_mutex_released_when_agent_setup_fails(self, mock_create_agent, mock_default_db):
         """Mutex is released when agent setup fails inside the chat task."""
         owned_session, mock_db = self._patch_owned_session()
         mock_default_db.return_value = mock_db
         mock_create_agent.side_effect = RuntimeError("setup failed")
         mutex = Mock()
+        mutex.release_async = AsyncMock()
 
-        result = await create_chat_streaming_generator_async(
+        chat_task, _ = self._start_chat_task(
             self._make_mock_user(),
             self._make_mock_config_provider(),
             self._make_mock_chat_provider(),
@@ -1047,6 +1025,6 @@ class TestCreateChatStreamingGenerator:
             chat_mutex=mutex,
         )
 
-        await result.wait_async()
-        mutex.release.assert_called_once()
+        await chat_task.join_async()
+        mutex.release_async.assert_awaited_once()
         owned_session.close.assert_awaited()

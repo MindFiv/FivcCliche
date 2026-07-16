@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     HTTPException,
     Query,
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
+from fivccliche.utils.chats import ChatTask
 from fivccliche.utils.deps import (
     IUser,
     get_authenticated_user_async,
@@ -23,7 +25,6 @@ from fivccliche.utils.deps import (
     get_db_session_async,
     get_mutex_site_async,
 )
-from fivccliche.utils.generators import create_chat_streaming_generator_async
 from fivccliche.utils.queries import (
     InvalidDottedJsonFilterError,
     parse_dotted_json_filters,
@@ -191,6 +192,7 @@ CHAT_MESSAGE_LOCK_EXPIRE = timedelta(minutes=15)
 async def create_chat_messages_async(
     chat_uuid: str,
     chat_message: schemas.UserChatMessageCreateSchema,
+    background_tasks: BackgroundTasks,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
     config_provider: IUserConfigProvider = Depends(get_config_provider_async),
@@ -230,29 +232,36 @@ async def create_chat_messages_async(
     print(f"🤖 [AGENT] Creating agent with ID: {chat_agent_id}")
 
     chat_mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
-    if chat_mutex and not chat_mutex.acquire(
+    if chat_mutex and not await chat_mutex.acquire_async(
         expire=CHAT_MESSAGE_LOCK_EXPIRE,
-        method="non-blocking",
+        timeout=None,
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Chat message processing already running",
         )
 
-    chat_gen = await create_chat_streaming_generator_async(
-        user,
-        config_provider,
-        chat_provider,
-        chat_uuid=chat_uuid,
-        chat_query=chat_message.query,
-        chat_agent_id=chat_agent_id,
-        chat_context=chat.context,
-        chat_skills_enabled=True,
-        chat_mutex=chat_mutex,
-    )
+    try:
+        chat_task = ChatTask(
+            user,
+            config_provider,
+            chat_provider,
+            chat_uuid=chat_uuid,
+            chat_query=chat_message.query,
+            chat_agent_id=chat_agent_id,
+            chat_context=chat.context,
+            chat_skills_enabled=True,
+            chat_mutex=chat_mutex,
+        )
+        chat_task.start()
+        background_tasks.add_task(chat_task.join_async)
+    except Exception:
+        if chat_mutex:
+            await chat_mutex.release_async()
+        raise
 
     return responses.StreamingResponse(
-        chat_gen(),
+        chat_task.get_stream_async(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

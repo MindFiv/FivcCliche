@@ -123,6 +123,8 @@ nohup.out
 .static/
 .tmp/
 env356
+uv.toml
+uv.lock
 
 # setting files
 settings/local.py
