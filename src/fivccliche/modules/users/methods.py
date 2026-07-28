@@ -2,10 +2,11 @@
 
 import uuid
 from datetime import datetime, timezone
+from typing import cast
 
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from fivccliche.utils import UNSET, UnsetType
 
@@ -108,8 +109,10 @@ async def list_users_async(
     Returns:
         List of users
     """
-    col = models.User.signed_in_at if order_by == "signed_in_at" else models.User.created_at
-    order_expr = col.desc() if order_dir == "desc" else col.asc()
+    order_col = (
+        col(models.User.signed_in_at) if order_by == "signed_in_at" else col(models.User.created_at)
+    )
+    order_expr = order_col.desc() if order_dir == "desc" else order_col.asc()
     statement = select(models.User).order_by(order_expr).offset(skip).limit(limit)
     result = await session.execute(statement)
     return list(result.scalars().all())
@@ -125,7 +128,7 @@ async def count_users_async(session: AsyncSession) -> int:
         Number of users
     """
 
-    statement = select(func.count(models.User.uuid))
+    statement = select(func.count(col(models.User.uuid)))
     result = await session.execute(statement)
     return result.scalar() or 0
 
@@ -162,7 +165,7 @@ async def update_user_async(
     if email is not None:
         user.email = email
     if full_name is not UNSET:
-        user.full_name = full_name
+        user.full_name = cast("str | None", full_name)
     if password is not None:
         user.change_password(password)
     if is_active is not None:
@@ -170,7 +173,7 @@ async def update_user_async(
     if is_superuser is not None:
         user.is_superuser = is_superuser
     if preferences is not UNSET:
-        user.preferences = preferences
+        user.preferences = cast("dict | None", preferences)
     session.add(user)
     await session.commit()
     await session.refresh(user)

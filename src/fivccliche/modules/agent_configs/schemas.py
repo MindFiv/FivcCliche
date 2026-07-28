@@ -30,7 +30,7 @@ from fivcplayground.skills.types import SkillConfig
 class UserEmbeddingSchema(EmbeddingConfig):
     """Schema for reading embedding config data (response)."""
 
-    uuid: str = Field(default=None, description="Embedding config UUID (globally unique)")
+    uuid: str | None = Field(default=None, description="Embedding config UUID (globally unique)")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
     updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
     updated_user_uuid: str | None = Field(
@@ -43,7 +43,7 @@ class UserEmbeddingSchema(EmbeddingConfig):
 class UserLLMSchema(ModelConfig):
     """Schema for reading LLM config data (response)."""
 
-    uuid: str = Field(default=None, description="LLM config UUID (globally unique)")
+    uuid: str | None = Field(default=None, description="LLM config UUID (globally unique)")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
     updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
     updated_user_uuid: str | None = Field(
@@ -56,7 +56,7 @@ class UserLLMSchema(ModelConfig):
 class UserToolSchema(ToolConfig):
     """Schema for reading tool config data (response)."""
 
-    uuid: str = Field(default=None, description="Tool config UUID (globally unique)")
+    uuid: str | None = Field(default=None, description="Tool config UUID (globally unique)")
     description: str | None = Field(default=None, description="Tool description")
     is_active: bool = Field(default=True, description="Whether the tool is active")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
@@ -71,13 +71,13 @@ class UserToolSchema(ToolConfig):
 class UserToolProbeSchema(BaseModel):
     """Schema for reading tool config data (response)."""
 
-    tool_names: list[str] = Field(default=None, description="Tool names")
+    tool_names: list[str] | None = Field(default=None, description="Tool names")
 
 
 class UserSkillSchema(SkillConfig):
     """Schema for reading skill config data (response)."""
 
-    uuid: str = Field(default=None, description="Skill config UUID (globally unique)")
+    uuid: str | None = Field(default=None, description="Skill config UUID (globally unique)")
     is_active: bool = Field(default=True, description="Whether the skill is active")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
     updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
@@ -91,7 +91,10 @@ class UserSkillSchema(SkillConfig):
 class UserAgentSchema(AgentConfig):
     """Schema for reading agent config data (response)."""
 
-    uuid: str = Field(default=None, description="Agent config UUID (globally unique)")
+    uuid: str | None = Field(default=None, description="Agent config UUID (globally unique)")
+    is_frozen: bool = Field(
+        default=False, description="Whether the agent config is frozen (cannot be edited)"
+    )
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
     updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
     updated_user_uuid: str | None = Field(
@@ -104,7 +107,7 @@ class UserAgentSchema(AgentConfig):
 class UserQuestionSchema(BaseModel):
     """Schema for reading user question data (response)."""
 
-    uuid: str = Field(default=None, description="Question UUID (globally unique)")
+    uuid: str | None = Field(default=None, description="Question UUID (globally unique)")
     id: str = Field(..., description="Question ID (unique within user scope)")
     question: str = Field(..., description="User question text")
     answer: str | None = Field(default=None, description="User answer text")

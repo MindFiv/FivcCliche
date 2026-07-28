@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from . import models, schemas
 
@@ -103,7 +103,7 @@ async def list_embedding_configs_async(
             (models.UserEmbedding.user_uuid == user_uuid)
             | (models.UserEmbedding.user_uuid == None)  # noqa E711
         )
-        .order_by(models.UserEmbedding.id.asc())
+        .order_by(col(models.UserEmbedding.id).asc())
         .offset(skip)
         .limit(limit)
     )
@@ -115,7 +115,7 @@ async def count_embedding_configs_async(
     session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> int:
     """Count the number of embedding configs for a user."""
-    statement = select(func.count(models.UserEmbedding.uuid)).where(
+    statement = select(func.count(col(models.UserEmbedding.uuid))).where(
         (models.UserEmbedding.user_uuid == user_uuid)
         | (models.UserEmbedding.user_uuid == None)  # noqa E711
     )
@@ -131,7 +131,7 @@ async def update_embedding_config_async(
     **kwargs,  # ignore additional arguments
 ) -> models.UserEmbedding:
     """Update an embedding config."""
-    fields_set = getattr(config_update, "model_fields_set", set())
+    fields_set: set[str] = getattr(config_update, "model_fields_set", set())
     if "description" in fields_set:
         config.description = config_update.description
     if config_update.provider is not None:
@@ -256,7 +256,7 @@ async def list_llm_configs_async(
             (models.UserLLM.user_uuid == user_uuid)
             | (models.UserLLM.user_uuid == None)  # noqa E711
         )
-        .order_by(models.UserLLM.id.asc())
+        .order_by(col(models.UserLLM.id).asc())
         .offset(skip)
         .limit(limit)
     )
@@ -268,7 +268,7 @@ async def count_llm_configs_async(
     session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> int:
     """Count the number of LLM configs for a user."""
-    statement = select(func.count(models.UserLLM.uuid)).where(
+    statement = select(func.count(col(models.UserLLM.uuid))).where(
         (models.UserLLM.user_uuid == user_uuid) | (models.UserLLM.user_uuid == None)  # noqa E711
     )
     result = await session.execute(statement)
@@ -283,7 +283,7 @@ async def update_llm_config_async(
     **kwargs,  # ignore additional arguments
 ) -> models.UserLLM:
     """Update an LLM config."""
-    fields_set = getattr(config_update, "model_fields_set", set())
+    fields_set: set[str] = getattr(config_update, "model_fields_set", set())
     if "description" in fields_set:
         config.description = config_update.description
     if config_update.provider is not None:
@@ -338,6 +338,7 @@ async def create_agent_config_async(
         skill_ids=config_create.skill_ids,
         system_prompt=config_create.system_prompt,
         response_format=config_create.response_format,
+        is_frozen=config_create.is_frozen if hasattr(config_create, "is_frozen") else False,
         updated_at=datetime.now(timezone.utc),
         updated_user_uuid=updated_user_uuid,
     )
@@ -410,7 +411,7 @@ async def list_agent_configs_async(
             (models.UserAgent.user_uuid == user_uuid)
             | (models.UserAgent.user_uuid == None)  # noqa E711
         )
-        .order_by(models.UserAgent.id.asc())
+        .order_by(col(models.UserAgent.id).asc())
         .offset(skip)
         .limit(limit)
     )
@@ -422,7 +423,7 @@ async def count_agent_configs_async(
     session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> int:
     """Count the number of agent configs for a user."""
-    statement = select(func.count(models.UserAgent.uuid)).where(
+    statement = select(func.count(col(models.UserAgent.uuid))).where(
         (models.UserAgent.user_uuid == user_uuid)
         | (models.UserAgent.user_uuid == None)  # noqa E711
     )
@@ -438,7 +439,7 @@ async def update_agent_config_async(
     **kwargs,  # ignore additional arguments
 ) -> models.UserAgent:
     """Update an agent config."""
-    fields_set = getattr(config_update, "model_fields_set", set())
+    fields_set: set[str] = getattr(config_update, "model_fields_set", set())
     if "description" in fields_set:
         config.description = config_update.description
     if config_update.model_id is not None:
@@ -451,6 +452,8 @@ async def update_agent_config_async(
         config.system_prompt = config_update.system_prompt
     if "response_format" in fields_set:
         config.response_format = config_update.response_format
+    if hasattr(config_update, "is_frozen") and config_update.is_frozen is not None:
+        config.is_frozen = config_update.is_frozen
     config.updated_at = datetime.now(timezone.utc)
     config.updated_user_uuid = updated_user_uuid
     session.add(config)
@@ -563,7 +566,7 @@ async def list_tool_configs_async(
             (models.UserTool.user_uuid == user_uuid)
             | (models.UserTool.user_uuid == None)  # noqa E711
         )
-        .order_by(models.UserTool.id.asc())
+        .order_by(col(models.UserTool.id).asc())
         .offset(skip)
         .limit(limit)
     )
@@ -575,7 +578,7 @@ async def count_tool_configs_async(
     session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> int:
     """Count the number of tool configs for a user."""
-    statement = select(func.count(models.UserTool.uuid)).where(
+    statement = select(func.count(col(models.UserTool.uuid))).where(
         (models.UserTool.user_uuid == user_uuid) | (models.UserTool.user_uuid == None)  # noqa E711
     )
     result = await session.execute(statement)
@@ -590,7 +593,7 @@ async def update_tool_config_async(
     **kwargs,  # ignore additional arguments
 ) -> models.UserTool:
     """Update a tool config."""
-    fields_set = getattr(config_update, "model_fields_set", set())
+    fields_set: set[str] = getattr(config_update, "model_fields_set", set())
     if "description" in fields_set:
         config.description = config_update.description
     if config_update.transport is not None:
@@ -716,7 +719,7 @@ async def list_skill_configs_async(
             (models.UserSkill.user_uuid == user_uuid)
             | (models.UserSkill.user_uuid == None)  # noqa E711
         )
-        .order_by(models.UserSkill.id.asc())
+        .order_by(col(models.UserSkill.id).asc())
         .offset(skip)
         .limit(limit)
     )
@@ -728,7 +731,7 @@ async def count_skill_configs_async(
     session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> int:
     """Count the number of skill configs for a user."""
-    statement = select(func.count(models.UserSkill.uuid)).where(
+    statement = select(func.count(col(models.UserSkill.uuid))).where(
         (models.UserSkill.user_uuid == user_uuid)
         | (models.UserSkill.user_uuid == None)  # noqa E711
     )
@@ -744,7 +747,7 @@ async def update_skill_config_async(
     **kwargs,  # ignore additional arguments
 ) -> models.UserSkill:
     """Update a skill config."""
-    fields_set = getattr(config_update, "model_fields_set", set())
+    fields_set: set[str] = getattr(config_update, "model_fields_set", set())
     if config_update.description is not None:
         config.description = config_update.description
     if "instructions" in fields_set:
@@ -852,7 +855,7 @@ async def list_questions_async(
     statement = (
         select(models.UserQuestion)
         .where(*conditions)
-        .order_by(models.UserQuestion.id.asc())
+        .order_by(col(models.UserQuestion.id).asc())
         .offset(skip)
         .limit(limit)
     )
@@ -874,7 +877,7 @@ async def count_questions_async(
     if is_active is not None:
         conditions.append(models.UserQuestion.is_active == is_active)
 
-    statement = select(func.count(models.UserQuestion.uuid)).where(*conditions)
+    statement = select(func.count(col(models.UserQuestion.uuid))).where(*conditions)
     result = await session.execute(statement)
     return result.scalar() or 0
 
@@ -887,7 +890,7 @@ async def update_question_async(
     **kwargs,  # ignore additional arguments
 ) -> models.UserQuestion:
     """Update a question config."""
-    fields_set = getattr(config_update, "model_fields_set", set())
+    fields_set: set[str] = getattr(config_update, "model_fields_set", set())
     if "question" in fields_set and config_update.question is not None:
         config.question = config_update.question
     if "answer" in fields_set:

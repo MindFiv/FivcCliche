@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import cast
 
@@ -59,7 +60,7 @@ class SafeMutex(mutexes.IMutex):
         timeout: timedelta | None = None,
         **kwargs,
     ) -> bool:
-        acquired = self._mutex.acquire(expire=expire, timeout=timeout, **kwargs)
+        acquired = cast("bool", self._mutex.acquire(expire=expire, timeout=timeout, **kwargs))
         if acquired:
             self._acquired = True
             self._released = False
@@ -71,7 +72,9 @@ class SafeMutex(mutexes.IMutex):
         timeout: timedelta | None = None,
         **kwargs,
     ) -> bool:
-        acquired = await self._mutex.acquire_async(expire=expire, timeout=timeout, **kwargs)
+        acquired = cast(
+            "bool", await self._mutex.acquire_async(expire=expire, timeout=timeout, **kwargs)
+        )
         if acquired:
             self._acquired = True
             self._released = False
@@ -83,7 +86,7 @@ class SafeMutex(mutexes.IMutex):
         if self._released:
             return True
 
-        released = self._mutex.release()
+        released = cast("bool", self._mutex.release())
         if released:
             self._released = True
         return released
@@ -94,7 +97,7 @@ class SafeMutex(mutexes.IMutex):
         if self._released:
             return True
 
-        released = await self._mutex.release_async()
+        released = cast("bool", await self._mutex.release_async())
         if released:
             self._released = True
         return released
@@ -129,9 +132,25 @@ async def get_db_session_async() -> AsyncGenerator[AsyncSession, None]:
         await async_session.close()
 
 
+@asynccontextmanager
+async def get_db_session_context() -> AsyncGenerator[AsyncSession, None]:
+    """Get an async database session as an async context manager.
+
+    Use this instead of ``get_db_session_async`` when you need to open a session
+    directly (``async with get_db_session_context() as session:``). The bare
+    ``get_db_session_async`` async generator is kept for FastAPI ``Depends``.
+    """
+    db = default_db()
+    async_session = db.create_session()
+    try:
+        yield async_session
+    finally:
+        await async_session.close()
+
+
 async def get_authenticator_async() -> IUserAuthenticator:
     """Get the user authenticator for dependency injection."""
-    return default_auth()
+    return cast(IUserAuthenticator, default_auth())
 
 
 async def get_authenticated_user_async(
@@ -160,9 +179,12 @@ async def get_authenticated_user_optional_async(
     if not credentials:
         return None
 
-    return await default_auth.verify_credential_async(
-        credentials.credentials,
-        session=session,
+    return cast(
+        "IUser | None",
+        await default_auth.verify_credential_async(
+            credentials.credentials,
+            session=session,
+        ),
     )
 
 
@@ -180,14 +202,14 @@ async def get_admin_user_async(
 
 async def get_config_async() -> configs.IConfig:
     """Get the config for dependency injection."""
-    return default_config()
+    return cast(configs.IConfig, default_config())
 
 
 async def get_config_provider_async() -> IUserConfigProvider:
     """Get the user config provider for dependency injection."""
-    return default_config_provider()
+    return cast(IUserConfigProvider, default_config_provider())
 
 
 async def get_chat_provider_async() -> IUserChatProvider:
     """Get the user chat provider for dependency injection."""
-    return default_chat_provider()
+    return cast(IUserChatProvider, default_chat_provider())

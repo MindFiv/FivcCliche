@@ -103,6 +103,19 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
 
+[[tool.mypy.overrides]]
+module = [
+    "fivcglue",
+    "fivcglue.*",
+    "fivcplayground",
+    "fivcplayground.*",
+    "cas",
+    "cas.*",
+    "passlib",
+    "passlib.*",
+]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

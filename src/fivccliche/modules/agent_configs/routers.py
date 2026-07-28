@@ -107,7 +107,7 @@ async def get_embedding_config_async(
 )
 async def update_embedding_config_async(
     config_uuid: str,
-    config_update: create_partial_model(schemas.UserEmbeddingSchema),
+    config_update: create_partial_model(schemas.UserEmbeddingSchema),  # type: ignore[valid-type]
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserEmbeddingSchema:
@@ -268,7 +268,7 @@ async def get_llm_config_async(
 )
 async def update_llm_config_async(
     config_uuid: str,
-    config_update: create_partial_model(schemas.UserLLMSchema),
+    config_update: create_partial_model(schemas.UserLLMSchema),  # type: ignore[valid-type]
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserLLMSchema:
@@ -428,7 +428,7 @@ async def get_agent_config_async(
 )
 async def update_agent_config_async(
     config_uuid: str,
-    config_update: create_partial_model(schemas.UserAgentSchema),
+    config_update: create_partial_model(schemas.UserAgentSchema),  # type: ignore[valid-type]
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserAgentSchema:
@@ -456,6 +456,15 @@ async def update_agent_config_async(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot update configs belonging to other users",
         )
+    # Frozen check: only the is_frozen field itself may be modified (e.g. to unfreeze);
+    # any other field update on a frozen agent is rejected.
+    if config.is_frozen:
+        fields_set: set[str] = getattr(config_update, "model_fields_set", set())
+        if fields_set - {"is_frozen"}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Agent config is frozen and cannot be edited",
+            )
     config = await methods.update_agent_config_async(
         session, config, config_update, updated_user_uuid=user.uuid
     )
@@ -491,6 +500,11 @@ async def delete_agent_config_async(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot delete configs belonging to other users",
+        )
+    if config.is_frozen:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Agent config is frozen and cannot be deleted",
         )
     await methods.delete_agent_config_async(session, config)
 
@@ -647,7 +661,7 @@ async def get_tool_config_async(
 )
 async def update_tool_config_async(
     config_uuid: str,
-    config_update: create_partial_model(schemas.UserToolSchema),
+    config_update: create_partial_model(schemas.UserToolSchema),  # type: ignore[valid-type]
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserToolSchema:
@@ -807,7 +821,7 @@ async def get_skill_config_async(
 )
 async def update_skill_config_async(
     config_uuid: str,
-    config_update: create_partial_model(schemas.UserSkillSchema),
+    config_update: create_partial_model(schemas.UserSkillSchema),  # type: ignore[valid-type]
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserSkillSchema:
@@ -969,7 +983,7 @@ async def get_question_async(
 )
 async def update_question_async(
     config_uuid: str,
-    config_update: create_partial_model(schemas.UserQuestionSchema),
+    config_update: create_partial_model(schemas.UserQuestionSchema),  # type: ignore[valid-type]
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserQuestionSchema:

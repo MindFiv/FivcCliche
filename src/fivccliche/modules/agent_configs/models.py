@@ -370,6 +370,10 @@ class UserAgent(SQLModel, table=True):
         foreign_key="user.uuid",
         description="User ID.",
     )
+    is_frozen: bool = Field(
+        default=False,
+        description="Whether the agent config is frozen (cannot be edited).",
+    )
     updated_at: datetime = Field(
         sa_column=Column(
             DateTime(timezone=True),
@@ -396,6 +400,7 @@ class UserAgent(SQLModel, table=True):
             system_prompt=self.system_prompt,
             response_format=self.response_format,
             user_uuid=self.user_uuid,
+            is_frozen=self.is_frozen,
             updated_at=self.updated_at,
             updated_user_uuid=self.updated_user_uuid,
         )

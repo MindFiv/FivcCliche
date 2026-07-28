@@ -26,7 +26,7 @@ class UserChatSchema(AgentRunSession):
     database persistence.
     """
 
-    uuid: str = Field(default=None, description="Chat UUID (globally unique)")
+    uuid: str | None = Field(default=None, description="Chat UUID (globally unique)")
     context: dict | None = Field(default=None, description="Chat context")
 
     model_config = ConfigDict(from_attributes=True)
@@ -39,8 +39,8 @@ class UserChatMessageSchema(AgentRun):
     message-specific data and database persistence.
     """
 
-    uuid: str = Field(default=None, description="Chat message UUID (globally unique)")
-    chat_uuid: str = Field(default=None, description="Chat UUID")
+    uuid: str | None = Field(default=None, description="Chat message UUID (globally unique)")
+    chat_uuid: str | None = Field(default=None, description="Chat UUID")
 
     model_config = ConfigDict(from_attributes=True)
 

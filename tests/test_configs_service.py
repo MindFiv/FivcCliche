@@ -156,6 +156,7 @@ async def session():
                     system_prompt VARCHAR,
                     response_format JSON,
                     user_uuid VARCHAR,
+                    is_frozen BOOLEAN NOT NULL DEFAULT 0,
                     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_user_uuid VARCHAR,
                     PRIMARY KEY (uuid),

@@ -9,6 +9,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from typing import cast
+
 
 class TrailingSlashMiddleware(BaseHTTPMiddleware):
     """Removes trailing slashes from request paths (except root)."""
@@ -21,4 +23,4 @@ class TrailingSlashMiddleware(BaseHTTPMiddleware):
             request.scope["path"] = normalized_path
             request.scope["raw_path"] = normalized_path.encode("utf-8")
 
-        return await call_next(request)
+        return cast(Response, await call_next(request))

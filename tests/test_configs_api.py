@@ -739,6 +739,113 @@ class TestAgentConfigAPI:
         )
         assert response.status_code == 404
 
+    def test_create_agent_config_with_is_frozen(self, client: TestClient, auth_token: str):
+        """Test creating an agent config with is_frozen=True."""
+        response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-frozen-create",
+                "model_id": "model123",
+                "is_frozen": True,
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["id"] == "agent-frozen-create"
+        assert data["is_frozen"] is True
+
+    def test_update_frozen_agent_config_rejected(self, client: TestClient, auth_token: str):
+        """Test that PATCH on a frozen agent config (non-is_frozen fields) is rejected."""
+        create_response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-frozen-update",
+                "model_id": "model123",
+                "system_prompt": "Old prompt",
+                "is_frozen": True,
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.patch(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "system_prompt": "New prompt",
+            },
+        )
+        assert response.status_code == 403
+        assert "frozen" in response.json()["detail"].lower()
+
+    def test_unfreeze_agent_config_via_patch(self, client: TestClient, auth_token: str):
+        """Test that PATCH with only is_frozen=False can unfreeze a frozen agent."""
+        create_response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-unfreeze",
+                "model_id": "model123",
+                "is_frozen": True,
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.patch(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "is_frozen": False,
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["is_frozen"] is False
+
+        # After unfreezing, normal edits should succeed.
+        response = client.patch(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "system_prompt": "Now editable",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["system_prompt"] == "Now editable"
+
+    def test_delete_frozen_agent_config_rejected(self, client: TestClient, auth_token: str):
+        """Test that DELETE on a frozen agent config is rejected."""
+        create_response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-frozen-delete",
+                "model_id": "model123",
+                "is_frozen": True,
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.delete(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 403
+        assert "frozen" in response.json()["detail"].lower()
+
+        # Unfreeze then delete should succeed.
+        client.patch(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"is_frozen": False},
+        )
+        response = client.delete(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 204
+
     def test_create_agent_config_with_skill_ids(self, client: TestClient, auth_token: str):
         """Test creating agent config with skill_ids."""
         skill_ids = ["skill1", "skill2", "skill3"]

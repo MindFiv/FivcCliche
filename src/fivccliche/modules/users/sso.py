@@ -34,7 +34,7 @@ async def login(
 ):
     # check if user is already logged in
     if user:
-        return responses.RedirectResponse(next)
+        return responses.RedirectResponse(next or "")
 
     config_sess = config.get_session("cas")
     cas_client = CASClient(
@@ -68,4 +68,4 @@ async def login(
 
     # TODO: Set the access token in a cookie or return it in the response
     # For now, just redirect to the next URL
-    return responses.RedirectResponse(next)
+    return responses.RedirectResponse(next or "")

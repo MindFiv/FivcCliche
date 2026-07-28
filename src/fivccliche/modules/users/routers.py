@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic_strict_partial import create_partial_model
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.services.interfaces.auth import IUser
@@ -14,7 +14,13 @@ from fivccliche.utils.schemas import PaginatedResponse
 from . import methods, models, schemas
 
 router = APIRouter(prefix="/users", tags=["users"])
-UserSelfPatch = create_partial_model(schemas.UserSelfUpdate)
+
+
+class UserSelfPatch(BaseModel):
+    """Partial schema for self-update of the authenticated user's profile."""
+
+    full_name: str | None = Field(None, max_length=1024, description="User full name")
+    preferences: dict | None = Field(None, description="User preferences")
 
 
 @router.post(
@@ -103,13 +109,13 @@ async def get_self_async(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    user = await methods.get_user_async(session, user_uuid=user.uuid)
-    if not user:
+    db_user = await methods.get_user_async(session, user_uuid=user.uuid)
+    if not db_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
-    return user
+    return db_user
 
 
 @router.patch(
@@ -134,7 +140,9 @@ async def update_self_async(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
-    update_data = {field: getattr(data, field) for field in data.model_fields_set}
+    update_data = {
+        field: getattr(data, field) for field in getattr(data, "model_fields_set", set())
+    }
     return await methods.update_user_async(session, db_user, **update_data)
 
 
@@ -178,7 +186,9 @@ async def list_users_async(
         session, skip=skip, limit=limit, order_by=order_by.value, order_dir=order_dir.value
     )
     total = await methods.count_users_async(session)
-    return PaginatedResponse[schemas.UserRead](total=total, results=users)
+    return PaginatedResponse[schemas.UserRead](
+        total=total, results=[schemas.UserRead.model_validate(u) for u in users]
+    )
 
 
 @router.get(

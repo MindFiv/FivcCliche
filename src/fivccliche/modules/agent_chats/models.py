@@ -43,8 +43,11 @@ class UserChat(SQLModel, table=True):
         description="Chat description.",
     )
     created_at: datetime = Field(
-        sa_type=DateTime(timezone=True),
-        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(
+            DateTime(timezone=True),
+            default=lambda: datetime.now(timezone.utc),
+            nullable=False,
+        ),
         description="Chat creation time.",
     )
 
@@ -98,12 +101,15 @@ class UserChatMessage(SQLModel, table=True):
         description="Tool calls (agent response).",
     )
     created_at: datetime = Field(
-        sa_type=DateTime(timezone=True),
-        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(
+            DateTime(timezone=True),
+            default=lambda: datetime.now(timezone.utc),
+            nullable=False,
+        ),
         description="Message creation time.",
     )
     completed_at: datetime | None = Field(
-        sa_type=DateTime(timezone=True),
+        sa_column=Column(DateTime(timezone=True), nullable=True),
         default=None,
         description="Message completion time.",
     )

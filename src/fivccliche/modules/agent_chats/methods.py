@@ -1,10 +1,11 @@
 """Chat service module with functions for chat operations."""
 
 from datetime import datetime
+from typing import cast
 
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from fivccliche.utils import UNSET, UnsetType
 from fivccliche.utils.queries import apply_dotted_json_filters
@@ -94,7 +95,7 @@ async def list_chats_async(
             (models.UserChat.user_uuid == user_uuid)
             | (models.UserChat.user_uuid == None)  # noqa: E711
         )
-        .order_by(models.UserChat.created_at.desc())
+        .order_by(col(models.UserChat.created_at).desc())
         .offset(skip)
         .limit(limit)
     )
@@ -118,7 +119,7 @@ async def count_chats_async(
     **kwargs,
 ) -> int:
     """Count the number of chat sessions for a user."""
-    statement = select(func.count(models.UserChat.uuid)).where(
+    statement = select(func.count(col(models.UserChat.uuid))).where(
         (models.UserChat.user_uuid == user_uuid) | (models.UserChat.user_uuid == None)  # noqa: E711
     )
     if agent_id is not None:
@@ -150,7 +151,7 @@ async def list_chat_messages_async(
     statement = (
         select(models.UserChatMessage)
         .where(models.UserChatMessage.chat_uuid == chat_uuid)
-        .order_by(models.UserChatMessage.created_at)
+        .order_by(col(models.UserChatMessage.created_at))
         .offset(skip)
         .limit(limit)
     )
@@ -164,7 +165,7 @@ async def count_chat_messages_async(
     **kwargs,  # ignore additional arguments
 ) -> int:
     """Count the number of chat messages for a session."""
-    statement = select(func.count(models.UserChatMessage.uuid)).where(
+    statement = select(func.count(col(models.UserChatMessage.uuid))).where(
         models.UserChatMessage.chat_uuid == chat_uuid
     )
     result = await session.execute(statement)
@@ -189,7 +190,7 @@ async def get_chat_message_async(
 async def create_chat_message_async(
     session: AsyncSession,
     chat_uuid: str,
-    query: dict,
+    query: dict | None = None,
     message_uuid: str | None = None,
     status: schemas.AgentRunStatus | None = None,
     reply: dict | None = None,
@@ -231,13 +232,13 @@ async def update_chat_message_async(
     if status is not None:
         message.status = status
     if reply is not UNSET:
-        message.reply = reply
+        message.reply = cast("dict | None", reply)
     if query is not UNSET:
-        message.query = query
+        message.query = cast("dict | None", query)
     if tool_calls is not UNSET:
-        message.tool_calls = tool_calls
+        message.tool_calls = cast("dict | None", tool_calls)
     if completed_at is not UNSET:
-        message.completed_at = completed_at
+        message.completed_at = cast("datetime | None", completed_at)
     session.add(message)
     await session.commit()
     await session.refresh(message)

@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timezone, timedelta
+from typing import cast
 
 import jwt
 from fastapi import FastAPI
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator, UserCredential
 from fivccliche.services.interfaces.modules import IModule
-from fivccliche.utils.deps import get_db_session_async
+from fivccliche.utils.deps import get_db_session_context
 
 from .models import User
 from .methods import create_user_async, get_user_async
@@ -82,7 +83,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
             payload = jwt.decode(
                 access_token, self.token_secret_key, algorithms=[self.token_algorithm]
             )
-            return payload.get("sub")
+            return cast("str | None", payload.get("sub"))
         except jwt.ExpiredSignatureError as e:
             raise ValueError("Token has expired") from e
         except jwt.InvalidTokenError as e:
@@ -112,7 +113,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
             )
             return UserImpl(user) if user else None
 
-        async with get_db_session_async() as session:
+        async with get_db_session_context() as session:
             user = await create_user_async(
                 session,
                 username=username,
@@ -145,7 +146,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 await session.commit()
             return self._create_access_token(user.uuid) if user else None
 
-        async with get_db_session_async() as session:
+        async with get_db_session_context() as session:
             user = await get_user_async(session, username=username)
             if user and not ignore_password and not user.check_password(password):
                 user = None
@@ -201,7 +202,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 await session.commit()
             return self._create_access_token(user.uuid) if user else None
 
-        async with get_db_session_async() as session:
+        async with get_db_session_context() as session:
             # Try to get existing user
             user = await get_user_async(session, username=username)
 
@@ -244,7 +245,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 user = await get_user_async(session, user_uuid=user_uuid)
 
             else:
-                async with get_db_session_async() as session:
+                async with get_db_session_context() as session:
                     user = await get_user_async(session, user_uuid=user_uuid)
 
             # Block inactive users
@@ -256,6 +257,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         except Exception as e:
             # do nothing
             print(e)
+            return None
 
         finally:
             if user:

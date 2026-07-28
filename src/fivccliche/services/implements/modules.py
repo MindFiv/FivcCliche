@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,7 +38,7 @@ class ModuleSiteImpl(IModuleSite):
         self._description = description
         self._prefix = prefix
         self._docs_prefix = docs_prefix
-        self._modules = {}
+        self._modules: dict[str, IModule] = {}
 
         for mod in modules or []:
             mod_com = query_component(component_site, IModule, name=mod)
@@ -58,7 +59,7 @@ class ModuleSiteImpl(IModuleSite):
         return list(self._modules.values())
 
     def create_application(self, **kwargs) -> FastAPI:
-        app_kwargs = {
+        app_kwargs: dict[str, Any] = {
             "docs_url": f"{self._docs_prefix}/docs",
             "redoc_url": f"{self._docs_prefix}/redoc",
             "openapi_url": f"{self._docs_prefix}/openapi.json",
@@ -88,6 +89,7 @@ class ModuleSiteImpl(IModuleSite):
         app: FastAPI,
         host: str = "0.0.0.0",
         port: int = 8000,
+        reload: bool = True,
         **kwargs,  # ignore additional arguments
     ) -> None:
         from fastapi_cdn_host import patch_docs
@@ -95,4 +97,4 @@ class ModuleSiteImpl(IModuleSite):
 
         # patch docs
         patch_docs(app)
-        uvicorn_run(app, host=host, port=port)
+        uvicorn_run(app, host=host, port=port, reload=reload)
