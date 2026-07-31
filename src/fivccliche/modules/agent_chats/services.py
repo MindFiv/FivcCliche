@@ -242,7 +242,7 @@ class UserChatRepositoryImpl(UserChatRepository):
             return []
 
         skip = kwargs.get("skip", 0)
-        limit = kwargs.get("limit", 100)
+        limit = kwargs.get("limit", 30)
         messages = await methods.list_chat_messages_async(
             self.session, session_id, skip=skip, limit=limit
         )
