@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from typing import Any
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fivcglue import IComponentSite
@@ -13,13 +14,18 @@ from fivccliche.services.interfaces.modules import (
 )
 
 
-@asynccontextmanager
-async def _lifespan(_: FastAPI):
-    # Startup
-    print("Application starting up...")
-    yield
-    # Shutdown
-    print("Application shutting down...")
+def _make_lifespan(scheduler: AsyncIOScheduler):
+    @asynccontextmanager
+    async def _lifespan(_: FastAPI):
+        # Startup
+        print("Application starting up...")
+        scheduler.start()
+        yield
+        # Shutdown
+        print("Application shutting down...")
+        scheduler.shutdown(wait=False)
+
+    return _lifespan
 
 
 class ModuleSiteImpl(IModuleSite):
@@ -59,6 +65,8 @@ class ModuleSiteImpl(IModuleSite):
         return list(self._modules.values())
 
     def create_application(self, **kwargs) -> FastAPI:
+        scheduler = AsyncIOScheduler()
+
         app_kwargs: dict[str, Any] = {
             "docs_url": f"{self._docs_prefix}/docs",
             "redoc_url": f"{self._docs_prefix}/redoc",
@@ -66,7 +74,7 @@ class ModuleSiteImpl(IModuleSite):
             "title": self._name,
             "description": self._description,
             "version": __version__,
-            "lifespan": _lifespan,
+            "lifespan": _make_lifespan(scheduler),
         }
         app_kwargs = {k: v for k, v in app_kwargs.items() if v is not None}
         app = FastAPI(**app_kwargs)
@@ -79,8 +87,10 @@ class ModuleSiteImpl(IModuleSite):
             allow_headers=["*"],
         )
 
+        app.state.scheduler = scheduler
+
         for module in self._modules.values():
-            module.mount(app, prefix=self._prefix)
+            module.mount(app, scheduler=scheduler, prefix=self._prefix)
 
         return app
 

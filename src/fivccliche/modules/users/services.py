@@ -3,6 +3,7 @@ from datetime import datetime, timezone, timedelta
 from typing import cast
 
 import jwt
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fivcglue import query_component, IComponentSite
 from fivcglue.interfaces.caches import ICache
@@ -282,6 +283,11 @@ class ModuleImpl(IModule):
     def description(self):
         return "User management module."
 
-    def mount(self, app: FastAPI, **kwargs) -> None:
+    def mount(
+        self,
+        app: FastAPI,
+        scheduler: AsyncIOScheduler | None = None,
+        **kwargs,
+    ) -> None:
         print("users module mounted.")
         app.include_router(router, **kwargs)

@@ -10,6 +10,7 @@ A **production-ready, multi-user backend framework** designed specifically for *
 - **Async/Await** - Full async support for handling concurrent AI agent requests at scale
 - **Type Safety** - Built-in type hints with Pydantic 2.0 validation for reliable data handling
 - **Multi-User Support** - Designed for managing multiple AI agents with proper isolation and access control
+- **Scheduled Tasks** - APScheduler-based per-module scheduled job support, wired through `IModule.mount`
 - **Testing** - Pytest with async support for comprehensive test coverage
 - **Code Quality** - Black, Ruff, and MyPy configured for professional code standards
 - **Package Management** - `uv` for fast, reliable dependency management
@@ -98,6 +99,7 @@ python -m fivccliche.cli run --verbose
 For detailed information, see the documentation in the `docs/` folder:
 
 - **[Getting Started](docs/getting-started.md)** - Comprehensive tutorial with examples
+- **[Scheduled Tasks](docs/scheduler.md)** - Per-module APScheduler integration
 - **[Setup Summary](docs/setup-summary.md)** - Installation and project structure
 - **[Migration Plan](docs/migration-plan.md)** - Technical migration details
 - **[Completion Summary](docs/completion-summary.md)** - What was accomplished
@@ -142,7 +144,7 @@ fivccliche/
 
 ## 📦 Dependencies
 
-**Production Core**: FastAPI, SQLModel, Uvicorn, Pydantic, SQLAlchemy
+**Production Core**: FastAPI, SQLModel, Uvicorn, Pydantic, SQLAlchemy, APScheduler
 
 **CLI & Output**: Typer, Rich, python-dotenv
 

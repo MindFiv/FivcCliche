@@ -2,6 +2,8 @@ import asyncio
 import importlib.util
 from pathlib import Path
 from typing import Any, cast
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 
 from fivcglue import IComponentSite
@@ -560,7 +562,12 @@ class ModuleImpl(IModule):
     def description(self):
         return "Agent Configs management module."
 
-    def mount(self, app: FastAPI, **kwargs) -> None:
+    def mount(
+        self,
+        app: FastAPI,
+        scheduler: AsyncIOScheduler | None = None,
+        **kwargs,
+    ) -> None:
         print("agent_configs module mounted.")
         app.include_router(routers.router_embeddings, **kwargs)
         app.include_router(routers.router_models, **kwargs)

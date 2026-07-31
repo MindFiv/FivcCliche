@@ -1,5 +1,6 @@
 from abc import abstractmethod
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 
 from fivcglue import IComponent
@@ -21,7 +22,7 @@ class IModule(IComponent):
         """Description of the module."""
 
     @abstractmethod
-    def mount(self, app: FastAPI, **kwargs) -> None:
+    def mount(self, app: FastAPI, scheduler: AsyncIOScheduler | None = None, **kwargs) -> None:
         """Mount the module to the FastAPI app."""
 
 

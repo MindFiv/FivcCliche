@@ -1,5 +1,6 @@
 import asyncio
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 
 from fivcglue import IComponentSite
@@ -311,7 +312,12 @@ class ModuleImpl(IModule):
     def description(self):
         return "Agent Chat management module."
 
-    def mount(self, app: FastAPI, **kwargs) -> None:
+    def mount(
+        self,
+        app: FastAPI,
+        scheduler: AsyncIOScheduler | None = None,
+        **kwargs,
+    ) -> None:
         print("agent_chats module mounted.")
         app.include_router(routers.router_chats, **kwargs)
         app.include_router(routers.router_messages, **kwargs)

@@ -55,6 +55,10 @@ Each module in `src/fivccliche/modules/` follows the same structure:
 
 Modules: `users`, `agent_configs`, `agent_chats`. All mounted under `/api` prefix.
 
+### Scheduled Tasks
+
+`IModule.mount` accepts an optional `AsyncIOScheduler`. `ModuleSiteImpl.create_application` creates a single `AsyncIOScheduler`, attaches it to `app.state.scheduler`, passes it to every module's `mount`, and starts/stops it in the app lifespan (`scheduler.start()` on startup, `scheduler.shutdown(wait=False)` on shutdown). Modules register jobs during `mount` via `scheduler.add_job(...)`. See `docs/scheduler.md`.
+
 ### Authentication Flow
 
 JWT-based (HS256). Login returns token → Bearer token in Authorization header → `get_authenticated_user_async` dependency extracts user. SSO via CAS supported in `modules/users/sso.py`. Configurable via env vars: `SECRET_KEY`, `ALGORITHM`, `EXPIRATION_HOURS`.
