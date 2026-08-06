@@ -85,3 +85,10 @@ scope for the framework defaults.
 When writing tests that register jobs you don't want to actually fire, use a
 far-future `"date"` trigger or a long `"interval"` so the job never executes
 within the test window.
+
+## Real module example
+
+`agent_chats` registers `agent-chats-memorize` during `mount` (interval from
+`agent_chats.MEMORIZE_INTERVAL_MINUTES`, default 5). See
+[agent-memories.md](agent-memories.md) for chat-level retain semantics and
+per-chat Redis mutex details.

@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import cast
 
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -226,6 +226,7 @@ async def update_chat_message_async(
     query: dict | None | UnsetType = UNSET,
     tool_calls: dict | None | UnsetType = UNSET,
     completed_at: datetime | None | UnsetType = UNSET,
+    is_memorized: bool | UnsetType = UNSET,
     **kwargs,  # ignore additional arguments
 ) -> models.UserChatMessage:
     """Update a chat message."""
@@ -239,6 +240,8 @@ async def update_chat_message_async(
         message.tool_calls = cast("dict | None", tool_calls)
     if completed_at is not UNSET:
         message.completed_at = cast("datetime | None", completed_at)
+    if is_memorized is not UNSET:
+        message.is_memorized = cast("bool", is_memorized)
     session.add(message)
     await session.commit()
     await session.refresh(message)
@@ -252,4 +255,74 @@ async def delete_chat_message_async(
 ) -> None:
     """Delete a chat message."""
     await session.delete(message)
+    await session.commit()
+
+
+async def list_unmemorized_chats_async(
+    session: AsyncSession,
+    *,
+    created_at_to: datetime,
+    limit: int = 50,
+    **kwargs,
+) -> list[models.UserChat]:
+    """List chats that have aged, completed, unmemorized messages.
+
+    Only chats with a non-null ``user_uuid`` are returned. Ordering is by chat
+    ``created_at`` ascending.
+    """
+    statement = (
+        select(models.UserChat)
+        .join(
+            models.UserChatMessage,
+            col(models.UserChatMessage.chat_uuid) == models.UserChat.uuid,
+        )
+        .where(
+            col(models.UserChat.user_uuid).is_not(None),
+            col(models.UserChatMessage.is_memorized).is_(False),
+            models.UserChatMessage.status == schemas.AgentRunStatus.COMPLETED,
+            models.UserChatMessage.created_at <= created_at_to,
+        )
+        .distinct()
+        .order_by(col(models.UserChat.created_at).asc())
+        .limit(limit)
+    )
+    result = await session.execute(statement)
+    return list(result.scalars().unique().all())
+
+
+async def list_unmemorized_chat_messages_async(
+    session: AsyncSession,
+    chat_uuid: str,
+    *,
+    created_at_to: datetime,
+    **kwargs,
+) -> list[models.UserChatMessage]:
+    """List aged, completed, unmemorized messages for one chat (oldest first)."""
+    statement = (
+        select(models.UserChatMessage)
+        .where(
+            models.UserChatMessage.chat_uuid == chat_uuid,
+            col(models.UserChatMessage.is_memorized).is_(False),
+            models.UserChatMessage.status == schemas.AgentRunStatus.COMPLETED,
+            models.UserChatMessage.created_at <= created_at_to,
+        )
+        .order_by(col(models.UserChatMessage.created_at).asc())
+    )
+    result = await session.execute(statement)
+    return list(result.scalars().all())
+
+
+async def mark_unmemorized_chat_messages_async(
+    session: AsyncSession,
+    message_uuids: list[str],
+    **kwargs,
+) -> None:
+    """Mark the given messages as memorized in a short transaction."""
+    if not message_uuids:
+        return
+    await session.execute(
+        update(models.UserChatMessage)
+        .where(col(models.UserChatMessage.uuid).in_(message_uuids))
+        .values(is_memorized=True)
+    )
     await session.commit()

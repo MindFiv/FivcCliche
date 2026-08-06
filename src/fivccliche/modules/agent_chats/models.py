@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, String, ForeignKey
+from sqlalchemy import Column, DateTime, ForeignKey, Index, String
 from sqlmodel import SQLModel, Field, JSON
 
 from . import schemas
@@ -67,6 +67,7 @@ class UserChatMessage(SQLModel, table=True):
     """User chat message model."""
 
     __tablename__ = "chat_message"
+    __table_args__ = (Index("ix_chat_message_memorize", "is_memorized", "status", "created_at"),)
 
     uuid: str = Field(
         default_factory=lambda: str(uuid4()),
@@ -112,6 +113,10 @@ class UserChatMessage(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=True),
         default=None,
         description="Message completion time.",
+    )
+    is_memorized: bool = Field(
+        default=False,
+        description="Whether the message is in memory or not.",
     )
 
     def to_schema(self) -> schemas.UserChatMessageSchema:

@@ -35,6 +35,7 @@ dependencies = [
     "fastapi-cdn-host>=0.9.3",
     "pydantic-strict-partial>=0.6.2",
     "apscheduler>=3.10.0",
+    "hindsight-client>=0.8.6",
 ]
 
 [project.optional-dependencies]

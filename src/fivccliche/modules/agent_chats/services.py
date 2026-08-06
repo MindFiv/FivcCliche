@@ -2,19 +2,19 @@ import asyncio
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
-
 from fivcglue import IComponentSite
-from fivcplayground.agents import AgentRunSession, AgentRun
+from fivcplayground.agents import AgentRun, AgentRunSession
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
-from fivccliche.services.interfaces.modules import IModule
 from fivccliche.services.interfaces.agent_chats import (
     IUserChatContext,
     IUserChatProvider,
     UserChatRepository,
 )
+from fivccliche.services.interfaces.modules import IModule
 
 from . import methods, routers
+from .jobs import ChatMemorizeJob
 
 
 class UserChatRepositoryImpl(UserChatRepository):
@@ -301,7 +301,8 @@ class UserChatProviderImpl(IUserChatProvider):
 class ModuleImpl(IModule):
     """Agent chats module implementation."""
 
-    def __init__(self, _: IComponentSite, **kwargs):
+    def __init__(self, component_site: IComponentSite, **kwargs):
+        self._component_site = component_site
         print("agent chats module initialized.")
 
     @property
@@ -319,5 +320,7 @@ class ModuleImpl(IModule):
         **kwargs,
     ) -> None:
         print("agent_chats module mounted.")
+        if scheduler is not None:
+            ChatMemorizeJob(self._component_site).register(scheduler)
         app.include_router(routers.router_chats, **kwargs)
         app.include_router(routers.router_messages, **kwargs)

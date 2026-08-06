@@ -11,6 +11,7 @@ from fivcglue.interfaces import mutexes
 
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
+from fivccliche.services.interfaces.agent_memories import IUserMemoryProvider
 from fivccliche.services.interfaces.db import IDatabase
 from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator
 from fivccliche.services.implements import service_site
@@ -43,6 +44,10 @@ default_config_provider: LazyValue[IUserConfigProvider] = LazyValue(
 
 default_chat_provider: LazyValue[IUserChatProvider] = LazyValue(
     lambda: query_component(cast(IComponentSite, service_site), IUserChatProvider)
+)
+
+default_memory_provider: LazyValue[IUserMemoryProvider | None] = LazyValue(
+    lambda: query_component(cast(IComponentSite, service_site), IUserMemoryProvider)
 )
 
 
@@ -213,3 +218,8 @@ async def get_config_provider_async() -> IUserConfigProvider:
 async def get_chat_provider_async() -> IUserChatProvider:
     """Get the user chat provider for dependency injection."""
     return cast(IUserChatProvider, default_chat_provider())
+
+
+async def get_memory_provider_async() -> IUserMemoryProvider | None:
+    """Return the memory provider, or None if not registered."""
+    return cast("IUserMemoryProvider | None", default_memory_provider())
