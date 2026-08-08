@@ -20,6 +20,7 @@ from fivccliche.services.interfaces.agent_memories import (
     IUserMemory,
     IUserMemoryProvider,
     MemoryContent,
+    MemoryListResult,
     MemoryRecallResult,
     MemoryRetainResult,
 )
@@ -49,16 +50,45 @@ class UserMemoryHindsightImpl(IUserMemory):
         items = [self._map_item(r) for r in raw_items]
         return MemoryRecallResult(items=items, raw=resp)
 
+    async def list_async(
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        **kwargs: Any,
+    ) -> MemoryListResult:
+        resp = await self._hindsight.memory.list_memories(
+            bank_id=self._bank_id,
+            type=kwargs.get("type"),
+            q=kwargs.get("search_query") or kwargs.get("q"),
+            limit=limit,
+            offset=skip,
+        )
+        raw_items = getattr(resp, "items", None) or []
+        items = [self._map_item(r) for r in raw_items]
+        total = int(getattr(resp, "total", 0) or 0)
+        return MemoryListResult(items=items, total=total, raw=resp)
+
     @staticmethod
-    def _map_item(r: Any) -> MemoryContent:
-        item_type = getattr(r, "type", None)
+    def _attr(r: Any, name: str, default: Any = None) -> Any:
+        if isinstance(r, dict):
+            return r.get(name, default)
+        return getattr(r, name, default)
+
+    @classmethod
+    def _map_item(cls, r: Any) -> MemoryContent:
+        item_type = cls._attr(r, "type")
+        content = cls._attr(r, "text") or cls._attr(r, "content") or ""
+        created_at = cls._attr(r, "timestamp")
+        if created_at is None:
+            created_at = cls._attr(r, "created_at")
         return MemoryContent(
-            id=getattr(r, "id", None),
-            content=getattr(r, "text", "") or "",
-            score=getattr(r, "score", None),
+            id=cls._attr(r, "id"),
+            content=content,
+            score=cls._attr(r, "score"),
             categories=[item_type] if item_type else None,
-            metadata=getattr(r, "metadata", None),
-            created_at=getattr(r, "timestamp", None),
+            metadata=cls._attr(r, "metadata"),
+            created_at=created_at,
         )
 
 

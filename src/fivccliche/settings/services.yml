@@ -60,11 +60,18 @@
   class: fivccliche.modules.agent_chats.ModuleImpl
 
 - entries:
+    - interface: fivccliche.services.interfaces.modules.IModule
+      name: agent_memories
+
+  class: fivccliche.modules.agent_memories.ModuleImpl
+
+- entries:
     - interface: fivccliche.services.interfaces.modules.IModuleSite
   prefix: '/api'
   modules:
     - 'users'
     - 'agent_configs'
     - 'agent_chats'
+    - 'agent_memories'
 
   class: fivccliche.services.implements.modules.ModuleSiteImpl

@@ -9,6 +9,7 @@ via `hindsight-client`.
 
 - Interface + Hindsight provider (DI + `get_memory_provider_async`)
 - Scheduled **chat-level** memorize job in `agent_chats` (see below)
+- Read-only HTTP API in `agent_memories` (`GET /memories/`, `GET /memories/recall/`)
 - `UserChatMessage.is_memorized` is written by the job after a successful retain
   (or when there is nothing to retain); it is not exposed on the public API yet
 
@@ -19,12 +20,16 @@ Defined in `src/fivccliche/services/interfaces/agent_memories.py`:
 | Type | Role |
 |------|------|
 | `IUserMemoryProvider` | Factory: `get_memory(space_id=...)` → `IUserMemory` |
-| `IUserMemory` | Per-space API: `retain_async` / `recall_async` |
-| `MemoryContent` | Normalized recalled item |
-| `MemoryRetainResult` / `MemoryRecallResult` | Normalized operation outcomes |
+| `IUserMemory` | Per-space API: `retain_async` / `recall_async` / `list_async` |
+| `MemoryContent` | Normalized recalled/listed item |
+| `MemoryRetainResult` / `MemoryRecallResult` / `MemoryListResult` | Normalized operation outcomes |
 
 Business code should depend only on these types, never on Hindsight-native
 response objects (`raw` is an escape hatch).
+
+`list_async(*, skip=0, limit=100, **kwargs)` returns `MemoryListResult` with
+`items` and `total`. Extra `kwargs` are backend-specific (e.g. Hindsight
+`type` / `search_query`) and are not exposed by the HTTP module.
 
 ## Hindsight implementation
 
@@ -33,8 +38,26 @@ response objects (`raw` is an escape hatch).
 - Creates the `Hindsight` SDK client lazily on first `get_memory` call
 - Maps `space_id` directly to Hindsight `bank_id` (`None` → `"default"`)
 - Banks are created automatically by Hindsight on first retain/recall
+- `list_async` calls `client.memory.list_memories` (`offset=skip`)
 
 Chat memorize job uses `space_id=chat.user_uuid`.
+
+## HTTP API (`agent_memories` module)
+
+Mounted under `/api` (same as other modules). Requires a Bearer JWT.
+
+| Method | Path | Behavior |
+|--------|------|----------|
+| `GET` | `/memories/` | Paginated list (`skip` / `limit`) → `{ total, results }` |
+| `GET` | `/memories/recall/?query=` | Semantic recall → `{ results }` |
+
+`space_id` is always the authenticated user's `uuid`.
+
+If `IUserMemoryProvider` is not registered, both endpoints return
+**503** with `detail="Memory provider is not mounted"`.
+
+The HTTP module depends only on `IUserMemory` / `IUserMemoryProvider`; it does
+not import Hindsight.
 
 ## Configuration
 
@@ -86,10 +109,18 @@ Registered in `src/fivccliche/settings/services.yml`:
 - entries:
     - interface: fivccliche.services.interfaces.agent_memories.IUserMemoryProvider
   class: fivccliche.services.implements.agent_memories_hindsight.UserMemoryProviderImpl
+
+- entries:
+    - interface: fivccliche.services.interfaces.modules.IModule
+      name: agent_memories
+  class: fivccliche.modules.agent_memories.ModuleImpl
 ```
 
-Remove that entry to leave memory unmounted.
-`get_memory_provider_async` then returns `None` and the memorize job no-ops.
+`agent_memories` is also listed under `IModuleSite.modules`.
+
+Remove the `IUserMemoryProvider` entry to leave memory unmounted.
+`get_memory_provider_async` then returns `None`, the memorize job no-ops, and
+the memories HTTP API returns 503.
 
 A Redis-backed `IMutexSite` must also be available (`get_mutex_site_async`);
 otherwise the job skips entirely.
@@ -147,11 +178,13 @@ async def example(
     memory = memory_provider.get_memory(space_id=user.uuid)
     await memory.retain_async('[{"role":"user","content":"hi"}]')
     recalled = await memory.recall_async("hi")
-    return recalled.items
+    listed = await memory.list_async(skip=0, limit=20)
+    return recalled.items, listed.items
 ```
 
 ## Testing
 
-- `tests/test_agent_memories_hindsight.py` — Hindsight provider (mocked SDK)
+- `tests/test_agent_memories_hindsight.py` — Hindsight provider (mocked SDK), including `list_async`
+- `tests/test_agent_memories_api.py` — HTTP auth, 503 when unmounted, list/recall success
 - `tests/test_agent_chats_memorize.py` — conversation JSON, age filter, mutex
   skip, job marking, mount registration

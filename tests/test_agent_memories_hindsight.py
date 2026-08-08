@@ -19,6 +19,7 @@ from fivccliche.services.interfaces.agent_memories import (
     IUserMemory,
     IUserMemoryProvider,
     MemoryContent,
+    MemoryListResult,
     MemoryRecallResult,
     MemoryRetainResult,
 )
@@ -129,6 +130,85 @@ class TestUserMemoryHindsightImpl:
 
         assert result.items == []
         assert result.raw is native
+
+    @pytest.mark.asyncio
+    async def test_list_maps_dict_items_and_forwards_pagination(self):
+        hindsight = MagicMock()
+        native = MagicMock()
+        native.items = [
+            {
+                "id": "m1",
+                "text": "Alice loves AI",
+                "type": "world",
+                "score": 0.8,
+                "metadata": {"k": "v"},
+                "timestamp": "2026-08-01T10:00:00Z",
+            }
+        ]
+        native.total = 5
+        hindsight.memory.list_memories = AsyncMock(return_value=native)
+
+        memory = UserMemoryHindsightImpl(hindsight, bank_id="alice")
+        result = await memory.list_async(skip=10, limit=25)
+
+        hindsight.memory.list_memories.assert_awaited_once_with(
+            bank_id="alice",
+            type=None,
+            q=None,
+            limit=25,
+            offset=10,
+        )
+        assert isinstance(result, MemoryListResult)
+        assert result.total == 5
+        assert result.raw is native
+        assert len(result.items) == 1
+        item = result.items[0]
+        assert isinstance(item, MemoryContent)
+        assert item.id == "m1"
+        assert item.content == "Alice loves AI"
+        assert item.categories == ["world"]
+        assert item.score == 0.8
+        assert item.metadata == {"k": "v"}
+        assert item.created_at is not None
+        assert item.created_at.isoformat() == "2026-08-01T10:00:00+00:00"
+
+    @pytest.mark.asyncio
+    async def test_list_maps_object_items_and_content_fallback(self):
+        hindsight = MagicMock()
+        item = MagicMock()
+        item.id = "m2"
+        item.text = None
+        item.content = "from content field"
+        item.type = None
+        item.score = None
+        item.metadata = None
+        item.timestamp = None
+        item.created_at = "2026-07-01T00:00:00Z"
+        native = MagicMock()
+        native.items = [item]
+        native.total = 1
+        hindsight.memory.list_memories = AsyncMock(return_value=native)
+
+        memory = UserMemoryHindsightImpl(hindsight, bank_id="alice")
+        result = await memory.list_async()
+
+        assert result.items[0].content == "from content field"
+        assert result.items[0].categories is None
+        assert result.items[0].created_at is not None
+
+    @pytest.mark.asyncio
+    async def test_list_empty_items_yields_empty_result(self):
+        hindsight = MagicMock()
+        native = MagicMock()
+        native.items = []
+        native.total = 0
+        hindsight.memory.list_memories = AsyncMock(return_value=native)
+
+        memory = UserMemoryHindsightImpl(hindsight, bank_id="alice")
+        result = await memory.list_async()
+
+        assert result.items == []
+        assert result.total == 0
 
 
 class TestUserMemoryProviderImpl:

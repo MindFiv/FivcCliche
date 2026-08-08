@@ -3,8 +3,8 @@
 Implementation-agnostic memory contracts so the project can swap backends
 (Hindsight, mem0, ...) without touching business code. Business code should
 only depend on the neutral return models (``MemoryContent`` /
-``MemoryRetainResult`` / ``MemoryRecallResult``) and never on a backend's
-native response types.
+``MemoryRetainResult`` / ``MemoryRecallResult`` / ``MemoryListResult``) and
+never on a backend's native response types.
 """
 
 from abc import abstractmethod
@@ -52,6 +52,16 @@ class MemoryRecallResult(BaseModel):
     raw: Any | None = None
 
 
+class MemoryListResult(BaseModel):
+    """Outcome of listing memories with pagination."""
+
+    items: list[MemoryContent] = Field(default_factory=list)
+    total: int = 0
+    # Backend-native payload; escape hatch for advanced use. Business code
+    # should prefer the normalized fields above and avoid relying on this.
+    raw: Any | None = None
+
+
 class IUserMemory(IComponent):
     """IUserMemory is an interface for a single user memory space."""
 
@@ -62,6 +72,16 @@ class IUserMemory(IComponent):
     @abstractmethod
     async def recall_async(self, query: str) -> MemoryRecallResult:
         """Recall memories by semantic similarity to ``query``."""
+
+    @abstractmethod
+    async def list_async(
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        **kwargs: Any,
+    ) -> MemoryListResult:
+        """List memories with pagination (``skip`` / ``limit``)."""
 
 
 class IUserMemoryProvider(IComponent):
