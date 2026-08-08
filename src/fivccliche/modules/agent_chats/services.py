@@ -321,6 +321,6 @@ class ModuleImpl(IModule):
     ) -> None:
         print("agent_chats module mounted.")
         if scheduler is not None:
-            ChatMemorizeJob(self._component_site).register(scheduler)
+            ChatMemorizeJob(self._component_site, scheduler)
         app.include_router(routers.router_chats, **kwargs)
         app.include_router(routers.router_messages, **kwargs)

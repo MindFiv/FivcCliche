@@ -88,7 +88,8 @@ within the test window.
 
 ## Real module example
 
-`agent_chats` registers `agent-chats-memorize` during `mount` (interval from
+`agent_chats` constructs `ChatMemorizeJob(component_site, scheduler)` during
+`mount`, which registers `agent-chats-memorize` in `__init__` (interval from
 `agent_chats.MEMORIZE_INTERVAL_MINUTES`, default 5). See
 [agent-memories.md](agent-memories.md) for chat-level retain semantics and
 per-chat Redis mutex details.

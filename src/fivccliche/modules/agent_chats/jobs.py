@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -29,6 +30,14 @@ _MUTEX_EXPIRE = timedelta(minutes=30)
 MEMORIZE_JOB_ID = "agent-chats-memorize"
 
 
+@dataclass(frozen=True)
+class _MemorizeSettings:
+    interval_minutes: int
+    batch_size: int
+    max_batches_per_run: int
+    min_age_hours: int
+
+
 def _config_int(session: configs.IConfigSession | None, key: str, default: int) -> int:
     if session is None:
         return default
@@ -40,6 +49,21 @@ def _config_int(session: configs.IConfigSession | None, key: str, default: int) 
     except (TypeError, ValueError):
         return default
     return value if value > 0 else default
+
+
+def _load_memorize_settings(component_site: IComponentSite) -> _MemorizeSettings:
+    config = query_component(component_site, configs.IConfig)
+    session = config.get_session("agent_chats") if config else None
+    return _MemorizeSettings(
+        interval_minutes=_config_int(
+            session, "MEMORIZE_INTERVAL_MINUTES", _DEFAULT_INTERVAL_MINUTES
+        ),
+        batch_size=_config_int(session, "MEMORIZE_BATCH_SIZE", _DEFAULT_BATCH_SIZE),
+        max_batches_per_run=_config_int(
+            session, "MEMORIZE_MAX_BATCHES_PER_RUN", _DEFAULT_MAX_BATCHES_PER_RUN
+        ),
+        min_age_hours=_config_int(session, "MEMORIZE_MIN_AGE_HOURS", _DEFAULT_MIN_AGE_HOURS),
+    )
 
 
 def build_conversation_turns(messages: list[models.UserChatMessage]) -> list[dict[str, str]]:
@@ -60,22 +84,23 @@ def build_conversation_turns(messages: list[models.UserChatMessage]) -> list[dic
 
 
 class ChatMemorizeJob:
-    """Interval job that retains aged chat conversations into agent memory."""
+    """Interval job that retains aged chat conversations into agent memory.
 
-    def __init__(self, component_site: IComponentSite) -> None:
-        config = query_component(component_site, configs.IConfig)
-        session = config.get_session("agent_chats") if config else None
-        self.interval_minutes = _config_int(
-            session, "MEMORIZE_INTERVAL_MINUTES", _DEFAULT_INTERVAL_MINUTES
-        )
-        self.batch_size = _config_int(session, "MEMORIZE_BATCH_SIZE", _DEFAULT_BATCH_SIZE)
-        self.max_batches_per_run = _config_int(
-            session, "MEMORIZE_MAX_BATCHES_PER_RUN", _DEFAULT_MAX_BATCHES_PER_RUN
-        )
-        self.min_age_hours = _config_int(session, "MEMORIZE_MIN_AGE_HOURS", _DEFAULT_MIN_AGE_HOURS)
+    Constructing an instance loads settings and registers the job on the given
+    scheduler immediately.
+    """
 
-    def register(self, scheduler: AsyncIOScheduler) -> None:
-        """Register this job on the shared AsyncIOScheduler."""
+    def __init__(
+        self,
+        component_site: IComponentSite,
+        scheduler: AsyncIOScheduler,
+    ) -> None:
+        settings = _load_memorize_settings(component_site)
+        self.interval_minutes = settings.interval_minutes
+        self.batch_size = settings.batch_size
+        self.max_batches_per_run = settings.max_batches_per_run
+        self.min_age_hours = settings.min_age_hours
+
         scheduler.add_job(
             self.run_async,
             trigger="interval",

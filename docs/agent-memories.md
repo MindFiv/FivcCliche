@@ -135,9 +135,10 @@ otherwise the memorize job skips entirely.
 
 ## Chat memorize job
 
-Implemented by `agent_chats.jobs.ChatMemorizeJob` and registered from
-`ModuleImpl.mount` as APScheduler job `agent-chats-memorize`
-(`max_instances=1`, `coalesce=True`).
+Implemented by `agent_chats.jobs.ChatMemorizeJob`. `ModuleImpl.mount`
+constructs `ChatMemorizeJob(component_site, scheduler)`, which registers
+APScheduler job `agent-chats-memorize` (`max_instances=1`, `coalesce=True`)
+during `__init__`.
 
 Per tick:
 
