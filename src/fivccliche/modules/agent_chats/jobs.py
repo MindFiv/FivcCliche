@@ -158,7 +158,8 @@ class ChatMemorizeJob:
 
             message_uuids = [message.uuid for message in messages]
             turns = build_conversation_turns(messages)
-            if turns:
+            has_user = any(turn["role"] == "user" for turn in turns)
+            if has_user:
                 memory = memory_provider.get_memory(space_id=chat.user_uuid)
                 content = json.dumps(turns, ensure_ascii=False)
                 result = await memory.retain_async(content)

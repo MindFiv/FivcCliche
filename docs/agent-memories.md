@@ -142,8 +142,8 @@ Per tick:
 4. For each chat, acquire mutex `agent-chats:memorize:{chat_uuid}`
    (non-blocking). On failure, skip that chat only.
 5. Build a JSON conversation array and `retain_async` once with
-   `space_id=chat.user_uuid`. On success (or empty content), mark those
-   messages `is_memorized=True`.
+   `space_id=chat.user_uuid`. On success (or when there is no user turn to
+   retain), mark those messages `is_memorized=True`.
 
 Retain payload example:
 
@@ -159,8 +159,9 @@ Rules when building turns:
 - Skip the **user** turn when `query.text` (stripped) starts with `/`
   (slash commands).
 - Still include the **assistant** turn when `reply.text` is non-empty.
-- If the resulting array is empty, do not call retain; still mark messages
-  memorized so they are not scanned again.
+- If the resulting array has no `role=user` turn (empty, or assistant-only
+  after slash filtering), do not call retain; still mark messages memorized
+  so they are not scanned again.
 
 ## Manual injection example
 

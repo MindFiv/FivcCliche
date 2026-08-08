@@ -377,6 +377,59 @@ class TestMemorizeJob:
         await session.refresh(msg)
         assert msg.is_memorized is True
 
+    @pytest.mark.asyncio
+    async def test_slash_command_with_reply_marks_without_retain(
+        self, session: AsyncSession, test_user
+    ):
+        chat = await _add_chat(session, test_user.uuid)
+        msg = await _add_message(
+            session,
+            chat.uuid,
+            query={"text": "/help"},
+            reply={"text": "这里是帮助"},
+            created_at=_older(),
+        )
+
+        memory = MagicMock()
+        memory.retain_async = AsyncMock(return_value=MemoryRetainResult(success=True, count=1))
+        provider = MagicMock()
+        provider.get_memory.return_value = memory
+
+        mutex = MagicMock()
+        mutex.acquire_async = AsyncMock(return_value=True)
+        mutex.release_async = AsyncMock(return_value=True)
+        mutex_site = MagicMock()
+        mutex_site.get_mutex.return_value = mutex
+
+        job = ChatMemorizeJob(MagicMock())
+
+        class _SessionCtx:
+            async def __aenter__(self):
+                return session
+
+            async def __aexit__(self, *args):
+                return None
+
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.jobs.get_memory_provider_async",
+                AsyncMock(return_value=provider),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.jobs.get_mutex_site_async",
+                AsyncMock(return_value=mutex_site),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.jobs.get_db_session_context",
+                side_effect=lambda: _SessionCtx(),
+            ),
+        ):
+            await job.run_async()
+
+        memory.retain_async.assert_not_awaited()
+        await session.refresh(msg)
+        assert msg.is_memorized is True
+
     def test_config_defaults_and_custom_interval(self):
         component_site = MagicMock()
         with patch(
