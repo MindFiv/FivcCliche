@@ -1182,6 +1182,7 @@ class TestCreateChatMessages:
         context = {"scope": "router"}
         fake_task = self._fake_chat_task(mock_generator)
         background_tasks = MagicMock()
+        mock_session = AsyncMock()
 
         with (
             patch(
@@ -1199,7 +1200,7 @@ class TestCreateChatMessages:
                 chat_message=UserChatMessageCreateSchema(query="Hello"),
                 background_tasks=background_tasks,
                 user=self._mock_user(),
-                session=AsyncMock(),
+                session=mock_session,
                 config_provider=MagicMock(),
                 chat_provider=chat_provider,
                 mutex_site=None,
@@ -1215,6 +1216,7 @@ class TestCreateChatMessages:
         assert kwargs["chat_skills_enabled"] is True
         background_tasks.add_task.assert_called_once_with(fake_task.join_async)
         chat_provider.get_chat_context.assert_not_called()
+        mock_session.close.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_create_message_falls_back_when_mutex_unavailable(self):
@@ -1316,6 +1318,7 @@ class TestCreateChatMessages:
         mock_mutex_site.get_mutex.return_value = mock_mutex
         chat_provider = MagicMock()
         fake_task = self._fake_chat_task(mock_generator)
+        mock_session = AsyncMock()
 
         with (
             patch(
@@ -1333,7 +1336,7 @@ class TestCreateChatMessages:
                 chat_message=UserChatMessageCreateSchema(query="Hello"),
                 background_tasks=MagicMock(),
                 user=self._mock_user(),
-                session=AsyncMock(),
+                session=mock_session,
                 config_provider=MagicMock(),
                 chat_provider=chat_provider,
                 mutex_site=mock_mutex_site,
@@ -1347,6 +1350,7 @@ class TestCreateChatMessages:
         assert kwargs["chat_mutex"] is mock_mutex
         # Release is owned by ChatTask, not the router.
         mock_mutex.release_async.assert_not_awaited()
+        mock_session.close.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_create_message_passes_mutex_even_when_stream_raises(self):

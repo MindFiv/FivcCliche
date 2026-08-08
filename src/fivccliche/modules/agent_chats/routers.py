@@ -260,6 +260,10 @@ async def create_chat_messages_async(
             await chat_mutex.release_async()
         raise
 
+    # Release the request-scoped session before SSE so the pool connection is
+    # not held for the entire stream duration.
+    await session.close()
+
     return responses.StreamingResponse(
         chat_task.get_stream_async(),
         media_type="text/event-stream",
