@@ -50,6 +50,10 @@ class UserChat(SQLModel, table=True):
         ),
         description="Chat creation time.",
     )
+    is_memorable: bool = Field(
+        default=False,
+        description="Whether this chat is eligible for memory retention.",
+    )
 
     def to_schema(self) -> schemas.UserChatSchema:
         """Convert UserChat to ChatSessionRead schema (AgentRunSession-based)."""

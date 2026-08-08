@@ -84,6 +84,7 @@ def _recent() -> datetime:
 
 
 async def _add_chat(session: AsyncSession, user_uuid: str, **kwargs) -> UserChat:
+    kwargs.setdefault("is_memorable", True)
     chat = UserChat(user_uuid=user_uuid, agent_id="agent", **kwargs)
     session.add(chat)
     await session.commit()
@@ -181,6 +182,46 @@ class TestMemorizeMethods:
             session, created_at_to=created_at_to, limit=50
         )
         assert [c.uuid for c in chats] == [chat_old.uuid]
+
+    async def test_list_chats_requires_is_memorable(self, session: AsyncSession, test_user):
+        chat_memorable = await _add_chat(session, test_user.uuid, is_memorable=True)
+        chat_not_memorable = await _add_chat(session, test_user.uuid, is_memorable=False)
+
+        await _add_message(
+            session,
+            chat_memorable.uuid,
+            query={"text": "keep"},
+            reply={"text": "ok"},
+            created_at=_older(),
+        )
+        await _add_message(
+            session,
+            chat_not_memorable.uuid,
+            query={"text": "skip"},
+            reply={"text": "ok"},
+            created_at=_older(),
+        )
+
+        created_at_to = datetime.now(timezone.utc) - timedelta(hours=24)
+        chats = await methods.list_unmemorized_chats_async(
+            session, created_at_to=created_at_to, limit=50
+        )
+        assert [c.uuid for c in chats] == [chat_memorable.uuid]
+
+    async def test_create_chat_is_memorable_flag(self, session: AsyncSession, test_user):
+        default_chat = await methods.create_chat_async(
+            session,
+            user_uuid=test_user.uuid,
+            agent_id="agent",
+        )
+        memorable_chat = await methods.create_chat_async(
+            session,
+            user_uuid=test_user.uuid,
+            agent_id="agent",
+            is_memorable=True,
+        )
+        assert default_chat.is_memorable is False
+        assert memorable_chat.is_memorable is True
 
     async def test_list_messages_for_chat_and_mark(self, session: AsyncSession, test_user):
         chat = await _add_chat(session, test_user.uuid)

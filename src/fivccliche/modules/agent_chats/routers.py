@@ -59,6 +59,7 @@ async def create_chat_async(
         agent_id=chat_create.agent_id,
         user_uuid=user.uuid,
         context=chat_create.context,
+        is_memorable=True,
     )
     return chat.to_schema()
 

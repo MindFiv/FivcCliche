@@ -22,6 +22,7 @@ async def create_chat_async(
     chat_uuid: str | None = None,
     description: str | None = None,
     context: dict | None = None,
+    is_memorable: bool = False,
     **kwargs,
 ) -> models.UserChat:
     """Create a new chat session asynchronously.
@@ -33,6 +34,7 @@ async def create_chat_async(
         chat_uuid: Optional chat UUID (will be auto-generated if not provided)
         description: Optional chat description
         context: Optional chat context (arbitrary JSON data)
+        is_memorable: Whether the chat is eligible for memory retention
         **kwargs: Additional arguments (ignored)
 
     Returns:
@@ -50,6 +52,7 @@ async def create_chat_async(
         agent_id=agent_id,
         description=description,
         context=context,
+        is_memorable=is_memorable,
     )
     session.add(chat)
     await session.commit()
@@ -278,6 +281,7 @@ async def list_unmemorized_chats_async(
         )
         .where(
             col(models.UserChat.user_uuid).is_not(None),
+            col(models.UserChat.is_memorable).is_(True),
             col(models.UserChatMessage.is_memorized).is_(False),
             models.UserChatMessage.status == schemas.AgentRunStatus.COMPLETED,
             models.UserChatMessage.created_at <= created_at_to,
