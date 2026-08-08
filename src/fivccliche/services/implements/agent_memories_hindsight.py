@@ -5,6 +5,9 @@ Reads connection settings from the ``hindsight`` config session in
 ``hindsight_client.Hindsight`` SDK, mapping its native responses onto the
 implementation-agnostic ``MemoryContent`` / ``MemoryRetainResult`` /
 ``MemoryRecallResult`` models.
+
+Requires the optional ``hindsight-client`` package. Install it separately
+before mounting this provider.
 """
 
 from __future__ import annotations
@@ -14,7 +17,6 @@ from typing import Any
 
 from fivcglue import IComponentSite, query_component
 from fivcglue.interfaces import configs
-from hindsight_client import Hindsight
 
 from fivccliche.services.interfaces.agent_memories import (
     IUserMemory,
@@ -32,10 +34,21 @@ _DEFAULT_BASE_URL = "http://localhost:8888"
 _DEFAULT_TIMEOUT = 300.0
 
 
+def _import_hindsight() -> type:
+    try:
+        from hindsight_client import Hindsight
+    except ImportError as exc:
+        raise ImportError(
+            "hindsight-client is required to use UserMemoryProviderImpl. "
+            "Install it with: pip install hindsight-client"
+        ) from exc
+    return Hindsight
+
+
 class UserMemoryHindsightImpl(IUserMemory):
     """IUserMemory backed by a single Hindsight memory bank."""
 
-    def __init__(self, hindsight: Hindsight, bank_id: str) -> None:
+    def __init__(self, hindsight: Any, bank_id: str) -> None:
         self._hindsight = hindsight
         self._bank_id = bank_id
 
@@ -95,28 +108,30 @@ class UserMemoryHindsightImpl(IUserMemory):
 class UserMemoryProviderImpl(IUserMemoryProvider):
     """Provider that hands out UserMemoryHindsightImpl bound to a Hindsight client.
 
-    The Hindsight client is created lazily on first ``get_memory`` call so that
-    component loading does not perform any I/O, and so that a missing config
-    session only surfaces when memory is actually used.
+    Imports ``hindsight-client`` when the component is constructed so a missing
+    optional dependency fails fast at mount time. The Hindsight client instance
+    is still created lazily on first ``get_memory`` call so component loading
+    does not perform any I/O.
     """
 
     def __init__(self, component_site: IComponentSite, **_kwargs: Any) -> None:
         self._component_site = component_site
-        self._hindsight: Hindsight | None = None
+        self._hindsight_cls = _import_hindsight()
+        self._hindsight: Any | None = None
 
-    def _get_hindsight(self) -> Hindsight:
+    def _get_hindsight(self) -> Any:
         if self._hindsight is None:
             self._hindsight = self._build_hindsight()
         return self._hindsight
 
-    def _build_hindsight(self) -> Hindsight:
+    def _build_hindsight(self) -> Any:
         session = self._read_config_session()
         base_url = (session.get_value("BASE_URL") if session else None) or _DEFAULT_BASE_URL
         api_key = session.get_value("API_KEY") if session else None
         timeout_raw = session.get_value("TIMEOUT") if session else None
         timeout = float(timeout_raw) if timeout_raw else _DEFAULT_TIMEOUT
         logger.info("Initializing Hindsight memory client (base_url=%s)", base_url)
-        return Hindsight(base_url=base_url, api_key=api_key, timeout=timeout)
+        return self._hindsight_cls(base_url=base_url, api_key=api_key, timeout=timeout)
 
     def _read_config_session(self) -> configs.IConfigSession | None:
         config = query_component(self._component_site, configs.IConfig)

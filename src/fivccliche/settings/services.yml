@@ -34,12 +34,6 @@
 
   class: fivccliche.modules.agent_chats.UserChatProviderImpl
 
-# memory provider -------------------------------------
-- entries:
-    - interface: fivccliche.services.interfaces.agent_memories.IUserMemoryProvider
-
-  class: fivccliche.services.implements.agent_memories_hindsight.UserMemoryProviderImpl
-
 # modules ---------------------------------------------
 - entries:
     - interface: fivccliche.services.interfaces.modules.IModule

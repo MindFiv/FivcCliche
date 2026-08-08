@@ -2,12 +2,12 @@
 
 FivcCliche exposes an implementation-agnostic memory contract so business code
 can store and recall user memories without depending on a specific backend.
-The default backend is [Hindsight](https://github.com/vectorize-io/hindsight)
-via `hindsight-client`.
+A [Hindsight](https://github.com/vectorize-io/hindsight) backend is available
+via optional `hindsight-client` (not a core package dependency).
 
 ## Status
 
-- Interface + Hindsight provider (DI + `get_memory_provider_async`)
+- Interface + optional Hindsight provider (DI + `get_memory_provider_async`)
 - Scheduled **chat-level** memorize job in `agent_chats` (see below)
 - Read-only HTTP API in `agent_memories` (`GET /memories/`, `GET /memories/recall/`)
 - `UserChatMessage.is_memorized` is written by the job after a successful retain
@@ -33,8 +33,11 @@ response objects (`raw` is an escape hatch).
 
 ## Hindsight implementation
 
-`UserMemoryProviderImpl` (`agent_memories_hindsight.py`):
+`UserMemoryProviderImpl` (`agent_memories_hindsight.py`) is **optional**:
 
+- Requires `hindsight-client` installed separately (`pip install hindsight-client`)
+- Dynamically imports the SDK when the component is constructed; missing install
+  raises `ImportError` with an install hint
 - Creates the `Hindsight` SDK client lazily on first `get_memory` call
 - Maps `space_id` directly to Hindsight `bank_id` (`None` → `"default"`)
 - Banks are created automatically by Hindsight on first retain/recall
@@ -103,27 +106,32 @@ Missing / invalid values fall back to the defaults above.
 
 ## Dependency injection
 
-Registered in `src/fivccliche/settings/services.yml`:
+`IUserMemoryProvider` is **not** registered in the default
+`src/fivccliche/settings/services.yml`. Without a mount,
+`get_memory_provider_async` returns `None`, the memorize job no-ops, and
+the memories HTTP API returns 503.
+
+To enable Hindsight memory, install `hindsight-client` and register the
+provider in your services config:
 
 ```yaml
 - entries:
     - interface: fivccliche.services.interfaces.agent_memories.IUserMemoryProvider
   class: fivccliche.services.implements.agent_memories_hindsight.UserMemoryProviderImpl
+```
 
+The `agent_memories` HTTP module remains listed under `IModuleSite.modules`
+in the default `services.yml`:
+
+```yaml
 - entries:
     - interface: fivccliche.services.interfaces.modules.IModule
       name: agent_memories
   class: fivccliche.modules.agent_memories.ModuleImpl
 ```
 
-`agent_memories` is also listed under `IModuleSite.modules`.
-
-Remove the `IUserMemoryProvider` entry to leave memory unmounted.
-`get_memory_provider_async` then returns `None`, the memorize job no-ops, and
-the memories HTTP API returns 503.
-
 A Redis-backed `IMutexSite` must also be available (`get_mutex_site_async`);
-otherwise the job skips entirely.
+otherwise the memorize job skips entirely.
 
 ## Chat memorize job
 

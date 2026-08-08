@@ -42,7 +42,7 @@ Key interfaces (in `src/fivccliche/services/interfaces/`):
 - `IUserAuthenticator` → `UserAuthenticatorImpl` — JWT auth, password hashing (Argon2)
 - `IUserConfigProvider` → `UserConfigProviderImpl` — LLM/embedding/tool/agent config repos
 - `IUserChatProvider` → `UserChatProviderImpl` — conversation repos
-- `IUserMemoryProvider` → `UserMemoryProviderImpl` — Hindsight-backed agent memory
+- `IUserMemoryProvider` → optional `UserMemoryProviderImpl` (Hindsight; requires separate `hindsight-client`)
 - `IModule` / `IModuleSite` → module registration and FastAPI app mounting
 
 ### Module Pattern

@@ -211,22 +211,44 @@ class TestUserMemoryHindsightImpl:
         assert result.total == 0
 
 
+_IMPORT_HINDSIGHT = "fivccliche.services.implements.agent_memories_hindsight._import_hindsight"
+
+
 class TestUserMemoryProviderImpl:
     """UserMemoryProviderImpl config, lazy init, and factory behavior."""
 
     def test_is_an_iuser_memory_provider(self):
-        provider = UserMemoryProviderImpl(MagicMock())
+        with patch(_IMPORT_HINDSIGHT, return_value=MagicMock()):
+            provider = UserMemoryProviderImpl(MagicMock())
         assert isinstance(provider, IUserMemoryProvider)
 
-    def test_constructor_does_not_create_hindsight_client(self):
-        with patch(
-            "fivccliche.services.implements.agent_memories_hindsight.Hindsight"
-        ) as mock_hindsight:
+    def test_constructor_imports_sdk_but_does_not_create_client(self):
+        mock_hindsight_cls = MagicMock()
+        with patch(_IMPORT_HINDSIGHT, return_value=mock_hindsight_cls) as mock_import:
+            provider = UserMemoryProviderImpl(MagicMock())
+
+        mock_import.assert_called_once()
+        mock_hindsight_cls.assert_not_called()
+        assert provider._hindsight is None
+
+    def test_constructor_raises_when_hindsight_client_missing(self):
+        with (
+            patch(
+                _IMPORT_HINDSIGHT,
+                side_effect=ImportError(
+                    "hindsight-client is required to use UserMemoryProviderImpl. "
+                    "Install it with: pip install hindsight-client"
+                ),
+            ),
+            pytest.raises(ImportError, match="hindsight-client is required") as exc_info,
+        ):
             UserMemoryProviderImpl(MagicMock())
-            mock_hindsight.assert_not_called()
+
+        assert "pip install hindsight-client" in str(exc_info.value)
 
     def test_get_memory_returns_iuser_memory_bound_to_space_id(self):
-        provider = UserMemoryProviderImpl(MagicMock())
+        with patch(_IMPORT_HINDSIGHT, return_value=MagicMock()):
+            provider = UserMemoryProviderImpl(MagicMock())
         with patch.object(provider, "_get_hindsight", return_value=MagicMock()) as mock_get:
             memory = provider.get_memory(space_id="alice")
 
@@ -235,7 +257,8 @@ class TestUserMemoryProviderImpl:
         assert memory._bank_id == "alice"
 
     def test_get_memory_defaults_to_default_bank_when_space_id_none(self):
-        provider = UserMemoryProviderImpl(MagicMock())
+        with patch(_IMPORT_HINDSIGHT, return_value=MagicMock()):
+            provider = UserMemoryProviderImpl(MagicMock())
         with patch.object(provider, "_get_hindsight", return_value=MagicMock()):
             memory = provider.get_memory(space_id=None)
 
@@ -252,21 +275,20 @@ class TestUserMemoryProviderImpl:
         config = MagicMock()
         config.get_session.return_value = session
         component_site = MagicMock()
+        mock_hindsight_cls = MagicMock()
         with (
             patch(
                 "fivccliche.services.implements.agent_memories_hindsight.query_component",
                 return_value=config,
             ) as mock_q,
-            patch(
-                "fivccliche.services.implements.agent_memories_hindsight.Hindsight"
-            ) as mock_hindsight,
+            patch(_IMPORT_HINDSIGHT, return_value=mock_hindsight_cls),
         ):
             provider = UserMemoryProviderImpl(component_site)
             provider.get_memory(space_id="alice")
 
         mock_q.assert_called_once_with(component_site, configs.IConfig)
         config.get_session.assert_called_once_with("hindsight")
-        mock_hindsight.assert_called_once_with(
+        mock_hindsight_cls.assert_called_once_with(
             base_url="http://hindsight.example:9999",
             api_key="secret-token",
             timeout=120.0,
@@ -276,19 +298,18 @@ class TestUserMemoryProviderImpl:
         config = MagicMock()
         config.get_session.return_value = None
         component_site = MagicMock()
+        mock_hindsight_cls = MagicMock()
         with (
             patch(
                 "fivccliche.services.implements.agent_memories_hindsight.query_component",
                 return_value=config,
             ),
-            patch(
-                "fivccliche.services.implements.agent_memories_hindsight.Hindsight"
-            ) as mock_hindsight,
+            patch(_IMPORT_HINDSIGHT, return_value=mock_hindsight_cls),
         ):
             provider = UserMemoryProviderImpl(component_site)
             provider.get_memory(space_id="alice")
 
-        mock_hindsight.assert_called_once_with(
+        mock_hindsight_cls.assert_called_once_with(
             base_url="http://localhost:8888",
             api_key=None,
             timeout=300.0,
@@ -296,19 +317,18 @@ class TestUserMemoryProviderImpl:
 
     def test_build_hindsight_falls_back_when_no_config_component(self):
         component_site = MagicMock()
+        mock_hindsight_cls = MagicMock()
         with (
             patch(
                 "fivccliche.services.implements.agent_memories_hindsight.query_component",
                 return_value=None,
             ),
-            patch(
-                "fivccliche.services.implements.agent_memories_hindsight.Hindsight"
-            ) as mock_hindsight,
+            patch(_IMPORT_HINDSIGHT, return_value=mock_hindsight_cls),
         ):
             provider = UserMemoryProviderImpl(component_site)
             provider.get_memory(space_id="alice")
 
-        mock_hindsight.assert_called_once_with(
+        mock_hindsight_cls.assert_called_once_with(
             base_url="http://localhost:8888",
             api_key=None,
             timeout=300.0,
@@ -317,20 +337,19 @@ class TestUserMemoryProviderImpl:
     def test_hindsight_client_is_created_once_and_reused(self):
         config = MagicMock()
         config.get_session.return_value = None
-        provider = UserMemoryProviderImpl(MagicMock())
+        mock_hindsight_cls = MagicMock()
         with (
             patch(
                 "fivccliche.services.implements.agent_memories_hindsight.query_component",
                 return_value=config,
             ),
-            patch(
-                "fivccliche.services.implements.agent_memories_hindsight.Hindsight"
-            ) as mock_hindsight,
+            patch(_IMPORT_HINDSIGHT, return_value=mock_hindsight_cls),
         ):
+            provider = UserMemoryProviderImpl(MagicMock())
             provider.get_memory(space_id="a")
             provider.get_memory(space_id="b")
 
-        mock_hindsight.assert_called_once()
+        mock_hindsight_cls.assert_called_once()
 
 
 class TestGetMemoryProviderAsync:
