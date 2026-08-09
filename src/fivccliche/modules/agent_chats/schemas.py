@@ -28,6 +28,9 @@ class UserChatSchema(AgentRunSession):
 
     uuid: str | None = Field(default=None, description="Chat UUID (globally unique)")
     context: dict | None = Field(default=None, description="Chat context")
+    is_memorable: bool = Field(
+        default=False, description="Whether this chat is eligible for memory retention"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -41,6 +44,9 @@ class UserChatMessageSchema(AgentRun):
 
     uuid: str | None = Field(default=None, description="Chat message UUID (globally unique)")
     chat_uuid: str | None = Field(default=None, description="Chat UUID")
+    is_memorized: bool = Field(
+        default=False, description="Whether the message has been retained to memory"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

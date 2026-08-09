@@ -64,6 +64,7 @@ class UserChat(SQLModel, table=True):
             description=self.description,
             context=self.context,
             started_at=self.created_at,
+            is_memorable=self.is_memorable,
         )
 
 
@@ -136,4 +137,5 @@ class UserChatMessage(SQLModel, table=True):
             query=self.query,
             reply=self.reply,
             tool_calls=self.tool_calls or {},  # Default to empty dict if None
+            is_memorized=self.is_memorized,
         )

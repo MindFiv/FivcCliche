@@ -171,6 +171,7 @@ class TestChatAPI:
         assert "uuid" in data
         assert data["agent_id"] == "default"
         assert "created_at" in data or "started_at" in data
+        assert data["is_memorable"] is True
 
     def test_create_chat_with_custom_agent(self, client: TestClient, auth_token: str):
         """Test creating chat with custom agent_id."""
@@ -185,6 +186,7 @@ class TestChatAPI:
         assert "uuid" in data
         assert data["agent_id"] == "custom_agent"
         assert "created_at" in data or "started_at" in data
+        assert data["is_memorable"] is True
 
 
 class TestChatContextAPI:
@@ -240,6 +242,7 @@ class TestChatContextAPI:
         data = get_response.json()
         assert "context" in data
         assert data["context"] == context_data
+        assert data["is_memorable"] is True
 
     def test_list_chats_includes_context(self, client: TestClient, auth_token: str):
         """Test that list endpoint returns context in results."""
@@ -462,6 +465,38 @@ class TestChatIntegration:
         assert "results" in data
         assert isinstance(data["total"], int)
         assert isinstance(data["results"], list)
+
+    def test_list_messages_includes_is_memorized(self, client: TestClient, auth_token: str):
+        """Test that list messages returns is_memorized on each message."""
+        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.users.methods import get_user_async
+
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            admin_user = await get_user_async(session, username="admin")
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=str(admin_user.uuid),
+                agent_id="test-agent",
+                is_memorable=True,
+            )
+            await chat_methods.create_chat_message_async(
+                session=session,
+                chat_uuid=chat.uuid,
+                query={"text": "Hello"},
+            )
+            return str(chat.uuid)
+
+        chat_uuid = loop.run_until_complete(setup())
+
+        response = client.get(f"/chats/{chat_uuid}/messages/", headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert data["results"][0]["is_memorized"] is False
 
 
 class TestChatTaskStreamApiSurface:
