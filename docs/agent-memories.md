@@ -135,10 +135,12 @@ otherwise the memorize job skips entirely.
 
 ## Chat memorize job
 
-Implemented by `agent_chats.jobs.ChatMemorizeJob`. `ModuleImpl.mount`
-constructs `ChatMemorizeJob(component_site, scheduler)`, which registers
-APScheduler job `agent-chats-memorize` (`max_instances=1`, `coalesce=True`)
-during `__init__`.
+Implemented by `agent_chats.jobs.ChatMemorizeJob` (`IModuleJob`).
+`ModuleImpl` constructs `ChatMemorizeJob(component_site)` in `__init__` and
+exposes it via `list_jobs` / `get_job`. `ModuleSiteImpl.create_application`
+registers APScheduler job `agent-chats-memorize` from `job.config`
+(`max_instances=1`, `coalesce=True`). Use `fivccliche jobs run agent_chats
+agent-chats-memorize` to run it immediately.
 
 Per tick:
 

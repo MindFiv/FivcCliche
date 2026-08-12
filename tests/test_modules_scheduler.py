@@ -1,4 +1,4 @@
-"""Tests for APScheduler integration in ModuleSiteImpl / IModule.mount."""
+"""Tests for APScheduler integration via IModuleJob / ModuleSiteImpl."""
 
 import os
 
@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from fivccliche.services.implements.modules import ModuleSiteImpl
-from fivccliche.services.interfaces.modules import IModule
+from fivccliche.services.interfaces.modules import IModule, IModuleJob
 from fivcglue.implements.utils import load_component_site
 
 
@@ -21,6 +21,50 @@ def _load_component_site():
         "services.yml",
     )
     return load_component_site(filename=components_path, fmt="yaml")
+
+
+class _DummyJob(IModuleJob):
+    @property
+    def name(self) -> str:
+        return "dummy-job"
+
+    @property
+    def config(self) -> dict:
+        return {
+            "trigger": "interval",
+            "seconds": 3600,
+            "replace_existing": True,
+        }
+
+    async def run_async(self) -> None:
+        return None
+
+
+class _DummyModule(IModule):
+    def __init__(self) -> None:
+        self._jobs: list[IModuleJob] = [_DummyJob()]
+        self.mount_kwargs: dict | None = None
+
+    @property
+    def name(self):
+        return "dummy"
+
+    @property
+    def description(self):
+        return "Dummy module for scheduler test."
+
+    def list_jobs(self) -> list[IModuleJob]:
+        return list(self._jobs)
+
+    def get_job(self, job_name: str) -> IModuleJob | None:
+        for job in self._jobs:
+            if job.name == job_name:
+                return job
+        return None
+
+    def mount(self, app: FastAPI, **kwargs) -> None:
+        self.mount_kwargs = dict(kwargs)
+        assert "scheduler" not in kwargs
 
 
 def test_scheduler_attached_to_app_state():
@@ -49,41 +93,17 @@ def test_scheduler_lifecycle_with_testclient():
     assert scheduler.running is False
 
 
-def test_module_can_register_job_via_mount():
-    """A module should be able to register a scheduled job during mount."""
-    registered: dict = {}
-
-    class _DummyModule(IModule):
-        @property
-        def name(self):
-            return "dummy"
-
-        @property
-        def description(self):
-            return "Dummy module for scheduler test."
-
-        def mount(
-            self,
-            app: FastAPI,
-            scheduler: AsyncIOScheduler | None = None,
-            **kwargs,
-        ) -> None:
-            assert scheduler is not None
-            scheduler.add_job(
-                lambda: None,
-                "interval",
-                seconds=3600,
-                id="dummy-job",
-            )
-            registered["mounted"] = True
-
+def test_module_jobs_registered_via_list_jobs():
+    """create_application should register jobs from module.list_jobs()."""
     component_site = _load_component_site()
     module_site = ModuleSiteImpl(component_site, modules=[])
-    module_site.register_module(_DummyModule())
+    dummy = _DummyModule()
+    module_site.register_module(dummy)
     app = module_site.create_application()
     scheduler: AsyncIOScheduler = app.state.scheduler
 
-    assert registered.get("mounted") is True
+    assert dummy.mount_kwargs is not None
+    assert "scheduler" not in dummy.mount_kwargs
 
     with TestClient(app):
         job = scheduler.get_job("dummy-job")

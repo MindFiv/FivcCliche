@@ -278,7 +278,7 @@ class TestMemorizeJob:
         mutex_site = MagicMock()
         mutex_site.get_mutex.return_value = mutex
 
-        job = ChatMemorizeJob(MagicMock(), MagicMock())
+        job = ChatMemorizeJob(MagicMock())
 
         class _SessionCtx:
             async def __aenter__(self):
@@ -336,7 +336,7 @@ class TestMemorizeJob:
         mutex_site = MagicMock()
         mutex_site.get_mutex.return_value = mutex
 
-        job = ChatMemorizeJob(MagicMock(), MagicMock())
+        job = ChatMemorizeJob(MagicMock())
 
         class _SessionCtx:
             async def __aenter__(self):
@@ -389,7 +389,7 @@ class TestMemorizeJob:
         mutex_site = MagicMock()
         mutex_site.get_mutex.return_value = mutex
 
-        job = ChatMemorizeJob(MagicMock(), MagicMock())
+        job = ChatMemorizeJob(MagicMock())
 
         class _SessionCtx:
             async def __aenter__(self):
@@ -442,7 +442,7 @@ class TestMemorizeJob:
         mutex_site = MagicMock()
         mutex_site.get_mutex.return_value = mutex
 
-        job = ChatMemorizeJob(MagicMock(), MagicMock())
+        job = ChatMemorizeJob(MagicMock())
 
         class _SessionCtx:
             async def __aenter__(self):
@@ -473,18 +473,19 @@ class TestMemorizeJob:
 
     def test_config_defaults_and_custom_interval(self):
         component_site = MagicMock()
-        scheduler = MagicMock()
         with patch(
             "fivccliche.modules.agent_chats.jobs.query_component",
             return_value=None,
         ):
-            job = ChatMemorizeJob(component_site, scheduler)
+            job = ChatMemorizeJob(component_site)
+        assert job.name == MEMORIZE_JOB_ID
         assert job.interval_minutes == 5
         assert job.batch_size == 50
         assert job.min_age_hours == 24
-        scheduler.add_job.assert_called_once()
-        assert scheduler.add_job.call_args.kwargs["id"] == MEMORIZE_JOB_ID
-        assert scheduler.add_job.call_args.kwargs["minutes"] == 5
+        assert job.config["trigger"] == "interval"
+        assert job.config["minutes"] == 5
+        assert job.config["max_instances"] == 1
+        assert job.config["coalesce"] is True
 
         session = MagicMock()
         session.get_value.side_effect = lambda key: {
@@ -495,20 +496,19 @@ class TestMemorizeJob:
         }.get(key)
         config = MagicMock()
         config.get_session.return_value = session
-        scheduler = MagicMock()
         with patch(
             "fivccliche.modules.agent_chats.jobs.query_component",
             return_value=config,
         ):
-            job = ChatMemorizeJob(component_site, scheduler)
+            job = ChatMemorizeJob(component_site)
         assert job.interval_minutes == 15
         assert job.batch_size == 50  # invalid 0 → default
         assert job.max_batches_per_run == 20  # invalid → default
         assert job.min_age_hours == 48
-        assert scheduler.add_job.call_args.kwargs["minutes"] == 15
+        assert job.config["minutes"] == 15
 
 
-def test_agent_chats_mount_registers_memorize_job():
+def test_agent_chats_list_jobs_registers_memorize_job():
     components_path = os.path.join(
         os.path.dirname(__file__),
         "..",
@@ -520,6 +520,12 @@ def test_agent_chats_mount_registers_memorize_job():
     component_site = load_component_site(filename=components_path, fmt="yaml")
     module_site = ModuleSiteImpl(component_site, modules=[])
     module = ModuleImpl(component_site)
+
+    jobs = module.list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].name == MEMORIZE_JOB_ID
+    assert module.get_job(MEMORIZE_JOB_ID) is jobs[0]
+    assert module.get_job("missing") is None
 
     module_site.register_module(module)
     app = module_site.create_application()

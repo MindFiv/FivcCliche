@@ -1,10 +1,9 @@
 """Agent memories module registration."""
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fivcglue import IComponentSite
 
-from fivccliche.services.interfaces.modules import IModule
+from fivccliche.services.interfaces.modules import IModule, IModuleJob
 
 from . import routers
 
@@ -23,11 +22,12 @@ class ModuleImpl(IModule):
     def description(self):
         return "Agent Memories viewing module."
 
-    def mount(
-        self,
-        app: FastAPI,
-        scheduler: AsyncIOScheduler | None = None,
-        **kwargs,
-    ) -> None:
+    def list_jobs(self) -> list[IModuleJob]:
+        return []
+
+    def get_job(self, job_name: str) -> IModuleJob | None:
+        return None
+
+    def mount(self, app: FastAPI, **kwargs) -> None:
         print("agent_memories module mounted.")
         app.include_router(routers.router_memories, **kwargs)

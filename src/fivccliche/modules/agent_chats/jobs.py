@@ -7,13 +7,13 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fivcglue import IComponentSite, query_component
 from fivcglue.interfaces import configs
 from fivcglue.interfaces.mutexes import IMutexSite
 
 from fivccliche.modules.agent_chats import methods, models
 from fivccliche.services.interfaces.agent_memories import IUserMemoryProvider
+from fivccliche.services.interfaces.modules import IModuleJob
 from fivccliche.utils.deps import (
     get_db_session_context,
     get_memory_provider_async,
@@ -83,38 +83,39 @@ def build_conversation_turns(messages: list[models.UserChatMessage]) -> list[dic
     return turns
 
 
-class ChatMemorizeJob:
+class ChatMemorizeJob(IModuleJob):
     """Interval job that retains aged chat conversations into agent memory.
 
-    Constructing an instance loads settings and registers the job on the given
-    scheduler immediately.
+    Expose via ModuleImpl.list_jobs; ModuleSiteImpl registers it on the
+    shared AsyncIOScheduler from ``config``.
     """
 
-    def __init__(
-        self,
-        component_site: IComponentSite,
-        scheduler: AsyncIOScheduler,
-    ) -> None:
+    def __init__(self, component_site: IComponentSite) -> None:
         settings = _load_memorize_settings(component_site)
         self.interval_minutes = settings.interval_minutes
         self.batch_size = settings.batch_size
         self.max_batches_per_run = settings.max_batches_per_run
         self.min_age_hours = settings.min_age_hours
-
-        scheduler.add_job(
-            self.run_async,
-            trigger="interval",
-            minutes=self.interval_minutes,
-            id=MEMORIZE_JOB_ID,
-            replace_existing=True,
-            max_instances=1,
-            coalesce=True,
-        )
+        self._config = {
+            "trigger": "interval",
+            "minutes": self.interval_minutes,
+            "max_instances": 1,
+            "coalesce": True,
+            "replace_existing": True,
+        }
         logger.info(
-            "Registered %s job (interval=%s minutes)",
+            "Configured %s job (interval=%s minutes)",
             MEMORIZE_JOB_ID,
             self.interval_minutes,
         )
+
+    @property
+    def name(self) -> str:
+        return MEMORIZE_JOB_ID
+
+    @property
+    def config(self) -> dict:
+        return dict(self._config)
 
     async def run_async(self) -> None:
         """Drain aged unmemorized chats into agent memory (per-chat mutex)."""

@@ -3,7 +3,6 @@ import importlib.util
 from pathlib import Path
 from typing import Any, cast
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 
 from fivcglue import IComponentSite
@@ -26,7 +25,7 @@ from fivcplayground.backends.chroma import (
 #     AdkAgentBackend as AgentBackend,
 # )
 
-from fivccliche.services.interfaces.modules import IModule
+from fivccliche.services.interfaces.modules import IModule, IModuleJob
 from fivccliche.services.interfaces.agent_configs import (
     UserEmbeddingRepository,
     UserEmbeddingBackend,
@@ -562,12 +561,13 @@ class ModuleImpl(IModule):
     def description(self):
         return "Agent Configs management module."
 
-    def mount(
-        self,
-        app: FastAPI,
-        scheduler: AsyncIOScheduler | None = None,
-        **kwargs,
-    ) -> None:
+    def list_jobs(self) -> list[IModuleJob]:
+        return []
+
+    def get_job(self, job_name: str) -> IModuleJob | None:
+        return None
+
+    def mount(self, app: FastAPI, **kwargs) -> None:
         print("agent_configs module mounted.")
         app.include_router(routers.router_embeddings, **kwargs)
         app.include_router(routers.router_models, **kwargs)

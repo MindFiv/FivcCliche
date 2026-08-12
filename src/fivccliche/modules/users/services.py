@@ -3,7 +3,6 @@ from datetime import datetime, timezone, timedelta
 from typing import cast
 
 import jwt
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fivcglue import query_component, IComponentSite
 from fivcglue.interfaces.caches import ICache
@@ -11,7 +10,7 @@ from fivcglue.interfaces.configs import IConfig
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator, UserCredential
-from fivccliche.services.interfaces.modules import IModule
+from fivccliche.services.interfaces.modules import IModule, IModuleJob
 from fivccliche.utils.deps import get_db_session_context
 
 from .models import User
@@ -283,11 +282,12 @@ class ModuleImpl(IModule):
     def description(self):
         return "User management module."
 
-    def mount(
-        self,
-        app: FastAPI,
-        scheduler: AsyncIOScheduler | None = None,
-        **kwargs,
-    ) -> None:
+    def list_jobs(self) -> list[IModuleJob]:
+        return []
+
+    def get_job(self, job_name: str) -> IModuleJob | None:
+        return None
+
+    def mount(self, app: FastAPI, **kwargs) -> None:
         print("users module mounted.")
         app.include_router(router, **kwargs)

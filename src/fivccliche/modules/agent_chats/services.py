@@ -1,6 +1,5 @@
 import asyncio
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fivcglue import IComponentSite
 from fivcplayground.agents import AgentRun, AgentRunSession
@@ -11,7 +10,7 @@ from fivccliche.services.interfaces.agent_chats import (
     IUserChatProvider,
     UserChatRepository,
 )
-from fivccliche.services.interfaces.modules import IModule
+from fivccliche.services.interfaces.modules import IModule, IModuleJob
 
 from . import methods, routers
 from .jobs import ChatMemorizeJob
@@ -303,6 +302,7 @@ class ModuleImpl(IModule):
 
     def __init__(self, component_site: IComponentSite, **kwargs):
         self._component_site = component_site
+        self._jobs: list[IModuleJob] = [ChatMemorizeJob(component_site)]
         print("agent chats module initialized.")
 
     @property
@@ -313,14 +313,16 @@ class ModuleImpl(IModule):
     def description(self):
         return "Agent Chat management module."
 
-    def mount(
-        self,
-        app: FastAPI,
-        scheduler: AsyncIOScheduler | None = None,
-        **kwargs,
-    ) -> None:
+    def list_jobs(self) -> list[IModuleJob]:
+        return list(self._jobs)
+
+    def get_job(self, job_name: str) -> IModuleJob | None:
+        for job in self._jobs:
+            if job.name == job_name:
+                return job
+        return None
+
+    def mount(self, app: FastAPI, **kwargs) -> None:
         print("agent_chats module mounted.")
-        if scheduler is not None:
-            ChatMemorizeJob(self._component_site, scheduler)
         app.include_router(routers.router_chats, **kwargs)
         app.include_router(routers.router_messages, **kwargs)

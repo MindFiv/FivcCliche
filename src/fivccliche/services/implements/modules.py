@@ -10,6 +10,7 @@ from fivccliche import __version__
 
 from fivccliche.services.interfaces.modules import (
     IModule,
+    IModuleJob,
     IModuleSite,
 )
 
@@ -26,6 +27,20 @@ def _make_lifespan(scheduler: AsyncIOScheduler):
         scheduler.shutdown(wait=False)
 
     return _lifespan
+
+
+def _register_module_job(scheduler: AsyncIOScheduler, job: IModuleJob) -> None:
+    """Register an IModuleJob on the shared scheduler from job.config."""
+    cfg = dict(job.config)
+    trigger = cfg.pop("trigger")
+    replace_existing = cfg.pop("replace_existing", True)
+    scheduler.add_job(
+        job.run_async,
+        trigger=trigger,
+        id=job.name,
+        replace_existing=replace_existing,
+        **cfg,
+    )
 
 
 class ModuleSiteImpl(IModuleSite):
@@ -90,7 +105,9 @@ class ModuleSiteImpl(IModuleSite):
         app.state.scheduler = scheduler
 
         for module in self._modules.values():
-            module.mount(app, scheduler=scheduler, prefix=self._prefix)
+            module.mount(app, prefix=self._prefix)
+            for job in module.list_jobs():
+                _register_module_job(scheduler, job)
 
         return app
 

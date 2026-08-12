@@ -1,57 +1,124 @@
-# Scheduled Tasks (APScheduler)
+# Scheduled Tasks (IModuleJob + APScheduler)
 
 FivcCliche ships with built-in support for per-module scheduled jobs via
-[APScheduler](https://apscheduler.readthedocs.io/) (`AsyncIOScheduler`).
+[APScheduler](https://apscheduler.readthedocs.io/) (`AsyncIOScheduler`),
+abstracted behind `IModuleJob`.
 
 ## How it works
 
-`ModuleSiteImpl.create_application` is the single place that owns the scheduler
-lifecycle:
+`ModuleSiteImpl.create_application` owns the scheduler lifecycle and job
+registration:
 
 1. It creates one `AsyncIOScheduler` instance.
 2. Attaches it to `app.state.scheduler` (useful for runtime inspection and tests).
-3. Passes it to every registered module's `mount(app, scheduler=..., prefix=...)`.
-4. Wires it into the FastAPI lifespan:
+3. Calls each module's `mount(app, prefix=...)` for HTTP routers only
+   (no scheduler argument).
+4. For each module, iterates `module.list_jobs()` and registers every
+   `IModuleJob` via `scheduler.add_job` using `job.name` as the job id and
+   `job.config` as the schedule kwargs.
+5. Wires the scheduler into the FastAPI lifespan:
    - `scheduler.start()` on application startup.
    - `scheduler.shutdown(wait=False)` on application shutdown.
 
-Modules never create their own scheduler. They receive the shared instance in
-`mount` and register jobs against it.
+Modules never create their own scheduler. They expose jobs through
+`list_jobs` / `get_job`; the site wires them onto the shared scheduler.
 
-## Registering a job in a module
-
-Inside a module's `ModuleImpl.mount`, call `scheduler.add_job(...)` when a
-scheduler is provided:
+## IModuleJob
 
 ```python
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI
+class IModuleJob(IComponent):
+    @property
+    def name(self) -> str: ...
 
-class ModuleImpl(IModule):
-    ...
-    def mount(
-        self,
-        app: FastAPI,
-        scheduler: AsyncIOScheduler | None = None,
-        **kwargs,
-    ) -> None:
-        print("my module mounted.")
-        if scheduler is not None:
-            scheduler.add_job(
-                self._cleanup_job,
-                trigger="interval",
-                seconds=60,
-                id="my-module-cleanup",
-                replace_existing=True,
-            )
-        app.include_router(router, **kwargs)
+    @property
+    def config(self) -> dict: ...
 
-    def _cleanup_job(self) -> None:
-        ...
+    async def run_async(self): ...
 ```
 
-The `scheduler` argument is optional (`None` by default) so modules stay
-backwards-compatible with callers that don't supply a scheduler.
+### `job.config` convention
+
+`config` is the keyword arguments for APScheduler `add_job`, excluding `func`
+and `id`:
+
+```python
+{
+    "trigger": "interval",       # required
+    "minutes": 5,                # trigger-specific args
+    "max_instances": 1,          # optional job options
+    "coalesce": True,
+    "replace_existing": True,    # default True if omitted
+}
+```
+
+Job names must be unique across all registered modules (the scheduler id is
+`job.name`). Prefer a module-prefixed name such as `agent-chats-memorize`.
+
+## Defining a job in a module
+
+```python
+from fastapi import FastAPI
+
+from fivccliche.services.interfaces.modules import IModule, IModuleJob
+
+
+class CleanupJob(IModuleJob):
+    @property
+    def name(self) -> str:
+        return "my-module-cleanup"
+
+    @property
+    def config(self) -> dict:
+        return {
+            "trigger": "interval",
+            "seconds": 60,
+            "replace_existing": True,
+        }
+
+    async def run_async(self) -> None:
+        ...
+
+
+class ModuleImpl(IModule):
+    def __init__(self, component_site, **kwargs):
+        self._jobs: list[IModuleJob] = [CleanupJob()]
+
+    @property
+    def name(self):
+        return "my_module"
+
+    @property
+    def description(self):
+        return "Example module."
+
+    def list_jobs(self) -> list[IModuleJob]:
+        return list(self._jobs)
+
+    def get_job(self, job_name: str) -> IModuleJob | None:
+        for job in self._jobs:
+            if job.name == job_name:
+                return job
+        return None
+
+    def mount(self, app: FastAPI, **kwargs) -> None:
+        app.include_router(router, **kwargs)
+```
+
+Modules without jobs return an empty list from `list_jobs` and `None` from
+`get_job`.
+
+## CLI
+
+Ops can inspect and run jobs without waiting for the scheduler tick:
+
+```bash
+fivccliche jobs list
+fivccliche jobs show MODULE JOB
+fivccliche jobs run MODULE JOB
+```
+
+`jobs run` calls `job.run_async()` immediately via asyncio; it does not
+require the FastAPI lifespan or a running scheduler.
 
 ## Triggers
 
@@ -74,13 +141,14 @@ scope for the framework defaults.
 
 ## Testing
 
-`tests/test_modules_scheduler.py` demonstrates the three guarantees:
+`tests/test_modules_scheduler.py` demonstrates the guarantees:
 
 1. `create_application` attaches an `AsyncIOScheduler` to `app.state.scheduler`
    and it is not running before the lifespan starts.
 2. Entering `with TestClient(app)` starts the scheduler; exiting stops it.
-3. A module's `mount` receives the scheduler and can register a job that is
+3. Jobs returned from `module.list_jobs()` are registered on the scheduler and
    retrievable via `scheduler.get_job(id)`.
+4. `mount` does not receive a `scheduler` argument.
 
 When writing tests that register jobs you don't want to actually fire, use a
 far-future `"date"` trigger or a long `"interval"` so the job never executes
@@ -88,8 +156,9 @@ within the test window.
 
 ## Real module example
 
-`agent_chats` constructs `ChatMemorizeJob(component_site, scheduler)` during
-`mount`, which registers `agent-chats-memorize` in `__init__` (interval from
+`agent_chats` constructs `ChatMemorizeJob(component_site)` in `ModuleImpl`
+`__init__` and exposes it via `list_jobs`. `ModuleSiteImpl` registers
+`agent-chats-memorize` from `job.config` (interval from
 `agent_chats.MEMORIZE_INTERVAL_MINUTES`, default 5). See
 [agent-memories.md](agent-memories.md) for chat-level retain semantics and
 per-chat Redis mutex details.

@@ -15,12 +15,13 @@ from typing import cast
 import typer
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
 from fivcglue import query_component, IComponentSite
 from fivccliche import __version__
 from fivccliche.services.implements import service_site
-from fivccliche.services.interfaces.modules import IModuleSite
+from fivccliche.services.interfaces.modules import IModule, IModuleJob, IModuleSite
 from fivccliche.services.interfaces.db import IDatabase
 from fivccliche.services.interfaces.auth import IUserAuthenticator
 
@@ -30,12 +31,35 @@ cli = typer.Typer(
     rich_markup_mode="rich",
 )
 
+jobs_cli = typer.Typer(
+    name="jobs",
+    help="List, inspect, and run module jobs",
+    rich_markup_mode="rich",
+)
+cli.add_typer(jobs_cli, name="jobs")
+
 console = Console()
 
 modules = query_component(cast(IComponentSite, service_site), IModuleSite)
 
 # FastAPI App for ASGI
 app = modules.create_application()
+
+
+def _find_module(module_name: str) -> IModule:
+    for module in modules.list_modules():
+        if module.name == module_name:
+            return cast(IModule, module)
+    console.print(f"[red]❌ Module '{module_name}' not found[/red]")
+    raise typer.Exit(1)
+
+
+def _find_job(module: IModule, job_name: str) -> IModuleJob:
+    job = module.get_job(job_name)
+    if job is None:
+        console.print(f"[red]❌ Job '{job_name}' not found in module '{module.name}'[/red]")
+        raise typer.Exit(1)
+    return job
 
 
 @cli.command()
@@ -110,6 +134,9 @@ def info():
     fivccliche run                                    # Start server
     fivccliche run --port 9000                        # Custom port
     fivccliche run --host 127.0.0.1 --no-reload      # Production mode
+    fivccliche jobs list                              # List module jobs
+    fivccliche jobs show MODULE JOB                   # Show job config
+    fivccliche jobs run MODULE JOB                    # Run a job immediately
     fivccliche info                                   # Show this information
     fivccliche clean                                  # Clean temporary files
     """
@@ -423,6 +450,81 @@ async def _change_password_async(username: str, new_password: str) -> None:
         raise
     except Exception as e:
         console.print(f"[red]❌ Database error: {e}[/red]")
+        raise typer.Exit(1) from e
+
+
+@jobs_cli.command("list")
+def jobs_list():
+    """
+    List all jobs exposed by registered modules.
+    """
+    table = Table(title="Module Jobs")
+    table.add_column("Module", style="cyan")
+    table.add_column("Job", style="green")
+    table.add_column("Config", style="white")
+
+    job_count = 0
+    for module in modules.list_modules():
+        for job in module.list_jobs():
+            table.add_row(module.name, job.name, str(job.config))
+            job_count += 1
+
+    if job_count == 0:
+        console.print("[yellow]No jobs registered in any module.[/yellow]")
+        return
+
+    console.print(table)
+
+
+@jobs_cli.command("show")
+def jobs_show(
+    module_name: str = typer.Argument(..., help="Module name"),
+    job_name: str = typer.Argument(..., help="Job name"),
+):
+    """
+    Show details for a specific module job.
+    """
+    module = _find_module(module_name)
+    job = _find_job(module, job_name)
+
+    console.print(
+        Panel.fit(
+            Text(f"{module.name} / {job.name}", style="bold blue"),
+            subtitle="Module job",
+        )
+    )
+    console.print(f"[cyan]Name:[/cyan] {job.name}")
+    console.print(f"[cyan]Config:[/cyan] {job.config}")
+
+
+@jobs_cli.command("run")
+def jobs_run(
+    module_name: str = typer.Argument(..., help="Module name"),
+    job_name: str = typer.Argument(..., help="Job name"),
+):
+    """
+    Run a module job immediately (outside the scheduler).
+    """
+    module = _find_module(module_name)
+    job = _find_job(module, job_name)
+
+    console.print(
+        Panel.fit(
+            Text(f"Run {module.name} / {job.name}", style="bold blue"),
+            subtitle="Immediate job execution",
+        )
+    )
+
+    try:
+        console.print(f"[cyan]Running job '{job.name}'...[/cyan]")
+        asyncio.run(job.run_async())
+        console.print("\n" + "=" * 60)
+        console.print("[bold green]✅ Job completed successfully![/bold green]")
+        console.print("=" * 60)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[red]❌ Job failed: {e}[/red]")
         raise typer.Exit(1) from e
 
 

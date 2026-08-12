@@ -58,7 +58,7 @@ Modules: `users`, `agent_configs`, `agent_chats`. All mounted under `/api` prefi
 
 ### Scheduled Tasks
 
-`IModule.mount` accepts an optional `AsyncIOScheduler`. `ModuleSiteImpl.create_application` creates a single `AsyncIOScheduler`, attaches it to `app.state.scheduler`, passes it to every module's `mount`, and starts/stops it in the app lifespan (`scheduler.start()` on startup, `scheduler.shutdown(wait=False)` on shutdown). Modules register jobs during `mount` via `scheduler.add_job(...)`. See `docs/scheduler.md`.
+Modules expose jobs via `IModule.list_jobs` / `get_job` (`IModuleJob`: `name`, `config`, `run_async`). `ModuleSiteImpl.create_application` creates a single `AsyncIOScheduler`, attaches it to `app.state.scheduler`, mounts routers via `module.mount(app, ...)`, then registers each job from `job.config` onto the scheduler. Lifespan starts/stops the scheduler. CLI: `fivccliche jobs list|show|run`. See `docs/scheduler.md`.
 
 ### Authentication Flow
 

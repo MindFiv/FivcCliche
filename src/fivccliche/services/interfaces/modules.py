@@ -1,9 +1,28 @@
 from abc import abstractmethod
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 
 from fivcglue import IComponent
+
+
+class IModuleJob(IComponent):
+    """
+    IModuleJob is an interface for defining module job in the Fivccliche framework.
+    """
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Name of the job"""
+
+    @property
+    @abstractmethod
+    def config(self) -> dict:
+        """Config of the job"""
+
+    @abstractmethod
+    async def run_async(self):
+        """Run the job"""
 
 
 class IModule(IComponent):
@@ -22,7 +41,15 @@ class IModule(IComponent):
         """Description of the module."""
 
     @abstractmethod
-    def mount(self, app: FastAPI, scheduler: AsyncIOScheduler | None = None, **kwargs) -> None:
+    def list_jobs(self) -> list[IModuleJob]:
+        """List all jobs in the module."""
+
+    @abstractmethod
+    def get_job(self, job_name: str) -> IModuleJob | None:
+        """Get the job with the given name."""
+
+    @abstractmethod
+    def mount(self, app: FastAPI, **kwargs) -> None:
         """Mount the module to the FastAPI app."""
 
 
