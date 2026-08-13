@@ -523,7 +523,6 @@ router_tools = APIRouter(prefix="/configs/tools", tags=["tool_configs"])
 )
 async def index_tool_async(
     user: IUser = Depends(get_authenticated_user_async),
-    session: AsyncSession = Depends(get_db_session_async),
     config_provider: IUserConfigProvider = Depends(get_config_provider_async),
 ):
     if not user:
@@ -534,13 +533,9 @@ async def index_tool_async(
 
     agent_tools = await create_tool_retriever_async(
         tool_backend=config_provider.get_tool_backend(),
-        tool_config_repository=config_provider.get_tool_repository(
-            user_uuid=user.uuid, session=session
-        ),
+        tool_config_repository=config_provider.get_tool_repository(user_uuid=user.uuid),
         embedding_backend=config_provider.get_embedding_backend(),
-        embedding_config_repository=config_provider.get_embedding_repository(
-            user_uuid=user.uuid, session=session
-        ),
+        embedding_config_repository=config_provider.get_embedding_repository(user_uuid=user.uuid),
         space_id=user.uuid,
     )
     await agent_tools.index_tools_async()
@@ -569,9 +564,11 @@ async def probe_tool_async(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Tool config not found",
         )
+    tool_schema = config.to_schema()
+    await session.close()
 
     tool_backend = config_provider.get_tool_backend()
-    tool_bundle = tool_backend.create_tool_bundle(config.to_schema())
+    tool_bundle = tool_backend.create_tool_bundle(tool_schema)
     tool_context = tool_bundle.setup()
     async with tool_context as tools:
         tool_names = [tool.name for tool in tools]

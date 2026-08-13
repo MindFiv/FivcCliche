@@ -15,7 +15,7 @@ from fivccliche.modules.agent_chats import methods, models
 from fivccliche.services.interfaces.agent_memories import IUserMemoryProvider
 from fivccliche.services.interfaces.modules import IModuleJob
 from fivccliche.utils.deps import (
-    get_db_session_context,
+    get_db_session_context_async,
     get_memory_provider_async,
     get_mutex_site_async,
 )
@@ -132,7 +132,7 @@ class ChatMemorizeJob(IModuleJob):
         created_at_to = datetime.now(timezone.utc) - timedelta(hours=self.min_age_hours)
 
         for _ in range(self.max_batches_per_run):
-            async with get_db_session_context() as session:
+            async with get_db_session_context_async() as session:
                 chats = await methods.list_unmemorized_chats_async(
                     session,
                     created_at_to=created_at_to,
@@ -173,7 +173,7 @@ class ChatMemorizeJob(IModuleJob):
             return
 
         try:
-            async with get_db_session_context() as session:
+            async with get_db_session_context_async() as session:
                 messages = await methods.list_unmemorized_chat_messages_async(
                     session,
                     chat.uuid,
@@ -196,7 +196,7 @@ class ChatMemorizeJob(IModuleJob):
                     )
                     return
 
-            async with get_db_session_context() as session:
+            async with get_db_session_context_async() as session:
                 await methods.mark_unmemorized_chat_messages_async(session, message_uuids)
         except Exception:
             logger.exception("Failed to memorize chat %s", chat.uuid)

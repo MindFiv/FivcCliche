@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator, UserCredential
 from fivccliche.services.interfaces.modules import IModule, IModuleJob
-from fivccliche.utils.deps import get_db_session_context
+from fivccliche.utils.deps import get_db_session_context_async
 
 from .models import User
 from .methods import create_user_async, get_user_async
@@ -113,7 +113,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
             )
             return UserImpl(user) if user else None
 
-        async with get_db_session_context() as session:
+        async with get_db_session_context_async() as session:
             user = await create_user_async(
                 session,
                 username=username,
@@ -146,7 +146,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 await session.commit()
             return self._create_access_token(user.uuid) if user else None
 
-        async with get_db_session_context() as session:
+        async with get_db_session_context_async() as session:
             user = await get_user_async(session, username=username)
             if user and not ignore_password and not user.check_password(password):
                 user = None
@@ -202,7 +202,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 await session.commit()
             return self._create_access_token(user.uuid) if user else None
 
-        async with get_db_session_context() as session:
+        async with get_db_session_context_async() as session:
             # Try to get existing user
             user = await get_user_async(session, username=username)
 
@@ -245,7 +245,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 user = await get_user_async(session, user_uuid=user_uuid)
 
             else:
-                async with get_db_session_context() as session:
+                async with get_db_session_context_async() as session:
                     user = await get_user_async(session, user_uuid=user_uuid)
 
             # Block inactive users

@@ -6,6 +6,8 @@ and handle various HTTP methods, status codes, and request/response scenarios.
 
 import os
 import tempfile
+from contextlib import asynccontextmanager
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +16,7 @@ from sqlalchemy.pool import NullPool
 from sqlmodel import SQLModel
 
 from fivccliche.utils.deps import get_db_session_async
+from fivccliche.utils import deps
 from fivccliche.services.implements.modules import ModuleSiteImpl
 from fivcglue.implements.utils import load_component_site
 
@@ -90,7 +93,14 @@ def client():
             )
         )
 
-        yield client
+        @asynccontextmanager
+        async def override_get_db_session_context_async(session=None):
+            yield async_session
+
+        with patch.object(
+            deps, "get_db_session_context_async", override_get_db_session_context_async
+        ):
+            yield client
     finally:
         loop.run_until_complete(async_session.close())
         loop.run_until_complete(engine.dispose())

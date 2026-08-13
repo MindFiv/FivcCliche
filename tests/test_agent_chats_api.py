@@ -3,6 +3,7 @@
 import os
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from contextlib import asynccontextmanager
 
 import pytest
 from fastapi import HTTPException
@@ -12,6 +13,7 @@ from sqlalchemy.pool import NullPool
 from sqlmodel import SQLModel
 
 from fivccliche.utils.deps import get_db_session_async
+from fivccliche.utils import deps
 from fivccliche.services.implements.modules import ModuleSiteImpl
 from fivcglue.implements.utils import load_component_site
 
@@ -93,7 +95,14 @@ def client():
         client.loop = loop
         client.async_session = async_session
 
-        yield client
+        @asynccontextmanager
+        async def override_get_db_session_context_async(session=None):
+            yield async_session
+
+        with patch.object(
+            deps, "get_db_session_context_async", override_get_db_session_context_async
+        ):
+            yield client
     finally:
         loop.run_until_complete(async_session.close())
         loop.run_until_complete(engine.dispose())
@@ -508,11 +517,9 @@ class TestChatTaskStreamApiSurface:
 
         user = MagicMock()
         user.uuid = "u1"
-        with patch("fivccliche.utils.chats.default_db", new_callable=MagicMock) as mock_db:
-            mock_db.return_value.create_session.return_value = AsyncMock()
-            chat_task = ChatTask(user, MagicMock(), MagicMock(), chat_uuid="c1")
-            stream = chat_task.get_stream_async()
-            assert hasattr(stream, "__aiter__")
+        chat_task = ChatTask(user, MagicMock(), MagicMock(), chat_uuid="c1")
+        stream = chat_task.get_stream_async()
+        assert hasattr(stream, "__aiter__")
 
     def test_get_stream_is_async_iterable(self):
         """get_stream_async() result supports async iteration."""
@@ -520,12 +527,10 @@ class TestChatTaskStreamApiSurface:
 
         user = MagicMock()
         user.uuid = "u1"
-        with patch("fivccliche.utils.chats.default_db", new_callable=MagicMock) as mock_db:
-            mock_db.return_value.create_session.return_value = AsyncMock()
-            chat_task = ChatTask(user, MagicMock(), MagicMock())
-            stream = chat_task.get_stream_async()
-            assert hasattr(stream, "__aiter__")
-            assert hasattr(stream, "__anext__")
+        chat_task = ChatTask(user, MagicMock(), MagicMock())
+        stream = chat_task.get_stream_async()
+        assert hasattr(stream, "__aiter__")
+        assert hasattr(stream, "__anext__")
 
 
 class TestChatEndpointValidation:

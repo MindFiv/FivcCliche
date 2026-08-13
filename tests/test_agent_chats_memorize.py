@@ -335,7 +335,7 @@ class TestMemorizeJob:
                 AsyncMock(return_value=mutex_site),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_db_session_context",
+                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
                 side_effect=lambda: _SessionCtx(),
             ),
         ):
@@ -393,7 +393,7 @@ class TestMemorizeJob:
                 AsyncMock(return_value=mutex_site),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_db_session_context",
+                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
                 side_effect=lambda: _SessionCtx(),
             ),
         ):
@@ -446,7 +446,7 @@ class TestMemorizeJob:
                 AsyncMock(return_value=mutex_site),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_db_session_context",
+                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
                 side_effect=lambda: _SessionCtx(),
             ),
         ):
@@ -499,7 +499,7 @@ class TestMemorizeJob:
                 AsyncMock(return_value=mutex_site),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_db_session_context",
+                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
                 side_effect=lambda: _SessionCtx(),
             ),
         ):

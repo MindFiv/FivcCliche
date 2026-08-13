@@ -3,7 +3,6 @@ import asyncio
 from fastapi import FastAPI
 from fivcglue import IComponentSite
 from fivcplayground.agents import AgentRun, AgentRunSession
-from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from fivccliche.services.interfaces.agent_chats import (
     IUserChatContext,
@@ -11,6 +10,7 @@ from fivccliche.services.interfaces.agent_chats import (
     UserChatRepository,
 )
 from fivccliche.services.interfaces.modules import IModule, IModuleJob
+from fivccliche.utils.deps import get_db_session_context_async
 
 from . import methods, routers
 from .jobs import ChatMemorizeJob
@@ -19,9 +19,8 @@ from .jobs import ChatMemorizeJob
 class UserChatRepositoryImpl(UserChatRepository):
     """Chat repository implementation."""
 
-    def __init__(self, user_uuid: str, session: AsyncSession):
+    def __init__(self, user_uuid: str):
         self.user_uuid = user_uuid
-        self.session = session
 
     # ========================================================================
     # Synchronous wrapper methods (for interface compatibility)
@@ -64,210 +63,118 @@ class UserChatRepositoryImpl(UserChatRepository):
     # ========================================================================
 
     async def update_agent_run_session_async(self, session: AgentRunSession) -> None:
-        """Create or update an agent run session (chat).
-
-        Args:
-            session: AgentRunSession to create or update
-
-        Raises:
-            ValueError: If session or user_uuid is not set
-        """
-        if not self.session or not self.user_uuid:
-            raise ValueError(
-                "Session and user_uuid are required for update_agent_run_session operation"
-            )
-
-        # Check if chat exists
-        existing = await methods.get_chat_async(self.session, session.id, self.user_uuid)
-        if existing:
-            # Update existing chat
-            if session.description is not None:
-                existing.description = session.description
-            if hasattr(session, "context") and session.context is not None:
-                existing.context = session.context
-            self.session.add(existing)
-            await self.session.commit()
-            await self.session.refresh(existing)
-        else:
-            # Create new chat using create_chat_async
-            context = getattr(session, "context", None)
-            await methods.create_chat_async(
-                self.session,
-                user_uuid=self.user_uuid,
-                agent_id=session.agent_id,
-                chat_uuid=session.id,
-                description=session.description,
-                context=context,
-            )
+        """Create or update an agent run session (chat)."""
+        async with get_db_session_context_async() as db_session:
+            existing = await methods.get_chat_async(db_session, session.id, self.user_uuid)
+            if existing:
+                if session.description is not None:
+                    existing.description = session.description
+                if hasattr(session, "context") and session.context is not None:
+                    existing.context = session.context
+                db_session.add(existing)
+                await db_session.commit()
+                await db_session.refresh(existing)
+            else:
+                context = getattr(session, "context", None)
+                await methods.create_chat_async(
+                    db_session,
+                    user_uuid=self.user_uuid,
+                    agent_id=session.agent_id,
+                    chat_uuid=session.id,
+                    description=session.description,
+                    context=context,
+                )
 
     async def get_agent_run_session_async(self, session_id: str) -> AgentRunSession | None:
-        """Retrieve an agent run session (chat) by ID.
-
-        Args:
-            session_id: Chat UUID
-
-        Returns:
-            AgentRunSession or None if not found
-
-        Raises:
-            ValueError: If session or user_uuid is not set
-        """
-        if not self.session or not self.user_uuid:
-            raise ValueError(
-                "Session and user_uuid are required for get_agent_run_session operation"
-            )
-
-        chat = await methods.get_chat_async(self.session, session_id, self.user_uuid)
-        return chat.to_schema() if chat else None
+        """Retrieve an agent run session (chat) by ID."""
+        async with get_db_session_context_async() as db_session:
+            chat = await methods.get_chat_async(db_session, session_id, self.user_uuid)
+            return chat.to_schema() if chat else None
 
     async def list_agent_run_sessions_async(self, **kwargs) -> list[AgentRunSession]:
-        """List all agent run sessions (chats) for the user.
-
-        Args:
-            **kwargs: Optional skip and limit parameters for pagination
-
-        Returns:
-            List of AgentRunSession objects
-
-        Raises:
-            ValueError: If session or user_uuid is not set
-        """
-        if not self.session or not self.user_uuid:
-            raise ValueError(
-                "Session and user_uuid are required for list_agent_run_sessions operation"
-            )
-
+        """List all agent run sessions (chats) for the user."""
         skip = kwargs.get("skip", 0)
         limit = kwargs.get("limit", 100)
-        chats = await methods.list_chats_async(self.session, self.user_uuid, skip=skip, limit=limit)
-        return [chat.to_schema() for chat in chats]
+        async with get_db_session_context_async() as db_session:
+            chats = await methods.list_chats_async(
+                db_session, self.user_uuid, skip=skip, limit=limit
+            )
+            return [chat.to_schema() for chat in chats]
 
     async def delete_agent_run_session_async(self, session_id: str) -> None:
-        """Delete an agent run session (chat).
-
-        Args:
-            session_id: Chat UUID
-
-        Raises:
-            ValueError: If session or user_uuid is not set
-        """
-        if not self.session or not self.user_uuid:
-            raise ValueError(
-                "Session and user_uuid are required for delete_agent_run_session operation"
-            )
-
-        chat = await methods.get_chat_async(self.session, session_id, self.user_uuid)
-        if chat:
-            await methods.delete_chat_async(self.session, chat)
+        """Delete an agent run session (chat)."""
+        async with get_db_session_context_async() as db_session:
+            chat = await methods.get_chat_async(db_session, session_id, self.user_uuid)
+            if chat:
+                await methods.delete_chat_async(db_session, chat)
 
     async def update_agent_run_async(self, session_id: str, agent_run: AgentRun) -> None:
-        """Create or update an agent run (chat message).
+        """Create or update an agent run (chat message)."""
+        async with get_db_session_context_async() as db_session:
+            chat = await methods.get_chat_async(db_session, session_id, self.user_uuid)
+            if not chat:
+                raise ValueError(f"Chat session {session_id} not found for user {self.user_uuid}")
 
-        Args:
-            session_id: Chat UUID
-            agent_run: AgentRun to create or update
-
-        Raises:
-            ValueError: If session or user_uuid is not set, or if chat not found
-        """
-        if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for update_agent_run operation")
-
-        # Verify the chat exists and belongs to the user
-        chat = await methods.get_chat_async(self.session, session_id, self.user_uuid)
-        if not chat:
-            raise ValueError(f"Chat session {session_id} not found for user {self.user_uuid}")
-
-        # Check if message exists
-        existing = await methods.get_chat_message_async(self.session, agent_run.id, session_id)
-        if not existing:
-            await methods.create_chat_message_async(
-                self.session,
-                chat_uuid=session_id,
-                status=agent_run.status,
-                query=agent_run.query.model_dump(mode="json") if agent_run.query else None,
-                reply=agent_run.reply.model_dump(mode="json") if agent_run.reply else None,
-                tool_calls={k: v.model_dump(mode="json") for k, v in agent_run.tool_calls.items()},
-                message_uuid=agent_run.id,
-            )
-        else:
-            await methods.update_chat_message_async(
-                self.session,
-                existing,
-                status=agent_run.status,
-                query=agent_run.query.model_dump(mode="json") if agent_run.query else None,
-                reply=agent_run.reply.model_dump(mode="json") if agent_run.reply else None,
-                tool_calls={k: v.model_dump(mode="json") for k, v in agent_run.tool_calls.items()},
-                completed_at=agent_run.completed_at,
-            )
+            existing = await methods.get_chat_message_async(db_session, agent_run.id, session_id)
+            if not existing:
+                await methods.create_chat_message_async(
+                    db_session,
+                    chat_uuid=session_id,
+                    status=agent_run.status,
+                    query=agent_run.query.model_dump(mode="json") if agent_run.query else None,
+                    reply=agent_run.reply.model_dump(mode="json") if agent_run.reply else None,
+                    tool_calls={
+                        k: v.model_dump(mode="json") for k, v in agent_run.tool_calls.items()
+                    },
+                    message_uuid=agent_run.id,
+                )
+            else:
+                await methods.update_chat_message_async(
+                    db_session,
+                    existing,
+                    status=agent_run.status,
+                    query=agent_run.query.model_dump(mode="json") if agent_run.query else None,
+                    reply=agent_run.reply.model_dump(mode="json") if agent_run.reply else None,
+                    tool_calls={
+                        k: v.model_dump(mode="json") for k, v in agent_run.tool_calls.items()
+                    },
+                    completed_at=agent_run.completed_at,
+                )
 
     async def get_agent_run_async(self, session_id: str, run_id: str) -> AgentRun | None:
-        """Retrieve an agent run (chat message) by ID.
+        """Retrieve an agent run (chat message) by ID."""
+        async with get_db_session_context_async() as db_session:
+            chat = await methods.get_chat_async(db_session, session_id, self.user_uuid)
+            if not chat:
+                return None
 
-        Args:
-            session_id: Chat UUID
-            run_id: Message UUID
-
-        Returns:
-            AgentRun or None if not found
-
-        Raises:
-            ValueError: If session or user_uuid is not set
-        """
-        if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for get_agent_run operation")
-
-        # Verify the chat exists and belongs to the user
-        chat = await methods.get_chat_async(self.session, session_id, self.user_uuid)
-        if not chat:
-            return None
-
-        message = await methods.get_chat_message_async(self.session, run_id, session_id)
-        return message.to_schema() if message else None
+            message = await methods.get_chat_message_async(db_session, run_id, session_id)
+            return message.to_schema() if message else None
 
     async def list_agent_runs_async(self, session_id: str, **kwargs) -> list[AgentRun]:
-        """List all agent runs (chat messages) for a session.
+        """List all agent runs (chat messages) for a session."""
+        async with get_db_session_context_async() as db_session:
+            chat = await methods.get_chat_async(db_session, session_id, self.user_uuid)
+            if not chat:
+                return []
 
-        Args:
-            session_id: Chat UUID
-            **kwargs: Optional skip and limit parameters for pagination
-
-        Returns:
-            List of AgentRun objects
-        """
-        # Verify the chat exists and belongs to the user
-        chat = await methods.get_chat_async(self.session, session_id, self.user_uuid)
-        if not chat:
-            return []
-
-        skip = kwargs.get("skip", 0)
-        limit = kwargs.get("limit", 30)
-        messages = await methods.list_chat_messages_async(
-            self.session, session_id, skip=skip, limit=limit
-        )
-        return [message.to_schema() for message in messages]
+            skip = kwargs.get("skip", 0)
+            limit = kwargs.get("limit", 30)
+            messages = await methods.list_chat_messages_async(
+                db_session, session_id, skip=skip, limit=limit
+            )
+            return [message.to_schema() for message in messages]
 
     async def delete_agent_run_async(self, session_id: str, run_id: str) -> None:
-        """Delete an agent run (chat message).
+        """Delete an agent run (chat message)."""
+        async with get_db_session_context_async() as db_session:
+            chat = await methods.get_chat_async(db_session, session_id, self.user_uuid)
+            if not chat:
+                raise ValueError(f"Chat session {session_id} not found for user {self.user_uuid}")
 
-        Args:
-            session_id: Chat UUID
-            run_id: Message UUID
-
-        Raises:
-            ValueError: If session or user_uuid is not set
-        """
-        if not self.session or not self.user_uuid:
-            raise ValueError("Session and user_uuid are required for delete_agent_run operation")
-
-        # Verify the chat exists and belongs to the user
-        chat = await methods.get_chat_async(self.session, session_id, self.user_uuid)
-        if not chat:
-            raise ValueError(f"Chat session {session_id} not found for user {self.user_uuid}")
-
-        message = await methods.get_chat_message_async(self.session, run_id, session_id)
-        if message:
-            await methods.delete_chat_message_async(self.session, message)
+            message = await methods.get_chat_message_async(db_session, run_id, session_id)
+            if message:
+                await methods.delete_chat_message_async(db_session, message)
 
 
 class UserChatProviderImpl(IUserChatProvider):
@@ -280,16 +187,14 @@ class UserChatProviderImpl(IUserChatProvider):
     def get_chat_repository(
         self,
         user_uuid: str,
-        session: AsyncSession,
         **kwargs,
     ) -> UserChatRepository:
-        """Get the chat repository."""
-        return UserChatRepositoryImpl(user_uuid=user_uuid, session=session)
+        """Get the chat repository without binding a DB session."""
+        return UserChatRepositoryImpl(user_uuid=user_uuid)
 
     def get_chat_context(
         self,
         user_uuid: str,
-        session: AsyncSession,
         context: dict | None = None,
         **kwargs,
     ) -> IUserChatContext | None:

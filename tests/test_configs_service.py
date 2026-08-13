@@ -249,6 +249,22 @@ async def session():
             await engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+async def patch_db_session_context(session: AsyncSession):
+    from contextlib import asynccontextmanager
+    from unittest.mock import patch
+
+    @asynccontextmanager
+    async def override_ctx(*_args, **_kwargs):
+        yield session
+
+    with patch(
+        "fivccliche.modules.agent_configs.services.get_db_session_context_async",
+        override_ctx,
+    ):
+        yield
+
+
 class TestEmbeddingConfigService:
     """Test cases for embedding config service functions."""
 
@@ -978,7 +994,7 @@ class TestEmbeddingRepositoryImpl:
 
     async def test_update_embedding_config_create_new(self, session: AsyncSession):
         """Test creating a new embedding config via update_embedding_config."""
-        repo = UserEmbeddingRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserEmbeddingRepositoryImpl(user_uuid="user123")
 
         config = EmbeddingConfig(
             id="repo-embedding-1",
@@ -999,7 +1015,7 @@ class TestEmbeddingRepositoryImpl:
 
     async def test_update_embedding_config_update_existing(self, session: AsyncSession):
         """Test updating an existing embedding config via update_embedding_config."""
-        repo = UserEmbeddingRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserEmbeddingRepositoryImpl(user_uuid="user123")
 
         # Create initial config
         config_create = EmbeddingConfig(
@@ -1029,7 +1045,7 @@ class TestEmbeddingRepositoryImpl:
 
     async def test_get_embedding_config_returns_config_type(self, session: AsyncSession):
         """Test that get_embedding_config returns EmbeddingConfig type."""
-        repo = UserEmbeddingRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserEmbeddingRepositoryImpl(user_uuid="user123")
 
         config_create = EmbeddingConfig(
             id="repo-embedding-3",
@@ -1048,7 +1064,7 @@ class TestEmbeddingRepositoryImpl:
 
     async def test_get_embedding_config_returns_none_when_not_found(self, session: AsyncSession):
         """Test that get_embedding_config returns None when config not found."""
-        repo = UserEmbeddingRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserEmbeddingRepositoryImpl(user_uuid="user123")
 
         result = await repo.get_embedding_config_async("nonexistent")
 
@@ -1056,7 +1072,7 @@ class TestEmbeddingRepositoryImpl:
 
     async def test_list_embedding_configs_returns_config_types(self, session: AsyncSession):
         """Test that list_embedding_configs returns list of EmbeddingConfig types."""
-        repo = UserEmbeddingRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserEmbeddingRepositoryImpl(user_uuid="user123")
 
         for i in range(3):
             config = EmbeddingConfig(
@@ -1074,7 +1090,7 @@ class TestEmbeddingRepositoryImpl:
 
     async def test_delete_embedding_config(self, session: AsyncSession):
         """Test deleting an embedding config."""
-        repo = UserEmbeddingRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserEmbeddingRepositoryImpl(user_uuid="user123")
 
         config = EmbeddingConfig(
             id="repo-embedding-delete",
@@ -1092,41 +1108,13 @@ class TestEmbeddingRepositoryImpl:
         )
         assert retrieved is None
 
-    async def test_embedding_repo_raises_error_without_session(self, session: AsyncSession):
-        """Test that repository raises error when session is None."""
-        repo = UserEmbeddingRepositoryImpl(user_uuid="user123", session=None)
-
-        config = EmbeddingConfig(
-            id="test",
-            provider="openai",
-            model="test",
-            api_key="test",
-        )
-
-        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
-            await repo.update_embedding_config_async(config)
-
-    async def test_embedding_repo_raises_error_without_user_id(self, session: AsyncSession):
-        """Test that repository raises error when user_uuid is None."""
-        repo = UserEmbeddingRepositoryImpl(user_uuid=None, session=session)
-
-        config = EmbeddingConfig(
-            id="test",
-            provider="openai",
-            model="test",
-            api_key="test",
-        )
-
-        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
-            await repo.update_embedding_config_async(config)
-
 
 class TestLLMRepositoryImpl:
     """Test cases for UserLLMRepositoryImpl abstract methods."""
 
     async def test_update_model_config_create_new(self, session: AsyncSession):
         """Test creating a new model config via update_model_config."""
-        repo = UserLLMRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserLLMRepositoryImpl(user_uuid="user123")
 
         config = ModelConfig(
             id="repo-llm-1",
@@ -1148,7 +1136,7 @@ class TestLLMRepositoryImpl:
 
     async def test_update_model_config_update_existing(self, session: AsyncSession):
         """Test updating an existing model config via update_model_config."""
-        repo = UserLLMRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserLLMRepositoryImpl(user_uuid="user123")
 
         # Create initial config
         config_create = ModelConfig(
@@ -1179,7 +1167,7 @@ class TestLLMRepositoryImpl:
 
     async def test_get_model_config_returns_config_type(self, session: AsyncSession):
         """Test that get_model_config returns ModelConfig type."""
-        repo = UserLLMRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserLLMRepositoryImpl(user_uuid="user123")
 
         config_create = ModelConfig(
             id="repo-llm-3",
@@ -1200,7 +1188,7 @@ class TestLLMRepositoryImpl:
 
     async def test_get_model_config_returns_none_when_not_found(self, session: AsyncSession):
         """Test that get_model_config returns None when config not found."""
-        repo = UserLLMRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserLLMRepositoryImpl(user_uuid="user123")
 
         result = await repo.get_model_config_async("nonexistent")
 
@@ -1208,7 +1196,7 @@ class TestLLMRepositoryImpl:
 
     async def test_list_model_configs_returns_config_types(self, session: AsyncSession):
         """Test that list_model_configs returns list of ModelConfig types."""
-        repo = UserLLMRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserLLMRepositoryImpl(user_uuid="user123")
 
         for i in range(3):
             config = ModelConfig(
@@ -1226,7 +1214,7 @@ class TestLLMRepositoryImpl:
 
     async def test_delete_model_config(self, session: AsyncSession):
         """Test deleting a model config."""
-        repo = UserLLMRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserLLMRepositoryImpl(user_uuid="user123")
 
         config = ModelConfig(
             id="repo-llm-delete",
@@ -1242,41 +1230,13 @@ class TestLLMRepositoryImpl:
         retrieved = await methods.get_llm_config_async(session, "repo-llm-delete", "user123")
         assert retrieved is None
 
-    async def test_llm_repo_raises_error_without_session(self, session: AsyncSession):
-        """Test that repository raises error when session is None."""
-        repo = UserLLMRepositoryImpl(user_uuid="user123", session=None)
-
-        config = ModelConfig(
-            id="test",
-            provider="openai",
-            model="test",
-            api_key="test",
-        )
-
-        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
-            await repo.update_model_config_async(config)
-
-    async def test_llm_repo_raises_error_without_user_id(self, session: AsyncSession):
-        """Test that repository raises error when user_uuid is None."""
-        repo = UserLLMRepositoryImpl(user_uuid=None, session=session)
-
-        config = ModelConfig(
-            id="test",
-            provider="openai",
-            model="test",
-            api_key="test",
-        )
-
-        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
-            await repo.update_model_config_async(config)
-
 
 class TestAgentRepositoryImpl:
     """Test cases for UserAgentRepositoryImpl abstract methods."""
 
     async def test_update_agent_config_create_new(self, session: AsyncSession):
         """Test creating a new agent config via update_agent_config."""
-        repo = UserAgentRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserAgentRepositoryImpl(user_uuid="user123")
 
         config = AgentConfig(
             id="repo-agent-1",
@@ -1301,7 +1261,7 @@ class TestAgentRepositoryImpl:
 
     async def test_update_agent_config_update_existing(self, session: AsyncSession):
         """Test updating an existing agent config via update_agent_config."""
-        repo = UserAgentRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserAgentRepositoryImpl(user_uuid="user123")
 
         # Create initial config
         config_create = AgentConfig(
@@ -1327,7 +1287,7 @@ class TestAgentRepositoryImpl:
 
     async def test_get_agent_config_returns_config_type(self, session: AsyncSession):
         """Test that get_agent_config returns AgentConfig type."""
-        repo = UserAgentRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserAgentRepositoryImpl(user_uuid="user123")
 
         config_create = AgentConfig(
             id="repo-agent-3",
@@ -1344,7 +1304,7 @@ class TestAgentRepositoryImpl:
 
     async def test_get_agent_config_returns_none_when_not_found(self, session: AsyncSession):
         """Test that get_agent_config returns None when config not found."""
-        repo = UserAgentRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserAgentRepositoryImpl(user_uuid="user123")
 
         result = await repo.get_agent_config_async("nonexistent")
 
@@ -1352,7 +1312,7 @@ class TestAgentRepositoryImpl:
 
     async def test_list_agent_configs_returns_config_types(self, session: AsyncSession):
         """Test that list_agent_configs returns list of AgentConfig types."""
-        repo = UserAgentRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserAgentRepositoryImpl(user_uuid="user123")
 
         for i in range(3):
             config = AgentConfig(
@@ -1368,7 +1328,7 @@ class TestAgentRepositoryImpl:
 
     async def test_delete_agent_config(self, session: AsyncSession):
         """Test deleting an agent config."""
-        repo = UserAgentRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserAgentRepositoryImpl(user_uuid="user123")
 
         config = AgentConfig(
             id="repo-agent-delete",
@@ -1381,30 +1341,6 @@ class TestAgentRepositoryImpl:
         # Verify it was deleted
         retrieved = await methods.get_agent_config_async(session, "repo-agent-delete", "user123")
         assert retrieved is None
-
-    async def test_agent_repo_raises_error_without_session(self, session: AsyncSession):
-        """Test that repository raises error when session is None."""
-        repo = UserAgentRepositoryImpl(user_uuid="user123", session=None)
-
-        config = AgentConfig(
-            id="test",
-            model_id="test",
-        )
-
-        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
-            await repo.update_agent_config_async(config)
-
-    async def test_agent_repo_raises_error_without_user_id(self, session: AsyncSession):
-        """Test that repository raises error when user_uuid is None."""
-        repo = UserAgentRepositoryImpl(user_uuid=None, session=session)
-
-        config = AgentConfig(
-            id="test",
-            model_id="test",
-        )
-
-        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
-            await repo.update_agent_config_async(config)
 
 
 # ============================================================================
@@ -1665,7 +1601,7 @@ class TestToolConfigRepository:
 
     async def test_create_tool_config_via_repo(self, session: AsyncSession):
         """Test creating a tool config via repository."""
-        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserToolRepositoryImpl(user_uuid="user123")
 
         config = ToolConfig(
             id="repo-tool",
@@ -1681,7 +1617,7 @@ class TestToolConfigRepository:
 
     async def test_get_tool_config_via_repo(self, session: AsyncSession):
         """Test getting a tool config via repository."""
-        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserToolRepositoryImpl(user_uuid="user123")
 
         config = ToolConfig(
             id="repo-tool-get",
@@ -1700,7 +1636,7 @@ class TestToolConfigRepository:
         self, session: AsyncSession
     ):
         """Test that get_tool_config returns None when config not found."""
-        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserToolRepositoryImpl(user_uuid="user123")
 
         result = await repo.get_tool_config_async("nonexistent")
 
@@ -1708,7 +1644,7 @@ class TestToolConfigRepository:
 
     async def test_list_tool_configs_via_repo(self, session: AsyncSession):
         """Test listing tool configs via repository."""
-        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserToolRepositoryImpl(user_uuid="user123")
 
         for i in range(3):
             config = ToolConfig(
@@ -1725,7 +1661,7 @@ class TestToolConfigRepository:
 
     async def test_delete_tool_config_via_repo(self, session: AsyncSession):
         """Test deleting a tool config via repository."""
-        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserToolRepositoryImpl(user_uuid="user123")
 
         config = ToolConfig(
             id="repo-tool-delete",
@@ -1742,35 +1678,9 @@ class TestToolConfigRepository:
         )
         assert retrieved is None
 
-    async def test_tool_repo_raises_error_without_session(self, session: AsyncSession):
-        """Test that repository raises error when session is None."""
-        repo = UserToolRepositoryImpl(user_uuid="user123", session=None)
-
-        config = ToolConfig(
-            id="test",
-            description="Test",
-            transport="stdio",
-        )
-
-        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
-            await repo.update_tool_config_async(config)
-
-    async def test_tool_repo_raises_error_without_user_id(self, session: AsyncSession):
-        """Test that repository raises error when user_uuid is None."""
-        repo = UserToolRepositoryImpl(user_uuid=None, session=session)
-
-        config = ToolConfig(
-            id="test",
-            description="Test",
-            transport="stdio",
-        )
-
-        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
-            await repo.update_tool_config_async(config)
-
     async def test_update_tool_config_create_new(self, session: AsyncSession):
         """Test creating a new tool config via update_tool_config_async."""
-        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserToolRepositoryImpl(user_uuid="user123")
 
         config = ToolConfig(
             id="repo-tool-update-1",
@@ -1794,7 +1704,7 @@ class TestToolConfigRepository:
 
     async def test_update_tool_config_update_existing(self, session: AsyncSession):
         """Test updating an existing tool config via update_tool_config_async."""
-        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserToolRepositoryImpl(user_uuid="user123")
 
         # Create initial config
         config_create = ToolConfig(
@@ -1826,7 +1736,7 @@ class TestToolConfigRepository:
 
     async def test_update_tool_config_returns_none(self, session: AsyncSession):
         """Test that update_tool_config_async returns None."""
-        repo = UserToolRepositoryImpl(user_uuid="user123", session=session)
+        repo = UserToolRepositoryImpl(user_uuid="user123")
 
         config = ToolConfig(
             id="repo-tool-update-3",
@@ -1837,32 +1747,6 @@ class TestToolConfigRepository:
         result = await repo.update_tool_config_async(config)
 
         assert result is None
-
-    async def test_update_tool_config_raises_error_without_session(self, session: AsyncSession):
-        """Test that update_tool_config_async raises error when session is None."""
-        repo = UserToolRepositoryImpl(user_uuid="user123", session=None)
-
-        config = ToolConfig(
-            id="test",
-            description="Test",
-            transport="stdio",
-        )
-
-        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
-            await repo.update_tool_config_async(config)
-
-    async def test_update_tool_config_raises_error_without_user_id(self, session: AsyncSession):
-        """Test that update_tool_config_async raises error when user_uuid is None."""
-        repo = UserToolRepositoryImpl(user_uuid=None, session=session)
-
-        config = ToolConfig(
-            id="test",
-            description="Test",
-            transport="stdio",
-        )
-
-        with pytest.raises(RuntimeError, match="Session and user_uuid are required"):
-            await repo.update_tool_config_async(config)
 
 
 class TestSkillConfigMethods:

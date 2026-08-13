@@ -5,7 +5,6 @@ from fivcplayground.agents import (
     AgentRunRepository as UserChatRepository,
 )
 from fivcplayground.tools import Tool
-from sqlalchemy.ext.asyncio.session import AsyncSession
 
 
 class IUserChatContext(IComponent):
@@ -27,16 +26,18 @@ class IUserChatProvider(IComponent):
     def get_chat_repository(
         self,
         user_uuid: str,
-        session: AsyncSession,
         **kwargs,  # ignore additional arguments
     ) -> UserChatRepository:
-        """Get the chat repository."""
+        """Get the chat repository.
+
+        Implementations must not bind a long-lived DB session. Each repository
+        operation should open a short-lived session when it needs the database.
+        """
 
     @abstractmethod
     def get_chat_context(
         self,
         user_uuid: str,
-        session: AsyncSession,
         context: dict | None = None,
         **kwargs,
     ) -> IUserChatContext | None:

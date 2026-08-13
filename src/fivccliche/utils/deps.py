@@ -138,13 +138,22 @@ async def get_db_session_async() -> AsyncGenerator[AsyncSession, None]:
 
 
 @asynccontextmanager
-async def get_db_session_context() -> AsyncGenerator[AsyncSession, None]:
-    """Get an async database session as an async context manager.
+async def get_db_session_context_async(
+    session: AsyncSession | None = None,
+) -> AsyncGenerator[AsyncSession, None]:
+    """Reuse a caller-provided session, or open a short-lived one.
 
     Use this instead of ``get_db_session_async`` when you need to open a session
-    directly (``async with get_db_session_context() as session:``). The bare
+    directly (``async with get_db_session_context_async() as session:``). Pass an
+    existing ``session`` to reuse it without closing. The bare
     ``get_db_session_async`` async generator is kept for FastAPI ``Depends``.
+
+    Long-running tasks must omit ``session`` so each DB operation checks out a
+    connection only for that call.
     """
+    if session is not None:
+        yield session
+        return
     db = default_db()
     async_session = db.create_session()
     try:
@@ -160,14 +169,14 @@ async def get_authenticator_async() -> IUserAuthenticator:
 
 async def get_authenticated_user_async(
     credentials: HTTPAuthorizationCredentials = Depends(default_security),
-    session: AsyncSession = Depends(get_db_session_async),
     auth: IUserAuthenticator = Depends(get_authenticator_async),
 ) -> IUser:
-    """Get the user authenticator for dependency injection."""
-    user = await auth.verify_credential_async(
-        credentials.credentials,
-        session=session,
-    )
+    """Authenticate without holding a request-scoped DB session."""
+    async with get_db_session_context_async() as session:
+        user = await auth.verify_credential_async(
+            credentials.credentials,
+            session=session,
+        )
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -179,18 +188,18 @@ async def get_authenticated_user_async(
 
 async def get_authenticated_user_optional_async(
     credentials: HTTPAuthorizationCredentials = Depends(default_security_optional),
-    session: AsyncSession = Depends(get_db_session_async),
 ) -> IUser | None:
     if not credentials:
         return None
 
-    return cast(
-        "IUser | None",
-        await default_auth.verify_credential_async(
-            credentials.credentials,
-            session=session,
-        ),
-    )
+    async with get_db_session_context_async() as session:
+        return cast(
+            "IUser | None",
+            await default_auth.verify_credential_async(
+                credentials.credentials,
+                session=session,
+            ),
+        )
 
 
 async def get_admin_user_async(

@@ -8,13 +8,10 @@ from fivcglue.interfaces.mutexes import IMutex
 from fivcplayground.agents import AgentRun, AgentRunEvent, create_agent_async
 from fivcplayground.skills import create_skill_retriever_async
 from fivcplayground.tools import Tool, create_tool_retriever_async
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.services.interfaces.auth import IUser
-from fivccliche.services.interfaces.db import IDatabase
-from fivccliche.utils.deps import default_db
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +34,6 @@ class ChatTask:
             Callable[[AgentRun], None] | Callable[[AgentRun], Awaitable[None]] | None
         ) = None,
         chat_mutex: IMutex | None = None,
-        chat_db: IDatabase | None = None,
         **kwargs,
     ):
         self._user = user
@@ -55,7 +51,6 @@ class ChatTask:
         self._chat_context = chat_context
         self._chat_finish_callback = chat_finish_callback
         self._chat_mutex = chat_mutex
-        self._chat_db = chat_db or default_db()
         self._chat_queue: asyncio.Queue = asyncio.Queue()
         self._asyncio_task: asyncio.Task | None = None
 
@@ -158,23 +153,21 @@ class ChatTask:
             yield f"data: {data}\n\n"
 
     async def _run_async(self) -> None:
-        owned_session = self._chat_db.create_session()
         finish_run = None
-        base_context = {
+        context_copy = {
             **(self._chat_context or {}),
             "user_uuid": self._user.uuid,
             "chat_uuid": self._chat_uuid,
         }
         try:
-            context_copy = {**base_context, "session": owned_session}
             agent = await create_agent_async(
                 model_backend=self._user_config_provider.get_model_backend(),
                 model_config_repository=self._user_config_provider.get_model_repository(
-                    user_uuid=self._user.uuid, session=owned_session
+                    user_uuid=self._user.uuid
                 ),
                 agent_backend=self._user_config_provider.get_agent_backend(),
                 agent_config_repository=self._user_config_provider.get_agent_repository(
-                    user_uuid=self._user.uuid, session=owned_session
+                    user_uuid=self._user.uuid
                 ),
                 agent_config_id=self._chat_agent_id,
             )
@@ -182,11 +175,11 @@ class ChatTask:
                 tool_backend=self._user_config_provider.get_tool_backend(),
                 tools=self._resolved_chat_tools,
                 tool_config_repository=self._user_config_provider.get_tool_repository(
-                    user_uuid=self._user.uuid, session=owned_session
+                    user_uuid=self._user.uuid
                 ),
                 embedding_backend=self._user_config_provider.get_embedding_backend(),
                 embedding_config_repository=self._user_config_provider.get_embedding_repository(
-                    user_uuid=self._user.uuid, session=owned_session
+                    user_uuid=self._user.uuid
                 ),
                 space_id=self._user.uuid,
             )
@@ -194,11 +187,11 @@ class ChatTask:
                 await create_skill_retriever_async(
                     tool_backend=self._user_config_provider.get_tool_backend(),
                     skill_config_repository=self._user_config_provider.get_skill_repository(
-                        user_uuid=self._user.uuid, session=owned_session
+                        user_uuid=self._user.uuid
                     ),
                     embedding_backend=self._user_config_provider.get_embedding_backend(),
                     embedding_config_repository=self._user_config_provider.get_embedding_repository(
-                        user_uuid=self._user.uuid, session=owned_session
+                        user_uuid=self._user.uuid
                     ),
                     space_id=self._user.uuid,
                 )
@@ -218,28 +211,21 @@ class ChatTask:
                 tool_ids=self._chat_tool_ids,
                 skill_retriever=agent_skills,
                 agent_run_repository=self._user_chat_provider.get_chat_repository(
-                    user_uuid=self._user.uuid, session=owned_session
+                    user_uuid=self._user.uuid
                 ),
                 agent_run_session_id=self._chat_uuid,
                 context=context_copy,
                 event_callback=_event_callback,
             )
         finally:
-            await self._finish_async(owned_session, finish_run)
+            await self._finish_async(finish_run)
 
-    async def _finish_async(
-        self,
-        owned_session: AsyncSession,
-        finish_run: AgentRun | None,
-    ) -> None:
+    async def _finish_async(self, finish_run: AgentRun | None) -> None:
         try:
             if self._chat_finish_callback and finish_run is not None:
                 callback_result = self._chat_finish_callback(finish_run)
                 if inspect.iscoroutine(callback_result):
                     await callback_result
         finally:
-            try:
-                await owned_session.close()
-            finally:
-                if self._chat_mutex:
-                    await self._chat_mutex.release_async()
+            if self._chat_mutex:
+                await self._chat_mutex.release_async()

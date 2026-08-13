@@ -419,8 +419,10 @@ class TestSSOAuthentication:
         self, authenticator, mock_cache, session: AsyncSession
     ):
         """Test creating SSO credential without providing session."""
-        # Mock get_db_session_context to return our test session
-        with patch("fivccliche.modules.users.services.get_db_session_context") as mock_get_session:
+        # Mock get_db_session_context_async to return our test session
+        with patch(
+            "fivccliche.modules.users.services.get_db_session_context_async"
+        ) as mock_get_session:
             mock_get_session.return_value.__aenter__.return_value = session
             mock_get_session.return_value.__aexit__.return_value = None
 
@@ -812,8 +814,10 @@ class TestUserAuthenticatorCaching:
         mock_cache.get_value.return_value = None
 
         # Verify token without providing session
-        # This will use get_db_session_context() internally
-        with patch("fivccliche.modules.users.services.get_db_session_context") as mock_get_session:
+        # This will use get_db_session_context_async() internally
+        with patch(
+            "fivccliche.modules.users.services.get_db_session_context_async"
+        ) as mock_get_session:
             mock_get_session.return_value.__aenter__.return_value = session
             mock_get_session.return_value.__aexit__.return_value = None
 

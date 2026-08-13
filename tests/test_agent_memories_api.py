@@ -4,7 +4,8 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+from contextlib import asynccontextmanager
 
 import pytest
 from fastapi.testclient import TestClient
@@ -20,6 +21,7 @@ from fivccliche.services.interfaces.agent_memories import (
     MemoryRecallResult,
 )
 from fivccliche.utils.deps import get_db_session_async, get_memory_provider_async
+from fivccliche.utils import deps
 from fivcglue.implements.utils import load_component_site
 
 
@@ -77,8 +79,15 @@ def client():
             )
         )
 
-        with TestClient(app) as test_client:
-            yield test_client
+        @asynccontextmanager
+        async def override_get_db_session_context_async(session=None):
+            yield async_session
+
+        with patch.object(
+            deps, "get_db_session_context_async", override_get_db_session_context_async
+        ):
+            with TestClient(app) as test_client:
+                yield test_client
 
         async def cleanup():
             await async_session.close()

@@ -1,8 +1,10 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from sqlalchemy.pool.impl import NullPool
 
 from fivccliche.services.implements.db import DatabaseImpl, _parse_optional_int
+from fivccliche.utils.deps import get_db_session_context_async
 
 
 def _make_db(config_values: dict[str, str | None]) -> DatabaseImpl:
@@ -94,3 +96,22 @@ class TestDatabaseImplPoolConfig:
         )
         engine = db.get_engine()
         assert isinstance(engine.pool, NullPool)
+
+
+class TestGetDbSessionContextAsync:
+    @pytest.mark.asyncio
+    async def test_reuses_provided_session(self):
+        provided = object()
+        async with get_db_session_context_async(session=provided) as scoped:
+            assert scoped is provided
+
+    @pytest.mark.asyncio
+    async def test_opens_short_lived_session_when_none(self):
+        owned = AsyncMock()
+        mock_db = MagicMock()
+        mock_db.create_session.return_value = owned
+
+        with patch("fivccliche.utils.deps.default_db", lambda: mock_db):
+            async with get_db_session_context_async() as scoped:
+                assert scoped is owned
+        owned.close.assert_awaited_once()

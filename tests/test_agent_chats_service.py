@@ -56,6 +56,22 @@ async def session():
             await engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+async def patch_db_session_context(session: AsyncSession):
+    from contextlib import asynccontextmanager
+    from unittest.mock import patch
+
+    @asynccontextmanager
+    async def override_ctx(*_args, **_kwargs):
+        yield session
+
+    with patch(
+        "fivccliche.modules.agent_chats.services.get_db_session_context_async",
+        override_ctx,
+    ):
+        yield
+
+
 @pytest.fixture
 async def test_user(session: AsyncSession):
     """Create a test user."""
@@ -557,44 +573,18 @@ class TestUserChatRepositoryImpl:
     """Test cases for UserChatRepositoryImpl."""
 
     @pytest.fixture
-    def repository(self, session: AsyncSession, test_user):
+    def repository(self, test_user):
         """Create a repository instance for testing."""
         from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
 
-        return UserChatRepositoryImpl(user_uuid=test_user.uuid, session=session)
-
-    # ========================================================================
-    # Session Validation Tests
-    # ========================================================================
-
-    async def test_update_agent_run_session_missing_session(self, test_user):
-        """Test that update_agent_run_session raises error when session is missing."""
-        from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
-        from fivcplayground.agents.types import AgentRunSession
-
-        repo = UserChatRepositoryImpl(user_uuid=test_user.uuid, session=None)
-        session_data = AgentRunSession(id="test-id", agent_id="agent1")
-
-        with pytest.raises(ValueError, match="Session and user_uuid are required"):
-            await repo.update_agent_run_session_async(session_data)
-
-    async def test_update_agent_run_session_missing_user_uuid(self, session: AsyncSession):
-        """Test that update_agent_run_session raises error when user_uuid is missing."""
-        from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
-        from fivcplayground.agents.types import AgentRunSession
-
-        repo = UserChatRepositoryImpl(user_uuid=None, session=session)
-        session_data = AgentRunSession(id="test-id", agent_id="agent1")
-
-        with pytest.raises(ValueError, match="Session and user_uuid are required"):
-            await repo.update_agent_run_session_async(session_data)
+        return UserChatRepositoryImpl(user_uuid=test_user.uuid)
 
     # ========================================================================
     # Agent Run Session (Chat) Tests
     # ========================================================================
 
     async def test_update_agent_run_session_create_new(
-        self, repository: "UserChatRepositoryImpl", test_user
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_user
     ):
         """Test creating a new agent run session."""
         from fivcplayground.agents.types import AgentRunSession
@@ -608,14 +598,18 @@ class TestUserChatRepositoryImpl:
         await repository.update_agent_run_session_async(session_data)
 
         # Verify it was created
-        chat = await methods.get_chat_async(repository.session, "chat-1", test_user.uuid)
+        chat = await methods.get_chat_async(session, "chat-1", test_user.uuid)
         assert chat is not None
         assert chat.uuid == "chat-1"
         assert chat.agent_id == "agent1"
         assert chat.description == "Test chat session"
 
     async def test_update_agent_run_session_update_existing(
-        self, repository: "UserChatRepositoryImpl", test_user, test_chat: UserChat
+        self,
+        repository: "UserChatRepositoryImpl",
+        session: AsyncSession,
+        test_user,
+        test_chat: UserChat,
     ):
         """Test updating an existing agent run session."""
         from fivcplayground.agents.types import AgentRunSession
@@ -629,12 +623,16 @@ class TestUserChatRepositoryImpl:
         await repository.update_agent_run_session_async(session_data)
 
         # Verify it was updated
-        chat = await methods.get_chat_async(repository.session, test_chat.uuid, test_user.uuid)
+        chat = await methods.get_chat_async(session, test_chat.uuid, test_user.uuid)
         assert chat is not None
         assert chat.description == "Updated description"
 
     async def test_get_agent_run_session_found(
-        self, repository: "UserChatRepositoryImpl", test_user, test_chat: UserChat
+        self,
+        repository: "UserChatRepositoryImpl",
+        session: AsyncSession,
+        test_user,
+        test_chat: UserChat,
     ):
         """Test retrieving an existing agent run session."""
         session_data = await repository.get_agent_run_session_async(test_chat.uuid)
@@ -643,7 +641,9 @@ class TestUserChatRepositoryImpl:
         assert session_data.id == test_chat.uuid
         assert session_data.agent_id == test_chat.agent_id
 
-    async def test_get_agent_run_session_not_found(self, repository: "UserChatRepositoryImpl"):
+    async def test_get_agent_run_session_not_found(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession
+    ):
         """Test retrieving a non-existent agent run session."""
         session_data = await repository.get_agent_run_session_async("nonexistent")
         assert session_data is None
@@ -654,17 +654,19 @@ class TestUserChatRepositoryImpl:
         """Test that users cannot access other users' chats."""
         from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
 
-        repo = UserChatRepositoryImpl(user_uuid="different_user", session=session)
+        repo = UserChatRepositoryImpl(user_uuid="different_user")
         session_data = await repo.get_agent_run_session_async(test_chat.uuid)
         assert session_data is None
 
-    async def test_list_agent_run_sessions_empty(self, repository: "UserChatRepositoryImpl"):
+    async def test_list_agent_run_sessions_empty(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession
+    ):
         """Test listing agent run sessions when none exist."""
         sessions = await repository.list_agent_run_sessions_async()
         assert len(sessions) == 0
 
     async def test_list_agent_run_sessions_multiple(
-        self, repository: "UserChatRepositoryImpl", test_user
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_user
     ):
         """Test listing multiple agent run sessions."""
         # Create multiple chats
@@ -674,14 +676,14 @@ class TestUserChatRepositoryImpl:
                 agent_id=f"agent_{i}",
                 description=f"Chat {i}",
             )
-            repository.session.add(chat)
-        await repository.session.commit()
+            session.add(chat)
+        await session.commit()
 
         sessions = await repository.list_agent_run_sessions_async()
         assert len(sessions) == 3
 
     async def test_list_agent_run_sessions_pagination(
-        self, repository: "UserChatRepositoryImpl", test_user
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_user
     ):
         """Test listing agent run sessions with pagination."""
         # Create multiple chats
@@ -690,8 +692,8 @@ class TestUserChatRepositoryImpl:
                 user_uuid=test_user.uuid,
                 agent_id=f"agent_{i}",
             )
-            repository.session.add(chat)
-        await repository.session.commit()
+            session.add(chat)
+        await session.commit()
 
         # Test pagination
         sessions = await repository.list_agent_run_sessions_async(skip=0, limit=2)
@@ -701,16 +703,22 @@ class TestUserChatRepositoryImpl:
         assert len(sessions) == 2
 
     async def test_delete_agent_run_session(
-        self, repository: "UserChatRepositoryImpl", test_user, test_chat: UserChat
+        self,
+        repository: "UserChatRepositoryImpl",
+        session: AsyncSession,
+        test_user,
+        test_chat: UserChat,
     ):
         """Test deleting an agent run session."""
         await repository.delete_agent_run_session_async(test_chat.uuid)
 
         # Verify it was deleted
-        chat = await methods.get_chat_async(repository.session, test_chat.uuid, test_user.uuid)
+        chat = await methods.get_chat_async(session, test_chat.uuid, test_user.uuid)
         assert chat is None
 
-    async def test_delete_agent_run_session_not_found(self, repository: "UserChatRepositoryImpl"):
+    async def test_delete_agent_run_session_not_found(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession
+    ):
         """Test deleting a non-existent agent run session (should not raise)."""
         # Should not raise an error
         await repository.delete_agent_run_session_async("nonexistent")
@@ -720,7 +728,11 @@ class TestUserChatRepositoryImpl:
     # ========================================================================
 
     async def test_update_agent_run_create_new(
-        self, repository: "UserChatRepositoryImpl", test_user, test_chat: UserChat
+        self,
+        repository: "UserChatRepositoryImpl",
+        session: AsyncSession,
+        test_user,
+        test_chat: UserChat,
     ):
         """Test creating a new agent run (chat message)."""
         from fivcplayground.agents.types import AgentRun
@@ -736,7 +748,7 @@ class TestUserChatRepositoryImpl:
         await repository.update_agent_run_async(test_chat.uuid, agent_run)
 
         # Verify it was created
-        message = await methods.get_chat_message_async(repository.session, "run-1", test_chat.uuid)
+        message = await methods.get_chat_message_async(session, "run-1", test_chat.uuid)
         assert message is not None
         assert message.uuid == "run-1"
         assert message.chat_uuid == test_chat.uuid
@@ -746,7 +758,11 @@ class TestUserChatRepositoryImpl:
         assert message.reply is not None
 
     async def test_update_agent_run_update_existing(
-        self, repository: "UserChatRepositoryImpl", test_user, test_chat: UserChat
+        self,
+        repository: "UserChatRepositoryImpl",
+        session: AsyncSession,
+        test_user,
+        test_chat: UserChat,
     ):
         """Test updating an existing agent run (chat message)."""
         from fivcplayground.agents.types import AgentRun
@@ -758,8 +774,8 @@ class TestUserChatRepositoryImpl:
             status="pending",
             query={"text": "Hello"},
         )
-        repository.session.add(message)
-        await repository.session.commit()
+        session.add(message)
+        await session.commit()
 
         # Update it
         agent_run = AgentRun(
@@ -772,7 +788,7 @@ class TestUserChatRepositoryImpl:
         await repository.update_agent_run_async(test_chat.uuid, agent_run)
 
         # Verify it was updated
-        updated = await methods.get_chat_message_async(repository.session, "run-1", test_chat.uuid)
+        updated = await methods.get_chat_message_async(session, "run-1", test_chat.uuid)
         assert updated is not None
         assert updated.status == "completed"
         assert updated.reply is not None
@@ -803,7 +819,9 @@ class TestUserChatRepositoryImpl:
         assert updated.tool_calls is None
         assert updated.query == {"text": "Hello"}
 
-    async def test_update_agent_run_chat_not_found(self, repository: "UserChatRepositoryImpl"):
+    async def test_update_agent_run_chat_not_found(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession
+    ):
         """Test that updating a message for non-existent chat raises error."""
         from fivcplayground.agents.types import AgentRun
 
@@ -819,14 +837,18 @@ class TestUserChatRepositoryImpl:
         from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
         from fivcplayground.agents.types import AgentRun
 
-        repo = UserChatRepositoryImpl(user_uuid="different_user", session=session)
+        repo = UserChatRepositoryImpl(user_uuid="different_user")
         agent_run = AgentRun(id="run-1", agent_id="agent1")
 
         with pytest.raises(ValueError, match=r"Chat session .* not found"):
             await repo.update_agent_run_async(test_chat.uuid, agent_run)
 
     async def test_get_agent_run_found(
-        self, repository: "UserChatRepositoryImpl", test_user, test_chat: UserChat
+        self,
+        repository: "UserChatRepositoryImpl",
+        session: AsyncSession,
+        test_user,
+        test_chat: UserChat,
     ):
         """Test retrieving an existing agent run (chat message)."""
         # Create a message
@@ -836,8 +858,8 @@ class TestUserChatRepositoryImpl:
             status="completed",
             query={"text": "Hello"},
         )
-        repository.session.add(message)
-        await repository.session.commit()
+        session.add(message)
+        await session.commit()
 
         agent_run = await repository.get_agent_run_async(test_chat.uuid, "run-1")
 
@@ -845,26 +867,28 @@ class TestUserChatRepositoryImpl:
         assert agent_run.id == "run-1"
 
     async def test_get_agent_run_not_found(
-        self, repository: "UserChatRepositoryImpl", test_chat: UserChat
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
     ):
         """Test retrieving a non-existent agent run."""
         agent_run = await repository.get_agent_run_async(test_chat.uuid, "nonexistent")
         assert agent_run is None
 
-    async def test_get_agent_run_chat_not_found(self, repository: "UserChatRepositoryImpl"):
+    async def test_get_agent_run_chat_not_found(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession
+    ):
         """Test retrieving a message from non-existent chat returns None."""
         agent_run = await repository.get_agent_run_async("nonexistent_chat", "run-1")
         assert agent_run is None
 
     async def test_list_agent_runs_empty(
-        self, repository: "UserChatRepositoryImpl", test_chat: UserChat
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
     ):
         """Test listing agent runs when none exist."""
         runs = await repository.list_agent_runs_async(test_chat.uuid)
         assert len(runs) == 0
 
     async def test_list_agent_runs_multiple(
-        self, repository: "UserChatRepositoryImpl", test_chat: UserChat
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
     ):
         """Test listing multiple agent runs."""
         # Create multiple messages
@@ -874,14 +898,14 @@ class TestUserChatRepositoryImpl:
                 status="completed",
                 query={"text": f"Query {i}"},
             )
-            repository.session.add(message)
-        await repository.session.commit()
+            session.add(message)
+        await session.commit()
 
         runs = await repository.list_agent_runs_async(test_chat.uuid)
         assert len(runs) == 3
 
     async def test_list_agent_runs_pagination(
-        self, repository: "UserChatRepositoryImpl", test_chat: UserChat
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
     ):
         """Test listing agent runs with pagination."""
         # Create multiple messages
@@ -890,8 +914,8 @@ class TestUserChatRepositoryImpl:
                 chat_uuid=test_chat.uuid,
                 status="completed",
             )
-            repository.session.add(message)
-        await repository.session.commit()
+            session.add(message)
+        await session.commit()
 
         # Test pagination
         runs = await repository.list_agent_runs_async(test_chat.uuid, skip=0, limit=2)
@@ -900,13 +924,19 @@ class TestUserChatRepositoryImpl:
         runs = await repository.list_agent_runs_async(test_chat.uuid, skip=2, limit=2)
         assert len(runs) == 2
 
-    async def test_list_agent_runs_chat_not_found(self, repository: "UserChatRepositoryImpl"):
+    async def test_list_agent_runs_chat_not_found(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession
+    ):
         """Test listing runs for non-existent chat returns empty list."""
         runs = await repository.list_agent_runs_async("nonexistent_chat")
         assert len(runs) == 0
 
     async def test_delete_agent_run(
-        self, repository: "UserChatRepositoryImpl", test_user, test_chat: UserChat
+        self,
+        repository: "UserChatRepositoryImpl",
+        session: AsyncSession,
+        test_user,
+        test_chat: UserChat,
     ):
         """Test deleting an agent run (chat message)."""
         # Create a message
@@ -915,22 +945,24 @@ class TestUserChatRepositoryImpl:
             chat_uuid=test_chat.uuid,
             status="completed",
         )
-        repository.session.add(message)
-        await repository.session.commit()
+        session.add(message)
+        await session.commit()
 
         await repository.delete_agent_run_async(test_chat.uuid, "run-1")
 
         # Verify it was deleted
-        deleted = await methods.get_chat_message_async(repository.session, "run-1", test_chat.uuid)
+        deleted = await methods.get_chat_message_async(session, "run-1", test_chat.uuid)
         assert deleted is None
 
-    async def test_delete_agent_run_chat_not_found(self, repository: "UserChatRepositoryImpl"):
+    async def test_delete_agent_run_chat_not_found(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession
+    ):
         """Test deleting a message from non-existent chat raises error."""
         with pytest.raises(ValueError, match=r"Chat session .* not found"):
             await repository.delete_agent_run_async("nonexistent_chat", "run-1")
 
     async def test_delete_agent_run_not_found(
-        self, repository: "UserChatRepositoryImpl", test_chat: UserChat
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
     ):
         """Test deleting a non-existent message (should not raise)."""
         # Should not raise an error
@@ -961,13 +993,13 @@ class TestUserChatRepositoryImpl:
         await session.commit()
 
         # User 1 should only see their chat
-        repo1 = UserChatRepositoryImpl(user_uuid=test_user.uuid, session=session)
+        repo1 = UserChatRepositoryImpl(user_uuid=test_user.uuid)
         sessions1 = await repo1.list_agent_run_sessions_async()
         assert len(sessions1) == 1
         assert sessions1[0].id == chat1.uuid
 
         # User 2 should only see their chat
-        repo2 = UserChatRepositoryImpl(user_uuid=user2.uuid, session=session)
+        repo2 = UserChatRepositoryImpl(user_uuid=user2.uuid)
         sessions2 = await repo2.list_agent_run_sessions_async()
         assert len(sessions2) == 1
         assert sessions2[0].id == chat2.uuid
@@ -991,7 +1023,7 @@ class TestUserChatRepositoryImpl:
         await session.commit()
 
         # User 1 should not be able to get user2's chat
-        repo1 = UserChatRepositoryImpl(user_uuid=test_user.uuid, session=session)
+        repo1 = UserChatRepositoryImpl(user_uuid=test_user.uuid)
         session_data = await repo1.get_agent_run_session_async(chat.uuid)
         assert session_data is None
 
@@ -1014,7 +1046,7 @@ class TestUserChatRepositoryImpl:
         await session.commit()
 
         # User 1 tries to delete user2's chat (should not delete)
-        repo1 = UserChatRepositoryImpl(user_uuid=test_user.uuid, session=session)
+        repo1 = UserChatRepositoryImpl(user_uuid=test_user.uuid)
         await repo1.delete_agent_run_session_async(chat.uuid)
 
         # Chat should still exist
@@ -1049,7 +1081,7 @@ class TestUserChatRepositoryImpl:
         await session.commit()
 
         # User 1 should not be able to list messages from user2's chat
-        repo1 = UserChatRepositoryImpl(user_uuid=test_user.uuid, session=session)
+        repo1 = UserChatRepositoryImpl(user_uuid=test_user.uuid)
         runs = await repo1.list_agent_runs_async(chat2.uuid)
         assert len(runs) == 0
 
@@ -1057,7 +1089,9 @@ class TestUserChatRepositoryImpl:
     # Synchronous Wrapper Methods Tests
     # ========================================================================
 
-    def test_update_agent_run_session_sync(self, repository: "UserChatRepositoryImpl", test_user):
+    def test_update_agent_run_session_sync(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_user
+    ):
         """Test synchronous wrapper for update_agent_run_session."""
         from fivcplayground.agents.types import AgentRunSession
 
@@ -1074,7 +1108,7 @@ class TestUserChatRepositoryImpl:
         import asyncio
 
         async def verify():
-            chat = await methods.get_chat_async(repository.session, "chat-sync-1", test_user.uuid)
+            chat = await methods.get_chat_async(session, "chat-sync-1", test_user.uuid)
             return chat
 
         chat = asyncio.run(verify())
@@ -1082,22 +1116,24 @@ class TestUserChatRepositoryImpl:
         assert chat.uuid == "chat-sync-1"
 
     def test_get_agent_run_session_sync(
-        self, repository: "UserChatRepositoryImpl", test_chat: UserChat
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
     ):
         """Test synchronous wrapper for get_agent_run_session."""
         session_data = repository.get_agent_run_session(test_chat.uuid)
         assert session_data is not None
         assert session_data.id == test_chat.uuid
 
-    def test_list_agent_run_sessions_sync(self, repository: "UserChatRepositoryImpl", test_user):
+    def test_list_agent_run_sessions_sync(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_user
+    ):
         """Test synchronous wrapper for list_agent_run_sessions."""
         import asyncio
 
         # Create a chat first
         async def create_chat():
             chat = UserChat(user_uuid=test_user.uuid, agent_id="agent1")
-            repository.session.add(chat)
-            await repository.session.commit()
+            session.add(chat)
+            await session.commit()
 
         asyncio.run(create_chat())
 
@@ -1106,7 +1142,7 @@ class TestUserChatRepositoryImpl:
         assert len(sessions) == 1
 
     def test_delete_agent_run_session_sync(
-        self, repository: "UserChatRepositoryImpl", test_chat: UserChat
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
     ):
         """Test synchronous wrapper for delete_agent_run_session."""
         import asyncio
@@ -1116,15 +1152,15 @@ class TestUserChatRepositoryImpl:
 
         # Verify it was deleted
         async def verify():
-            chat = await methods.get_chat_async(
-                repository.session, test_chat.uuid, test_chat.user_uuid
-            )
+            chat = await methods.get_chat_async(session, test_chat.uuid, test_chat.user_uuid)
             return chat
 
         chat = asyncio.run(verify())
         assert chat is None
 
-    def test_update_agent_run_sync(self, repository: "UserChatRepositoryImpl", test_chat: UserChat):
+    def test_update_agent_run_sync(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
+    ):
         """Test synchronous wrapper for update_agent_run."""
         from fivcplayground.agents.types import AgentRun
 
@@ -1141,24 +1177,24 @@ class TestUserChatRepositoryImpl:
         import asyncio
 
         async def verify():
-            message = await methods.get_chat_message_async(
-                repository.session, "run-sync-1", test_chat.uuid
-            )
+            message = await methods.get_chat_message_async(session, "run-sync-1", test_chat.uuid)
             return message
 
         message = asyncio.run(verify())
         assert message is not None
         assert message.uuid == "run-sync-1"
 
-    def test_get_agent_run_sync(self, repository: "UserChatRepositoryImpl", test_chat: UserChat):
+    def test_get_agent_run_sync(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
+    ):
         """Test synchronous wrapper for get_agent_run."""
         import asyncio
 
         # Create a message first
         async def create_message():
             message = UserChatMessage(uuid="run-sync-1", chat_uuid=test_chat.uuid)
-            repository.session.add(message)
-            await repository.session.commit()
+            session.add(message)
+            await session.commit()
 
         asyncio.run(create_message())
 
@@ -1167,7 +1203,9 @@ class TestUserChatRepositoryImpl:
         assert agent_run is not None
         assert agent_run.id == "run-sync-1"
 
-    def test_list_agent_runs_sync(self, repository: "UserChatRepositoryImpl", test_chat: UserChat):
+    def test_list_agent_runs_sync(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
+    ):
         """Test synchronous wrapper for list_agent_runs."""
         import asyncio
 
@@ -1175,8 +1213,8 @@ class TestUserChatRepositoryImpl:
         async def create_messages():
             for _i in range(2):
                 message = UserChatMessage(chat_uuid=test_chat.uuid)
-                repository.session.add(message)
-            await repository.session.commit()
+                session.add(message)
+            await session.commit()
 
         asyncio.run(create_messages())
 
@@ -1184,15 +1222,17 @@ class TestUserChatRepositoryImpl:
         runs = repository.list_agent_runs(test_chat.uuid)
         assert len(runs) == 2
 
-    def test_delete_agent_run_sync(self, repository: "UserChatRepositoryImpl", test_chat: UserChat):
+    def test_delete_agent_run_sync(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
+    ):
         """Test synchronous wrapper for delete_agent_run."""
         import asyncio
 
         # Create a message first
         async def create_message():
             message = UserChatMessage(uuid="run-sync-1", chat_uuid=test_chat.uuid)
-            repository.session.add(message)
-            await repository.session.commit()
+            session.add(message)
+            await session.commit()
 
         asyncio.run(create_message())
 
@@ -1201,16 +1241,18 @@ class TestUserChatRepositoryImpl:
 
         # Verify it was deleted
         async def verify():
-            message = await methods.get_chat_message_async(
-                repository.session, "run-sync-1", test_chat.uuid
-            )
+            message = await methods.get_chat_message_async(session, "run-sync-1", test_chat.uuid)
             return message
 
         message = asyncio.run(verify())
         assert message is None
 
     async def test_update_agent_run_with_tool_calls_objects(
-        self, repository: "UserChatRepositoryImpl", test_user, test_chat: UserChat
+        self,
+        repository: "UserChatRepositoryImpl",
+        session: AsyncSession,
+        test_user,
+        test_chat: UserChat,
     ):
         """Test creating an agent run with AgentRunToolCall objects (JSON serialization)."""
         from fivcplayground.agents.types import AgentRun, AgentRunToolCall
@@ -1242,9 +1284,7 @@ class TestUserChatRepositoryImpl:
         await repository.update_agent_run_async(test_chat.uuid, agent_run)
 
         # Verify it was created and tool_calls were serialized
-        message = await methods.get_chat_message_async(
-            repository.session, "run-with-tools", test_chat.uuid
-        )
+        message = await methods.get_chat_message_async(session, "run-with-tools", test_chat.uuid)
         assert message is not None
         assert message.uuid == "run-with-tools"
         assert message.tool_calls is not None
@@ -1256,7 +1296,11 @@ class TestUserChatRepositoryImpl:
         assert message.tool_calls["1"]["tool_id"] == "get_time"
 
     async def test_update_agent_run_with_tool_calls_objects_update_existing(
-        self, repository: "UserChatRepositoryImpl", test_user, test_chat: UserChat
+        self,
+        repository: "UserChatRepositoryImpl",
+        session: AsyncSession,
+        test_user,
+        test_chat: UserChat,
     ):
         """Test updating an agent run with AgentRunToolCall objects (JSON serialization)."""
         from fivcplayground.agents.types import AgentRun, AgentRunToolCall
@@ -1268,8 +1312,8 @@ class TestUserChatRepositoryImpl:
             status="pending",
             query={"text": "Initial query"},
         )
-        repository.session.add(message)
-        await repository.session.commit()
+        session.add(message)
+        await session.commit()
 
         # Update with tool calls as AgentRunToolCall objects
         tool_calls = {
@@ -1294,7 +1338,7 @@ class TestUserChatRepositoryImpl:
 
         # Verify it was updated and tool_calls were serialized
         updated_message = await methods.get_chat_message_async(
-            repository.session, "run-update-tools", test_chat.uuid
+            session, "run-update-tools", test_chat.uuid
         )
         assert updated_message is not None
         assert updated_message.tool_calls is not None
