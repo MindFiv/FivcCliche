@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Layering, ownership, and the HTTP CRUD factory: [docs/architecture.md](docs/architecture.md). Scheduled jobs: [docs/scheduler.md](docs/scheduler.md). Memories: [docs/agent-memories.md](docs/agent-memories.md). Agent rules that override this file: [AGENTS.md](AGENTS.md). Getting started: [docs/getting-started.md](docs/getting-started.md).
+Layering, ownership, and HTTP CRUD: [docs/architecture.md](docs/architecture.md). Scheduled jobs: [docs/scheduler.md](docs/scheduler.md). Memories: [docs/agent-memories.md](docs/agent-memories.md). Agent rules that override this file: [AGENTS.md](AGENTS.md). Getting started: [docs/getting-started.md](docs/getting-started.md).
 
 ## Project Overview
 
@@ -59,13 +59,13 @@ Each module in `src/fivccliche/modules/` uses this layout:
 - `models.py` — SQLModel tables (UUID primary keys)
 - `schemas.py` — Pydantic request/response bodies only
 - `queries.py` — optional; HTTP list/filter query models, only when list has extra filters
-- `methods.py` — async SQL (`AsyncSession`); not imported by the HTTP factory
-- `routers.py` — FastAPI handlers (wire `methods` and/or the CRUD factory)
+- `methods.py` — async SQL (`AsyncSession`)
+- `routers.py` — FastAPI handlers (wire `methods`)
 - `services.py` — `ModuleImpl` (registers routers) plus provider/authenticator implementations; not a `UserService` business layer
 
 Modules: `users`, `agent_configs`, `agent_chats`, `agent_memories`. All mounted under `/api`.
 
-`agent_configs` HTTP CRUD uses `RouteConfig` / `register_routes` in [`src/fivccliche/utils/crud.py`](src/fivccliche/utils/crud.py). `users`, `agent_chats`, and `agent_memories` are hand-written. Shared helpers: [`src/fivccliche/utils/asserts.py`](src/fivccliche/utils/asserts.py), [`src/fivccliche/utils/crud.py`](src/fivccliche/utils/crud.py), [`src/fivccliche/utils/queries.py`](src/fivccliche/utils/queries.py) (dotted JSON for chats, not filter models), [`src/fivccliche/utils/deps.py`](src/fivccliche/utils/deps.py).
+HTTP CRUD is hand-written FastAPI handlers in each module's `routers.py`. Shared helpers: [`src/fivccliche/utils/asserts.py`](src/fivccliche/utils/asserts.py), [`src/fivccliche/utils/queries.py`](src/fivccliche/utils/queries.py) (dotted JSON for chats, not filter models), [`src/fivccliche/utils/deps.py`](src/fivccliche/utils/deps.py).
 
 ### Ownership
 
@@ -107,7 +107,7 @@ Do not wrap, for example:
 - `datetime.now(timezone.utc)`
 - an assert that only forwards error-message strings to another assert
 
-This applies to every refactor, cleanup, and shared-layer extraction. Extract only logic with real rules (uuid/id dual lookup plus user-or-global visibility; HTTP route factories that own auth/404/403/pagination).
+This applies to every refactor, cleanup, and shared-layer extraction. Extract only logic with real rules (uuid/id dual lookup plus user-or-global visibility).
 
 ### Query filter models
 

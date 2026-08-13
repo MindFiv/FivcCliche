@@ -94,7 +94,7 @@ python -m fivccliche.cli run --verbose
 For detailed information, see the documentation in the `docs/` folder:
 
 - **[Getting Started](docs/getting-started.md)** - Install, migrate, run, and authenticate
-- **[Architecture](docs/architecture.md)** - Module layering, ownership, CRUD factory
+- **[Architecture](docs/architecture.md)** - Module layering, ownership, HTTP CRUD
 - **[Scheduled Tasks](docs/scheduler.md)** - Per-module APScheduler integration
 - **[Agent Memories](docs/agent-memories.md)** - Optional Hindsight memory API
 

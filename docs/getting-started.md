@@ -49,6 +49,6 @@ Create and list user-scoped configs under `/api/configs/` (embeddings, models, a
 
 ## Next
 
-- [Architecture](architecture.md) — module layering, ownership, CRUD factory
+- [Architecture](architecture.md) — module layering, ownership, HTTP CRUD
 - [Scheduled Tasks](scheduler.md) — per-module APScheduler jobs
 - [Agent Memories](agent-memories.md) — optional Hindsight memory API
