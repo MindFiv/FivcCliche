@@ -208,6 +208,44 @@ class TestMemorizeMethods:
         )
         assert [c.uuid for c in chats] == [chat_memorable.uuid]
 
+    async def test_list_chats_dedupes_multiple_matching_messages(
+        self, session: AsyncSession, test_user
+    ):
+        chat = await _add_chat(
+            session, test_user.uuid, is_memorable=True, context={"topic": "code"}
+        )
+        await _add_message(
+            session,
+            chat.uuid,
+            query={"text": "first"},
+            reply={"text": "ok"},
+            created_at=_older(hours=26),
+        )
+        await _add_message(
+            session,
+            chat.uuid,
+            query={"text": "second"},
+            reply={"text": "ok"},
+            created_at=_older(hours=25),
+        )
+
+        created_at_to = datetime.now(timezone.utc) - timedelta(hours=24)
+        chats = await methods.list_unmemorized_chats_async(
+            session, created_at_to=created_at_to, limit=50
+        )
+        assert [c.uuid for c in chats] == [chat.uuid]
+
+    def test_list_unmemorized_chats_sql_omits_distinct_on_postgresql(self):
+        from sqlalchemy.dialects import postgresql
+
+        statement = methods._select_unmemorized_chats(
+            created_at_to=datetime.now(timezone.utc),
+            limit=50,
+        )
+        sql = str(statement.compile(dialect=postgresql.dialect())).upper()
+        assert "DISTINCT" not in sql
+        assert "EXISTS" in sql
+
     async def test_create_chat_is_memorable_flag(self, session: AsyncSession, test_user):
         default_chat = await methods.create_chat_async(
             session,

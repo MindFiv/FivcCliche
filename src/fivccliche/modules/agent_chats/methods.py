@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import cast
 
-from sqlalchemy import func, update
+from sqlalchemy import exists, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -261,6 +261,31 @@ async def delete_chat_message_async(
     await session.commit()
 
 
+def _select_unmemorized_chats(*, created_at_to: datetime, limit: int = 50):
+    """Select chats that have aged, completed, unmemorized messages.
+
+    Uses EXISTS rather than JOIN+DISTINCT so PostgreSQL does not compare the
+    ``json`` ``context`` column (which has no equality operator).
+    """
+    return (
+        select(models.UserChat)
+        .where(
+            col(models.UserChat.user_uuid).is_not(None),
+            col(models.UserChat.is_memorable).is_(True),
+            exists(
+                select(1).where(
+                    col(models.UserChatMessage.chat_uuid) == models.UserChat.uuid,
+                    col(models.UserChatMessage.is_memorized).is_(False),
+                    models.UserChatMessage.status == schemas.AgentRunStatus.COMPLETED,
+                    models.UserChatMessage.created_at <= created_at_to,
+                )
+            ),
+        )
+        .order_by(col(models.UserChat.created_at).asc())
+        .limit(limit)
+    )
+
+
 async def list_unmemorized_chats_async(
     session: AsyncSession,
     *,
@@ -273,25 +298,10 @@ async def list_unmemorized_chats_async(
     Only chats with a non-null ``user_uuid`` are returned. Ordering is by chat
     ``created_at`` ascending.
     """
-    statement = (
-        select(models.UserChat)
-        .join(
-            models.UserChatMessage,
-            col(models.UserChatMessage.chat_uuid) == models.UserChat.uuid,
-        )
-        .where(
-            col(models.UserChat.user_uuid).is_not(None),
-            col(models.UserChat.is_memorable).is_(True),
-            col(models.UserChatMessage.is_memorized).is_(False),
-            models.UserChatMessage.status == schemas.AgentRunStatus.COMPLETED,
-            models.UserChatMessage.created_at <= created_at_to,
-        )
-        .distinct()
-        .order_by(col(models.UserChat.created_at).asc())
-        .limit(limit)
+    result = await session.execute(
+        _select_unmemorized_chats(created_at_to=created_at_to, limit=limit)
     )
-    result = await session.execute(statement)
-    return list(result.scalars().unique().all())
+    return list(result.scalars().all())
 
 
 async def list_unmemorized_chat_messages_async(
