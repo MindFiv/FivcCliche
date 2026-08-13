@@ -70,13 +70,11 @@ async def create_user_async(
 )
 async def login_user_async(
     user_login: schemas.UserLogin,
-    session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserLoginResponse:
     """Authenticate a user and return user data with JWT token."""
     credential = await default_auth.create_credential_async(
         user_login.username,
         user_login.password,
-        session=session,
     )
     if not credential:
         raise HTTPException(
@@ -260,7 +258,6 @@ async def impersonate_user_async(
     credential = await default_auth.create_credential_async(
         user.username,
         "",
-        session=session,
         ignore_password=True,
     )
     return schemas.UserLoginResponse(

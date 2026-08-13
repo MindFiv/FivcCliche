@@ -96,8 +96,14 @@ def make_api_client(
         async def override_get_db_session_context_async(session=None):
             yield async_session
 
-        with patch.object(
-            deps, "get_db_session_context_async", override_get_db_session_context_async
+        with (
+            patch.object(
+                deps, "get_db_session_context_async", override_get_db_session_context_async
+            ),
+            patch(
+                "fivccliche.modules.users.services.get_db_session_context_async",
+                override_get_db_session_context_async,
+            ),
         ):
             with TestClient(app) as test_client:
                 test_client.admin_user = admin_user  # type: ignore[attr-defined]

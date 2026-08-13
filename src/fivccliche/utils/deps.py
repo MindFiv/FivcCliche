@@ -172,11 +172,7 @@ async def get_authenticated_user_async(
     auth: IUserAuthenticator = Depends(get_authenticator_async),
 ) -> IUser:
     """Authenticate without holding a request-scoped DB session."""
-    async with get_db_session_context_async() as session:
-        user = await auth.verify_credential_async(
-            credentials.credentials,
-            session=session,
-        )
+    user = await auth.verify_credential_async(credentials.credentials)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -192,14 +188,10 @@ async def get_authenticated_user_optional_async(
     if not credentials:
         return None
 
-    async with get_db_session_context_async() as session:
-        return cast(
-            "IUser | None",
-            await default_auth.verify_credential_async(
-                credentials.credentials,
-                session=session,
-            ),
-        )
+    return cast(
+        "IUser | None",
+        await default_auth.verify_credential_async(credentials.credentials),
+    )
 
 
 async def get_admin_user_async(

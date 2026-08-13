@@ -7,7 +7,6 @@ from fastapi import FastAPI
 from fivcglue import query_component, IComponentSite
 from fivcglue.interfaces.caches import ICache
 from fivcglue.interfaces.configs import IConfig
-from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator, UserCredential
 from fivccliche.services.interfaces.modules import IModule, IModuleJob
@@ -99,11 +98,10 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         password: str | None = None,
         is_superuser: bool = False,
         preferences: dict | None = None,
-        session: AsyncSession | None = None,
         **kwargs,
     ) -> IUser | None:
         """Create a new user."""
-        async with get_db_session_context_async(session) as db_session:
+        async with get_db_session_context_async() as db_session:
             user = await create_user_async(
                 db_session,
                 username=username,
@@ -119,12 +117,11 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         self,
         username: str,
         password: str,
-        session: AsyncSession | None = None,
         ignore_password: bool = False,
         **kwargs,
     ) -> UserCredential | None:
         """Login a user and return a credential."""
-        async with get_db_session_context_async(session) as db_session:
+        async with get_db_session_context_async() as db_session:
             user = await get_user_async(db_session, username=username)
             if user and not ignore_password and not user.check_password(password):
                 user = None
@@ -140,7 +137,6 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         self,
         username: str,
         attributes: dict,
-        session: AsyncSession | None = None,
         **kwargs,
     ) -> UserCredential | None:
         """Create a credential for SSO user.
@@ -151,7 +147,6 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         Args:
             username: Username from SSO provider
             attributes: Additional attributes from SSO provider (may contain email, etc.)
-            session: Database session (optional)
             **kwargs: Additional arguments (ignored)
 
         Returns:
@@ -159,7 +154,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         """
         email = attributes.get("email") or attributes.get("mail")
 
-        async with get_db_session_context_async(session) as db_session:
+        async with get_db_session_context_async() as db_session:
             user = await get_user_async(db_session, username=username)
             if not user:
                 user = await create_user_async(
@@ -176,9 +171,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 await db_session.commit()
             return self._create_access_token(user.uuid) if user else None
 
-    async def verify_credential_async(
-        self, access_token: str, session: AsyncSession | None = None, **kwargs
-    ) -> IUser | None:
+    async def verify_credential_async(self, access_token: str, **kwargs) -> IUser | None:
         """Authenticate a user by token."""
         try:
             user_uuid = self._decode_access_token(access_token)
@@ -189,7 +182,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
             return None
 
         try:
-            async with get_db_session_context_async(session) as db_session:
+            async with get_db_session_context_async() as db_session:
                 user = await get_user_async(db_session, user_uuid=user_uuid)
             if user and not user.is_active:
                 return None

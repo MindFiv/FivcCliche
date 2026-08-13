@@ -6,13 +6,11 @@ from fastapi import (
     status,
     responses,
 )
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator
 from fivccliche.utils.deps import (
     get_authenticator_async,
     get_authenticated_user_optional_async,
-    get_db_session_async,
     get_config_async,
     configs,
 )
@@ -30,7 +28,6 @@ async def login(
     user: IUser = Depends(get_authenticated_user_optional_async),
     auth: IUserAuthenticator = Depends(get_authenticator_async),
     config: configs.IConfig = Depends(get_config_async),
-    session: AsyncSession = Depends(get_db_session_async),
 ):
     # check if user is already logged in
     if user:
@@ -57,7 +54,6 @@ async def login(
     credential = await auth.create_sso_credential_async(
         username=username,
         attributes=attributes or {},
-        session=session,
     )
 
     if not credential:

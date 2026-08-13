@@ -2,7 +2,6 @@ from abc import abstractmethod
 
 from fivcglue import IComponent
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio.session import AsyncSession
 
 
 class UserCredential(BaseModel):
@@ -60,7 +59,6 @@ class IUserAuthenticator(IComponent):
         password: str | None = None,
         is_superuser: bool = False,
         preferences: dict | None = None,
-        session: AsyncSession | None = None,
         **kwargs,  # ignore additional arguments
     ) -> IUser | None:
         """Create a new user."""
@@ -70,7 +68,6 @@ class IUserAuthenticator(IComponent):
         self,
         username: str,
         password: str,
-        session: AsyncSession | None = None,
         **kwargs,  # ignore additional arguments
     ) -> UserCredential | None:
         """Login a user and return a credential."""
@@ -80,7 +77,6 @@ class IUserAuthenticator(IComponent):
         self,
         username: str,
         attributes: dict,
-        session: AsyncSession | None = None,
         **kwargs,  # ignore additional arguments
     ) -> UserCredential | None:
         """Create a credential for SSO user."""
@@ -89,7 +85,6 @@ class IUserAuthenticator(IComponent):
     async def verify_credential_async(
         self,
         access_token: str,
-        session: AsyncSession | None = None,
         **kwargs,  # ignore additional arguments
     ) -> IUser | None:
         """Authenticate a user by token."""
