@@ -1,5 +1,7 @@
 """Agent memories module registration."""
 
+import logging
+
 from fastapi import FastAPI
 from fivcglue import IComponentSite
 
@@ -7,12 +9,14 @@ from fivccliche.services.interfaces.modules import IModule, IModuleJob
 
 from . import routers
 
+logger = logging.getLogger(__name__)
+
 
 class ModuleImpl(IModule):
     """Agent memories module: read-only HTTP API over IUserMemoryProvider."""
 
     def __init__(self, _: IComponentSite, **kwargs):
-        print("agent_memories module initialized.")
+        logger.info("agent_memories module initialized")
 
     @property
     def name(self):
@@ -29,5 +33,5 @@ class ModuleImpl(IModule):
         return None
 
     def mount(self, app: FastAPI, **kwargs) -> None:
-        print("agent_memories module mounted.")
+        logger.info("agent_memories module mounted")
         app.include_router(routers.router_memories, **kwargs)

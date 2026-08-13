@@ -2,11 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from fivccliche.services.interfaces.agent_memories import (
-    IUserMemory,
-    IUserMemoryProvider,
-    MemoryContent,
-)
+from fivccliche.services.interfaces.agent_memories import IUserMemoryProvider
 from fivccliche.utils.deps import (
     IUser,
     get_authenticated_user_async,
@@ -31,17 +27,6 @@ async def get_required_memory_provider_async(
     return memory_provider
 
 
-def _user_memory(
-    memory_provider: IUserMemoryProvider,
-    user: IUser,
-) -> IUserMemory:
-    return memory_provider.get_memory(space_id=user.uuid)
-
-
-def _to_schema(item: MemoryContent) -> schemas.MemoryContentSchema:
-    return schemas.MemoryContentSchema.model_validate(item.model_dump())
-
-
 @router_memories.get(
     "/",
     summary="List memories for the authenticated user.",
@@ -53,11 +38,13 @@ async def list_memories_async(
     user: IUser = Depends(get_authenticated_user_async),
     memory_provider: IUserMemoryProvider = Depends(get_required_memory_provider_async),
 ) -> PaginatedResponse[schemas.MemoryContentSchema]:
-    memory = _user_memory(memory_provider, user)
+    memory = memory_provider.get_memory(space_id=user.uuid)
     result = await memory.list_async(skip=skip, limit=limit)
     return PaginatedResponse(
         total=result.total,
-        results=[_to_schema(item) for item in result.items],
+        results=[
+            schemas.MemoryContentSchema.model_validate(item.model_dump()) for item in result.items
+        ],
     )
 
 
@@ -71,8 +58,10 @@ async def recall_memories_async(
     user: IUser = Depends(get_authenticated_user_async),
     memory_provider: IUserMemoryProvider = Depends(get_required_memory_provider_async),
 ) -> schemas.MemoryRecallResponseSchema:
-    memory = _user_memory(memory_provider, user)
+    memory = memory_provider.get_memory(space_id=user.uuid)
     result = await memory.recall_async(query)
     return schemas.MemoryRecallResponseSchema(
-        results=[_to_schema(item) for item in result.items],
+        results=[
+            schemas.MemoryContentSchema.model_validate(item.model_dump()) for item in result.items
+        ],
     )

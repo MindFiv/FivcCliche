@@ -35,11 +35,6 @@ async def create_user_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> models.User:
     """Create a new user."""
-    if not admin_user:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a admin",
-        )
     # Check if username already exists
     existing_user = await methods.get_user_async(session, username=user_create.username)
     if existing_user:
@@ -104,11 +99,6 @@ async def get_self_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> models.User:
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
     db_user = await methods.get_user_async(session, user_uuid=user.uuid)
     if not db_user:
         raise HTTPException(
@@ -129,11 +119,6 @@ async def update_self_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> models.User:
     """Update the current user's profile."""
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
     db_user = await methods.get_user_async(session, user_uuid=user.uuid)
     if not db_user:
         raise HTTPException(
@@ -177,11 +162,6 @@ async def list_users_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse[schemas.UserRead]:
     """List all users with pagination."""
-    if not admin_user:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a admin",
-        )
     users = await methods.list_users_async(
         session, skip=skip, limit=limit, order_by=order_by.value, order_dir=order_dir.value
     )
@@ -200,12 +180,6 @@ async def get_user_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> models.User:
     """Get a user by ID."""
-    if not admin_user:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a admin",
-        )
-
     user = await methods.get_user_async(session, user_uuid=user_uuid)
     if not user:
         raise HTTPException(
@@ -226,11 +200,6 @@ async def delete_user_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
     """Delete a user."""
-    if not admin_user:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a admin",
-        )
     user = await methods.get_user_async(session, user_uuid=user_uuid)
     if not user:
         raise HTTPException(
@@ -281,11 +250,6 @@ async def impersonate_user_async(
     admin_user: IUser = Depends(get_admin_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserLoginResponse:
-    if not admin_user:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a admin",
-        )
     user = await methods.get_user_async(session, user_uuid=user_uuid)
     if not user:
         raise HTTPException(

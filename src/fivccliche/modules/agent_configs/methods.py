@@ -1,12 +1,75 @@
 """Config service module with functions for config operations."""
 
 from datetime import datetime, timezone
+from typing import Any, TypeVar, cast
 
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, select
+from sqlmodel import SQLModel, col, select
 
 from . import models, schemas
+
+TConfig = TypeVar("TConfig", bound=SQLModel)
+
+
+async def _get_user_scoped_async(
+    session: AsyncSession,
+    model: type[TConfig],
+    user_uuid: str,
+    *,
+    config_uuid: str | None = None,
+    config_id: str | None = None,
+) -> TConfig | None:
+    """Get a user-scoped config by uuid or id (user-owned or global)."""
+    if (config_uuid is None) == (config_id is None):
+        raise ValueError("Exactly one of config_uuid or config_id must be provided")
+
+    table = cast(Any, model)
+    identity = table.uuid == config_uuid if config_uuid is not None else table.id == config_id
+    statement = select(model).where(
+        identity,
+        (table.user_uuid == user_uuid) | (table.user_uuid == None),  # noqa: E711
+    )
+    result = await session.execute(statement)
+    return result.scalars().first()
+
+
+async def _list_user_scoped_async(
+    session: AsyncSession,
+    model: type[TConfig],
+    user_uuid: str,
+    *,
+    skip: int = 0,
+    limit: int = 100,
+    extra_conditions: list | None = None,
+) -> list[TConfig]:
+    """List user-owned and global configs, ordered by id."""
+    table = cast(Any, model)
+    conditions = [(table.user_uuid == user_uuid) | (table.user_uuid == None)]  # noqa: E711
+    if extra_conditions:
+        conditions.extend(extra_conditions)
+    statement = (
+        select(model).where(*conditions).order_by(col(table.id).asc()).offset(skip).limit(limit)
+    )
+    result = await session.execute(statement)
+    return list(result.scalars().all())
+
+
+async def _count_user_scoped_async(
+    session: AsyncSession,
+    model: type[TConfig],
+    user_uuid: str,
+    *,
+    extra_conditions: list | None = None,
+) -> int:
+    """Count user-owned and global configs."""
+    table = cast(Any, model)
+    conditions = [(table.user_uuid == user_uuid) | (table.user_uuid == None)]  # noqa: E711
+    if extra_conditions:
+        conditions.extend(extra_conditions)
+    statement = select(func.count(col(table.uuid))).where(*conditions)
+    result = await session.execute(statement)
+    return result.scalar() or 0
 
 
 # ============================================================================
@@ -47,46 +110,14 @@ async def get_embedding_config_async(
     config_id: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserEmbedding | None:
-    """Get an embedding config by UUID or ID for a specific user.
-
-    Args:
-        session: Database session
-        user_uuid: User UUID for filtering
-        config_uuid: Global unique identifier (optional)
-        config_id: User-scoped identifier (optional)
-
-    Returns:
-        UserEmbedding config or None if not found
-
-    Raises:
-        ValueError: If both or neither config_uuid and config_id are provided
-    """
-    if (config_uuid is None and config_id is None) or (
-        config_uuid is not None and config_id is not None
-    ):
-        raise ValueError("Exactly one of config_uuid or config_id must be provided")
-
-    if config_uuid is not None:
-        # Query by global unique identifier
-        statement = select(models.UserEmbedding).where(
-            (models.UserEmbedding.uuid == config_uuid)
-            & (
-                (models.UserEmbedding.user_uuid == user_uuid)
-                | (models.UserEmbedding.user_uuid == None)  # noqa E711
-            )
-        )
-    else:
-        # Query by user-scoped identifier
-        statement = select(models.UserEmbedding).where(
-            (models.UserEmbedding.id == config_id)
-            & (
-                (models.UserEmbedding.user_uuid == user_uuid)
-                | (models.UserEmbedding.user_uuid == None)  # noqa E711
-            )
-        )
-
-    result = await session.execute(statement)
-    return result.scalars().first()
+    """Get an embedding config by UUID or ID for a specific user."""
+    return await _get_user_scoped_async(
+        session,
+        models.UserEmbedding,
+        user_uuid,
+        config_uuid=config_uuid,
+        config_id=config_id,
+    )
 
 
 async def list_embedding_configs_async(
@@ -97,30 +128,16 @@ async def list_embedding_configs_async(
     **kwargs,  # ignore additional arguments
 ) -> list[models.UserEmbedding]:
     """List all embedding configs for a user with pagination."""
-    statement = (
-        select(models.UserEmbedding)
-        .where(
-            (models.UserEmbedding.user_uuid == user_uuid)
-            | (models.UserEmbedding.user_uuid == None)  # noqa E711
-        )
-        .order_by(col(models.UserEmbedding.id).asc())
-        .offset(skip)
-        .limit(limit)
+    return await _list_user_scoped_async(
+        session, models.UserEmbedding, user_uuid, skip=skip, limit=limit
     )
-    result = await session.execute(statement)
-    return list(result.scalars().all())
 
 
 async def count_embedding_configs_async(
     session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> int:
     """Count the number of embedding configs for a user."""
-    statement = select(func.count(col(models.UserEmbedding.uuid))).where(
-        (models.UserEmbedding.user_uuid == user_uuid)
-        | (models.UserEmbedding.user_uuid == None)  # noqa E711
-    )
-    result = await session.execute(statement)
-    return result.scalar() or 0
+    return await _count_user_scoped_async(session, models.UserEmbedding, user_uuid)
 
 
 async def update_embedding_config_async(
@@ -200,46 +217,10 @@ async def get_llm_config_async(
     config_id: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserLLM | None:
-    """Get an LLM config by UUID or ID for a specific user.
-
-    Args:
-        session: Database session
-        user_uuid: User UUID for filtering
-        config_uuid: Global unique identifier (optional)
-        config_id: User-scoped identifier (optional)
-
-    Returns:
-        UserLLM config or None if not found
-
-    Raises:
-        ValueError: If both or neither config_uuid and config_id are provided
-    """
-    if (config_uuid is None and config_id is None) or (
-        config_uuid is not None and config_id is not None
-    ):
-        raise ValueError("Exactly one of config_uuid or config_id must be provided")
-
-    if config_uuid is not None:
-        # Query by global unique identifier
-        statement = select(models.UserLLM).where(
-            (models.UserLLM.uuid == config_uuid)
-            & (
-                (models.UserLLM.user_uuid == user_uuid)
-                | (models.UserLLM.user_uuid == None)  # noqa E711
-            )
-        )
-    else:
-        # Query by user-scoped identifier
-        statement = select(models.UserLLM).where(
-            (models.UserLLM.id == config_id)
-            & (
-                (models.UserLLM.user_uuid == user_uuid)
-                | (models.UserLLM.user_uuid == None)  # noqa E711
-            )
-        )
-
-    result = await session.execute(statement)
-    return result.scalars().first()
+    """Get an LLM config by UUID or ID for a specific user."""
+    return await _get_user_scoped_async(
+        session, models.UserLLM, user_uuid, config_uuid=config_uuid, config_id=config_id
+    )
 
 
 async def list_llm_configs_async(
@@ -250,29 +231,14 @@ async def list_llm_configs_async(
     **kwargs,  # ignore additional arguments
 ) -> list[models.UserLLM]:
     """List all LLM configs for a user with pagination."""
-    statement = (
-        select(models.UserLLM)
-        .where(
-            (models.UserLLM.user_uuid == user_uuid)
-            | (models.UserLLM.user_uuid == None)  # noqa E711
-        )
-        .order_by(col(models.UserLLM.id).asc())
-        .offset(skip)
-        .limit(limit)
-    )
-    result = await session.execute(statement)
-    return list(result.scalars().all())
+    return await _list_user_scoped_async(session, models.UserLLM, user_uuid, skip=skip, limit=limit)
 
 
 async def count_llm_configs_async(
     session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> int:
     """Count the number of LLM configs for a user."""
-    statement = select(func.count(col(models.UserLLM.uuid))).where(
-        (models.UserLLM.user_uuid == user_uuid) | (models.UserLLM.user_uuid == None)  # noqa E711
-    )
-    result = await session.execute(statement)
-    return result.scalar() or 0
+    return await _count_user_scoped_async(session, models.UserLLM, user_uuid)
 
 
 async def update_llm_config_async(
@@ -355,46 +321,10 @@ async def get_agent_config_async(
     config_id: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserAgent | None:
-    """Get an agent config by UUID or ID for a specific user.
-
-    Args:
-        session: Database session
-        user_uuid: User UUID for filtering
-        config_uuid: Global unique identifier (optional)
-        config_id: User-scoped identifier (optional)
-
-    Returns:
-        UserAgent config or None if not found
-
-    Raises:
-        ValueError: If both or neither config_uuid and config_id are provided
-    """
-    if (config_uuid is None and config_id is None) or (
-        config_uuid is not None and config_id is not None
-    ):
-        raise ValueError("Exactly one of config_uuid or config_id must be provided")
-
-    if config_uuid is not None:
-        # Query by global unique identifier
-        statement = select(models.UserAgent).where(
-            (models.UserAgent.uuid == config_uuid)
-            & (
-                (models.UserAgent.user_uuid == user_uuid)
-                | (models.UserAgent.user_uuid == None)  # noqa E711
-            )
-        )
-    else:
-        # Query by user-scoped identifier
-        statement = select(models.UserAgent).where(
-            (models.UserAgent.id == config_id)
-            & (
-                (models.UserAgent.user_uuid == user_uuid)
-                | (models.UserAgent.user_uuid == None)  # noqa E711
-            )
-        )
-
-    result = await session.execute(statement)
-    return result.scalars().first()
+    """Get an agent config by UUID or ID for a specific user."""
+    return await _get_user_scoped_async(
+        session, models.UserAgent, user_uuid, config_uuid=config_uuid, config_id=config_id
+    )
 
 
 async def list_agent_configs_async(
@@ -405,30 +335,16 @@ async def list_agent_configs_async(
     **kwargs,  # ignore additional arguments
 ) -> list[models.UserAgent]:
     """List all agent configs for a user with pagination."""
-    statement = (
-        select(models.UserAgent)
-        .where(
-            (models.UserAgent.user_uuid == user_uuid)
-            | (models.UserAgent.user_uuid == None)  # noqa E711
-        )
-        .order_by(col(models.UserAgent.id).asc())
-        .offset(skip)
-        .limit(limit)
+    return await _list_user_scoped_async(
+        session, models.UserAgent, user_uuid, skip=skip, limit=limit
     )
-    result = await session.execute(statement)
-    return list(result.scalars().all())
 
 
 async def count_agent_configs_async(
     session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> int:
     """Count the number of agent configs for a user."""
-    statement = select(func.count(col(models.UserAgent.uuid))).where(
-        (models.UserAgent.user_uuid == user_uuid)
-        | (models.UserAgent.user_uuid == None)  # noqa E711
-    )
-    result = await session.execute(statement)
-    return result.scalar() or 0
+    return await _count_user_scoped_async(session, models.UserAgent, user_uuid)
 
 
 async def update_agent_config_async(
@@ -510,46 +426,10 @@ async def get_tool_config_async(
     config_id: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserTool | None:
-    """Get a tool config by UUID or ID for a specific user.
-
-    Args:
-        session: Database session
-        user_uuid: User UUID for filtering
-        config_uuid: Global unique identifier (optional)
-        config_id: User-scoped identifier (optional)
-
-    Returns:
-        UserTool config or None if not found
-
-    Raises:
-        ValueError: If both or neither config_uuid and config_id are provided
-    """
-    if (config_uuid is None and config_id is None) or (
-        config_uuid is not None and config_id is not None
-    ):
-        raise ValueError("Exactly one of config_uuid or config_id must be provided")
-
-    if config_uuid is not None:
-        # Query by global unique identifier
-        statement = select(models.UserTool).where(
-            (models.UserTool.uuid == config_uuid)
-            & (
-                (models.UserTool.user_uuid == user_uuid)
-                | (models.UserTool.user_uuid == None)  # noqa E711
-            )
-        )
-    else:
-        # Query by user-scoped identifier
-        statement = select(models.UserTool).where(
-            (models.UserTool.id == config_id)
-            & (
-                (models.UserTool.user_uuid == user_uuid)
-                | (models.UserTool.user_uuid == None)  # noqa E711
-            )
-        )
-
-    result = await session.execute(statement)
-    return result.scalars().first()
+    """Get a tool config by UUID or ID for a specific user."""
+    return await _get_user_scoped_async(
+        session, models.UserTool, user_uuid, config_uuid=config_uuid, config_id=config_id
+    )
 
 
 async def list_tool_configs_async(
@@ -560,29 +440,16 @@ async def list_tool_configs_async(
     **kwargs,  # ignore additional arguments
 ) -> list[models.UserTool]:
     """List all tool configs for a user with pagination."""
-    statement = (
-        select(models.UserTool)
-        .where(
-            (models.UserTool.user_uuid == user_uuid)
-            | (models.UserTool.user_uuid == None)  # noqa E711
-        )
-        .order_by(col(models.UserTool.id).asc())
-        .offset(skip)
-        .limit(limit)
+    return await _list_user_scoped_async(
+        session, models.UserTool, user_uuid, skip=skip, limit=limit
     )
-    result = await session.execute(statement)
-    return list(result.scalars().all())
 
 
 async def count_tool_configs_async(
     session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> int:
     """Count the number of tool configs for a user."""
-    statement = select(func.count(col(models.UserTool.uuid))).where(
-        (models.UserTool.user_uuid == user_uuid) | (models.UserTool.user_uuid == None)  # noqa E711
-    )
-    result = await session.execute(statement)
-    return result.scalar() or 0
+    return await _count_user_scoped_async(session, models.UserTool, user_uuid)
 
 
 async def update_tool_config_async(
@@ -663,46 +530,10 @@ async def get_skill_config_async(
     config_id: str | None = None,
     **kwargs,  # ignore additional arguments
 ) -> models.UserSkill | None:
-    """Get a skill config by UUID or ID for a specific user.
-
-    Args:
-        session: Database session
-        user_uuid: User UUID for filtering
-        config_uuid: Global unique identifier (optional)
-        config_id: User-scoped identifier (optional)
-
-    Returns:
-        UserSkill config or None if not found
-
-    Raises:
-        ValueError: If both or neither config_uuid and config_id are provided
-    """
-    if (config_uuid is None and config_id is None) or (
-        config_uuid is not None and config_id is not None
-    ):
-        raise ValueError("Exactly one of config_uuid or config_id must be provided")
-
-    if config_uuid is not None:
-        # Query by global unique identifier
-        statement = select(models.UserSkill).where(
-            (models.UserSkill.uuid == config_uuid)
-            & (
-                (models.UserSkill.user_uuid == user_uuid)
-                | (models.UserSkill.user_uuid == None)  # noqa E711
-            )
-        )
-    else:
-        # Query by user-scoped identifier
-        statement = select(models.UserSkill).where(
-            (models.UserSkill.id == config_id)
-            & (
-                (models.UserSkill.user_uuid == user_uuid)
-                | (models.UserSkill.user_uuid == None)  # noqa E711
-            )
-        )
-
-    result = await session.execute(statement)
-    return result.scalars().first()
+    """Get a skill config by UUID or ID for a specific user."""
+    return await _get_user_scoped_async(
+        session, models.UserSkill, user_uuid, config_uuid=config_uuid, config_id=config_id
+    )
 
 
 async def list_skill_configs_async(
@@ -713,30 +544,16 @@ async def list_skill_configs_async(
     **kwargs,  # ignore additional arguments
 ) -> list[models.UserSkill]:
     """List all skill configs for a user with pagination."""
-    statement = (
-        select(models.UserSkill)
-        .where(
-            (models.UserSkill.user_uuid == user_uuid)
-            | (models.UserSkill.user_uuid == None)  # noqa E711
-        )
-        .order_by(col(models.UserSkill.id).asc())
-        .offset(skip)
-        .limit(limit)
+    return await _list_user_scoped_async(
+        session, models.UserSkill, user_uuid, skip=skip, limit=limit
     )
-    result = await session.execute(statement)
-    return list(result.scalars().all())
 
 
 async def count_skill_configs_async(
     session: AsyncSession, user_uuid: str, **kwargs  # ignore additional arguments
 ) -> int:
     """Count the number of skill configs for a user."""
-    statement = select(func.count(col(models.UserSkill.uuid))).where(
-        (models.UserSkill.user_uuid == user_uuid)
-        | (models.UserSkill.user_uuid == None)  # noqa E711
-    )
-    result = await session.execute(statement)
-    return result.scalar() or 0
+    return await _count_user_scoped_async(session, models.UserSkill, user_uuid)
 
 
 async def update_skill_config_async(
@@ -810,30 +627,9 @@ async def get_question_async(
     **kwargs,  # ignore additional arguments
 ) -> models.UserQuestion | None:
     """Get a question config by UUID or ID for a specific user."""
-    if (config_uuid is None and config_id is None) or (
-        config_uuid is not None and config_id is not None
-    ):
-        raise ValueError("Exactly one of config_uuid or config_id must be provided")
-
-    if config_uuid is not None:
-        statement = select(models.UserQuestion).where(
-            (models.UserQuestion.uuid == config_uuid)
-            & (
-                (models.UserQuestion.user_uuid == user_uuid)
-                | (models.UserQuestion.user_uuid == None)  # noqa E711
-            )
-        )
-    else:
-        statement = select(models.UserQuestion).where(
-            (models.UserQuestion.id == config_id)
-            & (
-                (models.UserQuestion.user_uuid == user_uuid)
-                | (models.UserQuestion.user_uuid == None)  # noqa E711
-            )
-        )
-
-    result = await session.execute(statement)
-    return result.scalars().first()
+    return await _get_user_scoped_async(
+        session, models.UserQuestion, user_uuid, config_uuid=config_uuid, config_id=config_id
+    )
 
 
 async def list_questions_async(
@@ -845,22 +641,15 @@ async def list_questions_async(
     **kwargs,  # ignore additional arguments
 ) -> list[models.UserQuestion]:
     """List all question configs for a user with pagination."""
-    conditions = [
-        (models.UserQuestion.user_uuid == user_uuid)
-        | (models.UserQuestion.user_uuid == None)  # noqa E711
-    ]
-    if is_active is not None:
-        conditions.append(models.UserQuestion.is_active == is_active)
-
-    statement = (
-        select(models.UserQuestion)
-        .where(*conditions)
-        .order_by(col(models.UserQuestion.id).asc())
-        .offset(skip)
-        .limit(limit)
+    extra = [models.UserQuestion.is_active == is_active] if is_active is not None else None
+    return await _list_user_scoped_async(
+        session,
+        models.UserQuestion,
+        user_uuid,
+        skip=skip,
+        limit=limit,
+        extra_conditions=extra,
     )
-    result = await session.execute(statement)
-    return list(result.scalars().all())
 
 
 async def count_questions_async(
@@ -870,16 +659,10 @@ async def count_questions_async(
     **kwargs,  # ignore additional arguments
 ) -> int:
     """Count the number of question configs for a user."""
-    conditions = [
-        (models.UserQuestion.user_uuid == user_uuid)
-        | (models.UserQuestion.user_uuid == None)  # noqa E711
-    ]
-    if is_active is not None:
-        conditions.append(models.UserQuestion.is_active == is_active)
-
-    statement = select(func.count(col(models.UserQuestion.uuid))).where(*conditions)
-    result = await session.execute(statement)
-    return result.scalar() or 0
+    extra = [models.UserQuestion.is_active == is_active] if is_active is not None else None
+    return await _count_user_scoped_async(
+        session, models.UserQuestion, user_uuid, extra_conditions=extra
+    )
 
 
 async def update_question_async(

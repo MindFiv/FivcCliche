@@ -1464,66 +1464,22 @@ class MockUserChatContext(IUserChatContext):
 
 
 class TestUserChatContextProvider:
-    """Test cases for UserChatProviderImpl.get_chat_context()."""
+    """Stub: get_chat_context is a seam for future chat tools and currently returns None."""
 
-    @pytest.fixture
-    def provider(self):
-        """Create a provider instance for testing."""
-        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
+    async def test_get_chat_context_is_stub(self, session: AsyncSession, test_user):
         from unittest.mock import Mock
 
-        component_site = Mock()
-        return UserChatProviderImpl(component_site)
+        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
 
-    async def test_get_chat_context_returns_none_by_default(
-        self, provider, session: AsyncSession, test_user
-    ):
-        """Test that get_chat_context returns None by default (stub implementation)."""
-        context = provider.get_chat_context(
-            user_uuid=test_user.uuid,
-            session=session,
+        provider = UserChatProviderImpl(Mock())
+        assert (
+            provider.get_chat_context(
+                user_uuid=test_user.uuid,
+                session=session,
+                custom_key="ignored",
+            )
+            is None
         )
-        assert context is None
-
-    async def test_get_chat_context_with_user_uuid(
-        self, provider, session: AsyncSession, test_user
-    ):
-        """Test that get_chat_context accepts user_uuid parameter."""
-        # Should not raise an error
-        context = provider.get_chat_context(
-            user_uuid=test_user.uuid,
-            session=session,
-        )
-        assert context is None
-
-    async def test_get_chat_context_with_session(self, provider, session: AsyncSession, test_user):
-        """Test that get_chat_context accepts session parameter."""
-        # Should not raise an error
-        context = provider.get_chat_context(
-            user_uuid=test_user.uuid,
-            session=session,
-        )
-        assert context is None
-
-    async def test_get_chat_context_with_kwargs(self, provider, session: AsyncSession, test_user):
-        """Test that get_chat_context accepts additional kwargs."""
-        # Should not raise an error
-        context = provider.get_chat_context(
-            user_uuid=test_user.uuid,
-            session=session,
-            custom_key="custom_value",
-            another_key=123,
-        )
-        assert context is None
-
-    async def test_get_chat_context_return_type(self, provider, session: AsyncSession, test_user):
-        """Test that get_chat_context return type is IUserChatContext | None."""
-        context = provider.get_chat_context(
-            user_uuid=test_user.uuid,
-            session=session,
-        )
-        # Should be None or implement IUserChatContext
-        assert context is None or isinstance(context, IUserChatContext)
 
 
 # ============================================================================

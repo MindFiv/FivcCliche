@@ -1,111 +1,15 @@
 """Integration tests for user API endpoints."""
 
-import os
-import tempfile
-from pathlib import Path
-from contextlib import asynccontextmanager
-from unittest.mock import patch
-
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import NullPool
-from sqlmodel import SQLModel
 
-from fivccliche.utils.deps import get_db_session_async
-from fivccliche.utils import deps
-from fivccliche.services.implements.modules import ModuleSiteImpl
-from fivcglue.implements.utils import load_component_site
+from tests.conftest import make_api_client
 
 
 @pytest.fixture
 def client():
     """Create a test client with temporary database and admin user."""
-    import asyncio
-    from fivccliche.modules.users import methods
-
-    # Create a temporary file for the database
-    temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
-    temp_db.close()
-    database_url = f"sqlite+aiosqlite:///{temp_db.name}"
-
-    # Create engine and tables
-    async def create_tables():
-        engine = create_async_engine(
-            database_url,
-            connect_args={"check_same_thread": False},
-            poolclass=NullPool,
-        )
-        async with engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
-        return engine
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        engine = loop.run_until_complete(create_tables())
-
-        async_session = AsyncSession(engine, expire_on_commit=False)
-
-        # Load components
-        components_path = os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "src",
-            "fivccliche",
-            "settings",
-            "services.yml",
-        )
-        component_site = load_component_site(filename=components_path, fmt="yaml")
-        module_site = ModuleSiteImpl(component_site, modules=["users"])
-        app = module_site.create_application()
-
-        # Override the database dependency with async generator
-        async def override_get_db_session_async():
-            yield async_session
-
-        app.dependency_overrides[get_db_session_async] = override_get_db_session_async
-
-        # Create an admin user for testing
-        async def create_admin_user():
-            admin_user = await methods.create_user_async(
-                async_session,
-                username="admin",
-                email="admin@example.com",
-                password="admin123",
-                is_superuser=True,
-            )
-            return admin_user
-
-        admin_user = loop.run_until_complete(create_admin_user())
-
-        @asynccontextmanager
-        async def override_get_db_session_context_async(session=None):
-            yield async_session
-
-        with patch.object(
-            deps, "get_db_session_context_async", override_get_db_session_context_async
-        ):
-            with TestClient(app) as test_client:
-                # Store admin user and session in test_client for test access
-                test_client.admin_user = admin_user
-                test_client.async_session = async_session
-                test_client.loop = loop
-                yield test_client
-
-        # Cleanup
-        async def cleanup():
-            await async_session.close()
-            await engine.dispose()
-
-        loop.run_until_complete(cleanup())
-    finally:
-        loop.close()
-        # Clean up the temporary database file
-        try:
-            Path(temp_db.name).unlink()
-        except Exception:
-            pass
+    yield from make_api_client(["users"])
 
 
 class TestUsersAPI:

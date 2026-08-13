@@ -1,4 +1,4 @@
-import json
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import cast
 
@@ -16,6 +16,8 @@ from fivccliche.utils.deps import get_db_session_context_async
 from .models import User
 from .methods import create_user_async, get_user_async
 from .routers import router
+
+logger = logging.getLogger(__name__)
 
 
 class UserImpl(IUser):
@@ -51,7 +53,7 @@ class UserAuthenticatorImpl(IUserAuthenticator):
     """User authenticator implementation."""
 
     def __init__(self, component_site: IComponentSite, **kwargs):
-        print("users authenticator initialized...")
+        logger.info("users authenticator initialized")
         self.cache = query_component(component_site, ICache)
         config = query_component(component_site, IConfig)
         config = config.get_session("auth")
@@ -101,21 +103,9 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         **kwargs,
     ) -> IUser | None:
         """Create a new user."""
-        if session:
+        async with get_db_session_context_async(session) as db_session:
             user = await create_user_async(
-                session,
-                username=username,
-                email=email,
-                full_name=full_name,
-                password=password,
-                is_superuser=is_superuser,
-                preferences=preferences,
-            )
-            return UserImpl(user) if user else None
-
-        async with get_db_session_context_async() as session:
-            user = await create_user_async(
-                session,
+                db_session,
                 username=username,
                 email=email,
                 full_name=full_name,
@@ -134,28 +124,16 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         **kwargs,
     ) -> UserCredential | None:
         """Login a user and return a credential."""
-        if session:
-            user = await get_user_async(session, username=username)
+        async with get_db_session_context_async(session) as db_session:
+            user = await get_user_async(db_session, username=username)
             if user and not ignore_password and not user.check_password(password):
                 user = None
             if user and not user.is_active:
                 user = None
             if user:
                 user.signed_in_at = datetime.now(timezone.utc)
-                session.add(user)
-                await session.commit()
-            return self._create_access_token(user.uuid) if user else None
-
-        async with get_db_session_context_async() as session:
-            user = await get_user_async(session, username=username)
-            if user and not ignore_password and not user.check_password(password):
-                user = None
-            if user and not user.is_active:
-                user = None
-            if user:
-                user.signed_in_at = datetime.now(timezone.utc)
-                session.add(user)
-                await session.commit()
+                db_session.add(user)
+                await db_session.commit()
             return self._create_access_token(user.uuid) if user else None
 
     async def create_sso_credential_async(
@@ -179,17 +157,13 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         Returns:
             UserCredential if successful, None otherwise
         """
-        # Extract email from attributes if available
         email = attributes.get("email") or attributes.get("mail")
 
-        if session:
-            # Try to get existing user
-            user = await get_user_async(session, username=username)
-
-            # Create user if doesn't exist
+        async with get_db_session_context_async(session) as db_session:
+            user = await get_user_async(db_session, username=username)
             if not user:
                 user = await create_user_async(
-                    session,
+                    db_session,
                     username=username,
                     email=email,
                     password=None,  # SSO users don't have passwords
@@ -198,28 +172,8 @@ class UserAuthenticatorImpl(IUserAuthenticator):
 
             if user:
                 user.signed_in_at = datetime.now(timezone.utc)
-                session.add(user)
-                await session.commit()
-            return self._create_access_token(user.uuid) if user else None
-
-        async with get_db_session_context_async() as session:
-            # Try to get existing user
-            user = await get_user_async(session, username=username)
-
-            # Create user if doesn't exist
-            if not user:
-                user = await create_user_async(
-                    session,
-                    username=username,
-                    email=email,
-                    password=None,  # SSO users don't have passwords
-                    is_superuser=False,
-                )
-
-            if user:
-                user.signed_in_at = datetime.now(timezone.utc)
-                session.add(user)
-                await session.commit()
+                db_session.add(user)
+                await db_session.commit()
             return self._create_access_token(user.uuid) if user else None
 
     async def verify_credential_async(
@@ -234,45 +188,22 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         if user_uuid is None:
             return None
 
-        user = None
-        user_info = self.cache.get_value(f"user: {user_uuid}")
-        if user_info:
-            user_info = json.loads(user_info)
-            user = User(**user_info)
-
         try:
-            if session:
-                user = await get_user_async(session, user_uuid=user_uuid)
-
-            else:
-                async with get_db_session_context_async() as session:
-                    user = await get_user_async(session, user_uuid=user_uuid)
-
-            # Block inactive users
+            async with get_db_session_context_async(session) as db_session:
+                user = await get_user_async(db_session, user_uuid=user_uuid)
             if user and not user.is_active:
                 return None
-
             return UserImpl(user) if user else None
-
-        except Exception as e:
-            # do nothing
-            print(e)
+        except Exception:
+            logger.exception("Failed to verify credential")
             return None
-
-        finally:
-            if user:
-                self.cache.set_value(
-                    f"user: {user.uuid}",
-                    user.model_dump_json().encode("utf-8"),
-                    expire=timedelta(hours=self.token_expire_hours),
-                )
 
 
 class ModuleImpl(IModule):
     """User module implementation."""
 
     def __init__(self, _: IComponentSite, **kwargs):
-        print("users module initialized...")
+        logger.info("users module initialized")
 
     @property
     def name(self):
@@ -289,5 +220,5 @@ class ModuleImpl(IModule):
         return None
 
     def mount(self, app: FastAPI, **kwargs) -> None:
-        print("users module mounted.")
+        logger.info("users module mounted")
         app.include_router(router, **kwargs)

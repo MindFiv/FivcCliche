@@ -30,6 +30,7 @@ from fivcplayground.skills.types import SkillConfig
 class UserEmbeddingSchema(EmbeddingConfig):
     """Schema for reading embedding config data (response)."""
 
+    api_key: str | None = Field(default=None, exclude=True)
     uuid: str | None = Field(default=None, description="Embedding config UUID (globally unique)")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
     updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
@@ -43,6 +44,7 @@ class UserEmbeddingSchema(EmbeddingConfig):
 class UserLLMSchema(ModelConfig):
     """Schema for reading LLM config data (response)."""
 
+    api_key: str | None = Field(default=None, exclude=True)
     uuid: str | None = Field(default=None, description="LLM config UUID (globally unique)")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
     updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")

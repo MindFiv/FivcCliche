@@ -1,120 +1,15 @@
 """Integration tests for configs API endpoints."""
 
-import os
-import tempfile
-from contextlib import asynccontextmanager
-from pathlib import Path
-from unittest.mock import patch
-
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import NullPool
-from sqlmodel import SQLModel
 
-from fivccliche.utils.deps import get_db_session_async
-from fivccliche.utils import deps
-from fivccliche.services.implements.modules import ModuleSiteImpl
-from fivcglue.implements.utils import load_component_site
+from tests.conftest import make_api_client
 
 
 @pytest.fixture
 def client():
     """Create a test client with temporary database and admin user."""
-    import asyncio
-    from fivccliche.modules.users import methods
-
-    # Import models to ensure they're registered with SQLModel
-    from fivccliche.modules.users.models import User  # noqa: F401
-    from fivccliche.modules.agent_configs.models import (  # noqa: F401
-        UserEmbedding,
-        UserLLM,
-        UserAgent,
-        UserTool,
-        UserQuestion,
-    )
-
-    # Create a temporary file for the database
-    temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
-    temp_db.close()
-    database_url = f"sqlite+aiosqlite:///{temp_db.name}"
-
-    # Create engine and tables
-    async def create_tables():
-        engine = create_async_engine(
-            database_url,
-            connect_args={"check_same_thread": False},
-            poolclass=NullPool,
-        )
-        async with engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
-        return engine
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        engine = loop.run_until_complete(create_tables())
-        async_session = AsyncSession(engine, expire_on_commit=False)
-
-        # Load components
-        components_path = os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "src",
-            "fivccliche",
-            "settings",
-            "services.yml",
-        )
-        component_site = load_component_site(filename=components_path, fmt="yaml")
-        module_site = ModuleSiteImpl(component_site, modules=["users", "agent_configs"])
-        app = module_site.create_application()
-
-        # Override the database dependency
-        async def override_get_db_session_async():
-            yield async_session
-
-        app.dependency_overrides[get_db_session_async] = override_get_db_session_async
-
-        # Create an admin user for testing
-        async def create_admin_user():
-            admin_user = await methods.create_user_async(
-                async_session,
-                username="admin",
-                email="admin@example.com",
-                password="admin123",
-                is_superuser=True,
-            )
-            return admin_user
-
-        admin_user = loop.run_until_complete(create_admin_user())
-
-        @asynccontextmanager
-        async def override_get_db_session_context_async(session=None):
-            yield async_session
-
-        with patch.object(
-            deps, "get_db_session_context_async", override_get_db_session_context_async
-        ):
-            with TestClient(app) as test_client:
-                # Store admin user and session in test_client for test access
-                test_client.admin_user = admin_user
-                test_client.async_session = async_session
-                test_client.loop = loop
-                yield test_client
-
-        # Cleanup
-        async def cleanup():
-            await async_session.close()
-            await engine.dispose()
-
-        loop.run_until_complete(cleanup())
-    finally:
-        loop.close()
-        # Clean up the temporary database file
-        try:
-            Path(temp_db.name).unlink()
-        except Exception:
-            pass
+    yield from make_api_client(["users", "agent_configs"])
 
 
 @pytest.fixture
@@ -2162,274 +2057,88 @@ class TestQuestionConfigAPI:
         assert data["user_uuid"] is None or isinstance(data["user_uuid"], str)
 
 
-class TestConfigsAuthorizationEmbedding:
-    """Test authorization for embedding config endpoints."""
-
-    def test_user_cannot_update_other_user_embedding_config(
-        self, client: TestClient, auth_token: str, other_user_token: str
-    ):
-        """Test that user cannot update another user's embedding config."""
-        # Create config as auth_token user
-        create_response = client.post(
-            "/configs/embeddings/",
-            headers={"Authorization": f"Bearer {auth_token}"},
-            json={
-                "id": "emb-auth-user",
-                "provider": "openai",
-                "model": "text-embedding-3-small",
-                "api_key": "test-key",
-            },
-        )
-        assert create_response.status_code == 201
-        config_uuid = create_response.json()["uuid"]
-
-        # Try to update as other_user_token - should get 404 because other user can't see it
-        response = client.patch(
-            f"/configs/embeddings/{config_uuid}",
-            headers={"Authorization": f"Bearer {other_user_token}"},
-            json={
-                "id": "emb-auth-user",
-                "provider": "openai",
-                "model": "text-embedding-3-small",
-                "api_key": "test-key",
-                "description": "Hacked",
-            },
-        )
-        # Other user shouldn't be able to find the config, so 404 is correct
-        assert response.status_code == 404
-
-    def test_user_cannot_delete_other_user_embedding_config(
-        self, client: TestClient, auth_token: str, other_user_token: str
-    ):
-        """Test that user cannot delete another user's embedding config."""
-        # Create config as auth_token user
-        create_response = client.post(
-            "/configs/embeddings/",
-            headers={"Authorization": f"Bearer {auth_token}"},
-            json={
-                "id": "emb-delete-auth",
-                "provider": "openai",
-                "model": "text-embedding-3-small",
-                "api_key": "test-key",
-            },
-        )
-        assert create_response.status_code == 201
-        config_uuid = create_response.json()["uuid"]
-
-        # Try to delete as other_user_token - should get 404 because other user can't see it
-        response = client.delete(
-            f"/configs/embeddings/{config_uuid}",
-            headers={"Authorization": f"Bearer {other_user_token}"},
-        )
-        # Other user shouldn't be able to find the config, so 404 is correct
-        assert response.status_code == 404
-
-
-class TestConfigsAuthorizationLLM:
-    """Test authorization for LLM config endpoints."""
-
-    def test_user_cannot_update_other_user_llm_config(
-        self, client: TestClient, auth_token: str, other_user_token: str
-    ):
-        """Test that user cannot update another user's LLM config."""
-        # Create config as auth_token user
-        create_response = client.post(
-            "/configs/models/",
-            headers={"Authorization": f"Bearer {auth_token}"},
-            json={
-                "id": "llm-auth-user",
-                "provider": "openai",
-                "model": "gpt-4",
-                "api_key": "test-key",
-            },
-        )
-        assert create_response.status_code == 201
-        config_uuid = create_response.json()["uuid"]
-
-        # Try to update as other_user_token - should get 404 because other user can't see it
-        response = client.patch(
-            f"/configs/models/{config_uuid}",
-            headers={"Authorization": f"Bearer {other_user_token}"},
-            json={
-                "id": "llm-auth-user",
-                "provider": "openai",
-                "model": "gpt-4",
-                "api_key": "test-key",
-                "description": "Hacked",
-            },
-        )
-        # Other user shouldn't be able to find the config, so 404 is correct
-        assert response.status_code == 404
-
-    def test_user_cannot_delete_other_user_llm_config(
-        self, client: TestClient, auth_token: str, other_user_token: str
-    ):
-        """Test that user cannot delete another user's LLM config."""
-        # Create config as auth_token user
-        create_response = client.post(
-            "/configs/models/",
-            headers={"Authorization": f"Bearer {auth_token}"},
-            json={
-                "id": "llm-delete-auth",
-                "provider": "openai",
-                "model": "gpt-4",
-                "api_key": "test-key",
-            },
-        )
-        assert create_response.status_code == 201
-        config_uuid = create_response.json()["uuid"]
-
-        # Try to delete as other_user_token - should get 404 because other user can't see it
-        response = client.delete(
-            f"/configs/models/{config_uuid}",
-            headers={"Authorization": f"Bearer {other_user_token}"},
-        )
-        # Other user shouldn't be able to find the config, so 404 is correct
-        assert response.status_code == 404
-
-
-class TestConfigsAuthorizationAgent:
-    """Test authorization for agent config endpoints."""
-
-    def test_user_cannot_update_other_user_agent_config(
-        self, client: TestClient, auth_token: str, other_user_token: str
-    ):
-        """Test that user cannot update another user's agent config."""
-        # First create an LLM config for the agent to reference
-        llm_response = client.post(
-            "/configs/models/",
-            headers={"Authorization": f"Bearer {auth_token}"},
-            json={
+CONFIG_OWNERSHIP_CASES = [
+    pytest.param(
+        "/configs/embeddings/",
+        {
+            "id": "owned-config",
+            "provider": "openai",
+            "model": "text-embedding-3-small",
+            "api_key": "test-key",
+        },
+        {},
+        id="embedding",
+    ),
+    pytest.param(
+        "/configs/models/",
+        {
+            "id": "owned-config",
+            "provider": "openai",
+            "model": "gpt-4",
+            "api_key": "test-key",
+        },
+        {},
+        id="llm",
+    ),
+    pytest.param(
+        "/configs/agents/",
+        {"id": "owned-config", "model_id": "llm-for-agent"},
+        {
+            "/configs/models/": {
                 "id": "llm-for-agent",
                 "provider": "openai",
                 "model": "gpt-4",
                 "api_key": "test-key",
-            },
-        )
-        assert llm_response.status_code == 201
+            }
+        },
+        id="agent",
+    ),
+    pytest.param(
+        "/configs/tools/",
+        {
+            "id": "owned-config",
+            "transport": "stdio",
+            "description": "Test tool",
+            "command": "python",
+        },
+        {},
+        id="tool",
+    ),
+]
 
-        # Create agent config as auth_token user
-        create_response = client.post(
-            "/configs/agents/",
-            headers={"Authorization": f"Bearer {auth_token}"},
-            json={
-                "id": "agent-auth-user",
-                "model_id": "llm-for-agent",
-            },
-        )
-        assert create_response.status_code == 201
-        config_uuid = create_response.json()["uuid"]
 
-        # Try to update as other_user_token - should get 404 because other user can't see it
+@pytest.mark.parametrize(("path", "payload", "setup"), CONFIG_OWNERSHIP_CASES)
+class TestConfigsAuthorization:
+    """Cross-type: a user cannot update or delete another user's config."""
+
+    def _create_owned(self, client, auth_token, path, payload, setup):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        for setup_path, setup_payload in setup.items():
+            response = client.post(setup_path, headers=headers, json=setup_payload)
+            assert response.status_code == 201
+        response = client.post(path, headers=headers, json=payload)
+        assert response.status_code == 201
+        return response.json()["uuid"]
+
+    def test_user_cannot_update_other_user_config(
+        self, client: TestClient, auth_token: str, other_user_token: str, path, payload, setup
+    ):
+        config_uuid = self._create_owned(client, auth_token, path, payload, setup)
         response = client.patch(
-            f"/configs/agents/{config_uuid}",
+            f"{path}{config_uuid}",
             headers={"Authorization": f"Bearer {other_user_token}"},
-            json={
-                "id": "agent-auth-user",
-                "model_id": "llm-for-agent",
-                "description": "Hacked",
-            },
+            json={**payload, "description": "Hacked"},
         )
-        # Other user shouldn't be able to find the config, so 404 is correct
         assert response.status_code == 404
 
-    def test_user_cannot_delete_other_user_agent_config(
-        self, client: TestClient, auth_token: str, other_user_token: str
+    def test_user_cannot_delete_other_user_config(
+        self, client: TestClient, auth_token: str, other_user_token: str, path, payload, setup
     ):
-        """Test that user cannot delete another user's agent config."""
-        # First create an LLM config for the agent to reference
-        llm_response = client.post(
-            "/configs/models/",
-            headers={"Authorization": f"Bearer {auth_token}"},
-            json={
-                "id": "llm-for-agent-delete",
-                "provider": "openai",
-                "model": "gpt-4",
-                "api_key": "test-key",
-            },
-        )
-        assert llm_response.status_code == 201
-
-        # Create agent config as auth_token user
-        create_response = client.post(
-            "/configs/agents/",
-            headers={"Authorization": f"Bearer {auth_token}"},
-            json={
-                "id": "agent-delete-auth",
-                "model_id": "llm-for-agent-delete",
-            },
-        )
-        assert create_response.status_code == 201
-        config_uuid = create_response.json()["uuid"]
-
-        # Try to delete as other_user_token - should get 404 because other user can't see it
+        config_uuid = self._create_owned(client, auth_token, path, payload, setup)
         response = client.delete(
-            f"/configs/agents/{config_uuid}",
+            f"{path}{config_uuid}",
             headers={"Authorization": f"Bearer {other_user_token}"},
         )
-        # Other user shouldn't be able to find the config, so 404 is correct
-        assert response.status_code == 404
-
-
-class TestConfigsAuthorizationTool:
-    """Test authorization for tool config endpoints."""
-
-    def test_user_cannot_update_other_user_tool_config(
-        self, client: TestClient, auth_token: str, other_user_token: str
-    ):
-        """Test that user cannot update another user's tool config."""
-        # Create config as auth_token user with all required fields
-        create_response = client.post(
-            "/configs/tools/",
-            headers={"Authorization": f"Bearer {auth_token}"},
-            json={
-                "id": "tool-auth-user",
-                "transport": "stdio",
-                "description": "Test tool",
-                "command": "python",
-            },
-        )
-        assert create_response.status_code == 201
-        config_uuid = create_response.json()["uuid"]
-
-        # Try to update as other_user_token - should get 404 because other user can't see it
-        response = client.patch(
-            f"/configs/tools/{config_uuid}",
-            headers={"Authorization": f"Bearer {other_user_token}"},
-            json={
-                "id": "tool-auth-user",
-                "transport": "sse",
-                "description": "Hacked",
-                "command": "node",
-            },
-        )
-        # Other user shouldn't be able to find the config, so 404 is correct
-        assert response.status_code == 404
-
-    def test_user_cannot_delete_other_user_tool_config(
-        self, client: TestClient, auth_token: str, other_user_token: str
-    ):
-        """Test that user cannot delete another user's tool config."""
-        # Create config as auth_token user with all required fields
-        create_response = client.post(
-            "/configs/tools/",
-            headers={"Authorization": f"Bearer {auth_token}"},
-            json={
-                "id": "tool-delete-auth",
-                "transport": "stdio",
-                "description": "Test tool",
-                "command": "python",
-            },
-        )
-        assert create_response.status_code == 201
-        config_uuid = create_response.json()["uuid"]
-
-        # Try to delete as other_user_token - should get 404 because other user can't see it
-        response = client.delete(
-            f"/configs/tools/{config_uuid}",
-            headers={"Authorization": f"Bearer {other_user_token}"},
-        )
-        # Other user shouldn't be able to find the config, so 404 is correct
         assert response.status_code == 404
 
 
@@ -2751,7 +2460,7 @@ class TestConfigsBackwardCompatibilityEmbedding:
         assert "description" in data
         assert "provider" in data
         assert "model" in data
-        assert "api_key" in data
+        assert "api_key" not in data
         assert "base_url" in data
         assert "dimension" in data
         assert "user_uuid" in data
@@ -2775,7 +2484,7 @@ class TestConfigsBackwardCompatibilityEmbedding:
         assert isinstance(data["id"], str)
         assert isinstance(data["provider"], str)
         assert isinstance(data["model"], str)
-        assert data["api_key"] is None  # Security: api_key should never be returned in responses
+        assert "api_key" not in data
         assert isinstance(data["dimension"], int)
         assert data["user_uuid"] is None or isinstance(data["user_uuid"], str)
 
@@ -2829,7 +2538,7 @@ class TestConfigsBackwardCompatibilityLLM:
         assert "description" in data
         assert "provider" in data
         assert "model" in data
-        assert "api_key" in data
+        assert "api_key" not in data
         assert "base_url" in data
         assert "temperature" in data
         assert "max_tokens" in data
@@ -2857,7 +2566,7 @@ class TestConfigsBackwardCompatibilityLLM:
         assert isinstance(data["id"], str)
         assert isinstance(data["provider"], str)
         assert isinstance(data["model"], str)
-        assert data["api_key"] is None  # Security: api_key should never be returned in responses
+        assert "api_key" not in data
         assert isinstance(data["temperature"], float)
         assert isinstance(data["max_tokens"], int)
         assert isinstance(data["enable_thinking"], bool)

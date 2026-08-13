@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
+from fivccliche.utils.asserts import assert_user_owns_resource
 from fivccliche.utils.chats import ChatTask
 from fivccliche.utils.deps import (
     IUser,
@@ -78,11 +79,6 @@ async def list_chats_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse[schemas.UserChatSchema]:
     """List all chat sessions for the authenticated user."""
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
     try:
         json_filters = parse_dotted_json_filters(
             request.query_params.multi_items(),
@@ -124,11 +120,6 @@ async def get_chat_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserChatSchema:
     """Get a chat session by ID."""
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
     chat = await methods.get_chat_async(session, chat_uuid, user.uuid)
     if not chat:
         raise HTTPException(
@@ -149,11 +140,6 @@ async def delete_chat_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
     """Delete a chat session."""
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
     chat = await methods.get_chat_async(session, chat_uuid, user.uuid)
     if not chat:
         raise HTTPException(
@@ -161,18 +147,12 @@ async def delete_chat_async(
             detail="Chat not found",
         )
 
-    # Authorization check: users can only delete their own chats
-    # Only superusers can delete global chats (where user_uuid is None)
-    if chat.user_uuid is None and not user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot delete global chats",
-        )
-    if chat.user_uuid is not None and chat.user_uuid != user.uuid:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot delete other user's chats",
-        )
+    assert_user_owns_resource(
+        user,
+        chat.user_uuid,
+        global_detail="Cannot delete global chats",
+        other_detail="Cannot delete other user's chats",
+    )
 
     await methods.delete_chat_async(session, chat)
 
@@ -201,12 +181,6 @@ async def create_chat_messages_async(
     mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
 ) -> responses.StreamingResponse:
     """Send a new message to an existing chat session."""
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
-
     # Verify chat exists and user owns it
     chat = await methods.get_chat_async(session, chat_uuid, user.uuid)
     if not chat:
@@ -215,22 +189,15 @@ async def create_chat_messages_async(
             detail="Chat not found",
         )
 
-    # Authorization check: users can only message their own chats
-    # Only superusers can message global chats (where user_uuid is None)
-    if chat.user_uuid is None and not user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot message global chats",
-        )
-    if chat.user_uuid is not None and chat.user_uuid != user.uuid:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot message other user's chats",
-        )
+    assert_user_owns_resource(
+        user,
+        chat.user_uuid,
+        global_detail="Cannot message global chats",
+        other_detail="Cannot message other user's chats",
+    )
 
     # Use the chat's existing agent_id, not from query
     chat_agent_id = chat.agent_id
-    print(f"🤖 [AGENT] Creating agent with ID: {chat_agent_id}")
 
     chat_mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
     if chat_mutex and not await chat_mutex.acquire_async(
@@ -289,11 +256,6 @@ async def list_chat_messages_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse[schemas.UserChatMessageSchema]:
     """List all chat messages for a session."""
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
     # Verify the session belongs to the user
     chat = await methods.get_chat_async(session, chat_uuid, user.uuid)
     if not chat:
@@ -321,12 +283,6 @@ async def delete_chat_message_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
     """Delete a chat message."""
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
-
     # First verify the chat exists and user has access
     chat = await methods.get_chat_async(session, chat_uuid, user.uuid)
     if not chat:
@@ -335,17 +291,12 @@ async def delete_chat_message_async(
             detail="Chat not found",
         )
 
-    # Authorization check for chat ownership
-    if chat.user_uuid is None and not user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot delete messages in global chats",
-        )
-    if chat.user_uuid is not None and chat.user_uuid != user.uuid:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot delete messages in other user's chats",
-        )
+    assert_user_owns_resource(
+        user,
+        chat.user_uuid,
+        global_detail="Cannot delete messages in global chats",
+        other_detail="Cannot delete messages in other user's chats",
+    )
 
     # Now get and delete the message
     message = await methods.get_chat_message_async(

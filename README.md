@@ -40,17 +40,12 @@ uv pip install -e ".[dev]"
 The easiest way to run FivcCliche is using the built-in CLI:
 
 ```bash
-# Start the server
-python -m fivccliche.cli run
-
-# Show project information
-python -m fivccliche.cli info
-
-# Clean temporary files and cache
-python -m fivccliche.cli clean
-
-# Initialize configuration
-python -m fivccliche.cli setup
+python -m fivccliche.cli migrate            # Create missing tables
+python -m fivccliche.cli createsuperuser    # Interactive admin user
+python -m fivccliche.cli run                # Start the server
+python -m fivccliche.cli jobs list          # List scheduled jobs
+python -m fivccliche.cli info               # Show project information
+python -m fivccliche.cli clean              # Clean temporary files and cache
 ```
 
 Visit http://localhost:8000/docs for interactive API documentation.
@@ -98,11 +93,10 @@ python -m fivccliche.cli run --verbose
 
 For detailed information, see the documentation in the `docs/` folder:
 
-- **[Getting Started](docs/getting-started.md)** - Comprehensive tutorial with examples
+- **[Getting Started](docs/getting-started.md)** - Install, migrate, run, and authenticate
+- **[Architecture](docs/architecture.md)** - Module layering, ownership, CRUD factory
 - **[Scheduled Tasks](docs/scheduler.md)** - Per-module APScheduler integration
-- **[Setup Summary](docs/setup-summary.md)** - Installation and project structure
-- **[Migration Plan](docs/migration-plan.md)** - Technical migration details
-- **[Completion Summary](docs/completion-summary.md)** - What was accomplished
+- **[Agent Memories](docs/agent-memories.md)** - Optional Hindsight memory API
 
 ## 🛠️ Development
 
@@ -129,17 +123,19 @@ mypy src/              # Type check
 ### Project Structure
 ```
 fivccliche/
-├── pyproject.toml              # Project configuration
-├── src/
-│   └── fivccliche/
-│       ├── __init__.py
-│       ├── cli.py              # CLI implementation
-│       ├── services/
-│       ├── utils/
-│       ├── settings/
-│       └── modules/
-├── tests/                      # Add your tests here
-└── docs/                       # Documentation
+├── pyproject.toml
+├── src/fivccliche/
+│   ├── cli.py
+│   ├── services/
+│   ├── utils/
+│   ├── settings/
+│   └── modules/
+│       ├── users/
+│       ├── agent_configs/
+│       ├── agent_chats/
+│       └── agent_memories/
+├── tests/
+└── docs/
 ```
 
 ## 📦 Dependencies

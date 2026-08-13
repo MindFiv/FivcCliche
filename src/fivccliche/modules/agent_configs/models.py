@@ -71,14 +71,14 @@ class UserEmbedding(SQLModel, table=True):
         description="UUID of user who last updated.",
     )
 
-    def to_schema(self, include_api_key: bool = True) -> schemas.UserEmbeddingSchema:
+    def to_schema(self) -> schemas.UserEmbeddingSchema:
         return schemas.UserEmbeddingSchema(
             uuid=self.uuid,
             id=self.id,
             description=self.description,
             provider=self.provider,
             model=self.model,
-            api_key=self.api_key if include_api_key else None,
+            api_key=self.api_key,
             base_url=self.base_url,
             dimension=self.dimension,
             user_uuid=self.user_uuid,
@@ -155,14 +155,14 @@ class UserLLM(SQLModel, table=True):
         description="UUID of user who last updated.",
     )
 
-    def to_schema(self, include_api_key: bool = True) -> schemas.UserLLMSchema:
+    def to_schema(self) -> schemas.UserLLMSchema:
         return schemas.UserLLMSchema(
             uuid=self.uuid,
             id=self.id,
             description=self.description,
             provider=self.provider,
             model=self.model,
-            api_key=self.api_key if include_api_key else None,
+            api_key=self.api_key,
             base_url=self.base_url,
             temperature=self.temperature,
             max_tokens=self.max_tokens,

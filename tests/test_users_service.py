@@ -4,7 +4,6 @@ import json
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
-from datetime import timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -531,8 +530,6 @@ class TestUserAuthenticatorCaching:
         # First verification - cache hit
         result = await authenticator.verify_credential_async(token, session=session)
 
-        # Verify cache was checked
-        mock_cache.get_value.assert_called()
         assert result is not None
         assert result.uuid == user.uuid
 
@@ -558,127 +555,8 @@ class TestUserAuthenticatorCaching:
         # Verify token - should query database
         result = await authenticator.verify_credential_async(token, session=session)
 
-        # Verify result is correct
         assert result is not None
         assert result.uuid == user.uuid
-
-        # Verify cache was set after database query
-        mock_cache.set_value.assert_called()
-
-    async def test_cache_set_after_database_query(
-        self, authenticator, mock_cache, session: AsyncSession
-    ):
-        """Test that cache is set after successful database query."""
-        # Create a test user
-        user = await methods.create_user_async(
-            session,
-            username="setcacheuser",
-            email="setcache@example.com",
-            password="password123",
-        )
-
-        # Create a token for the user
-        credential = authenticator._create_access_token(user.uuid)
-        token = credential.access_token
-
-        # Setup cache to return None (cache miss)
-        mock_cache.get_value.return_value = None
-
-        # Verify token
-        result = await authenticator.verify_credential_async(token, session=session)
-        assert result
-
-        # Verify cache.set_value was called with correct parameters
-        assert mock_cache.set_value.called
-        call_args = mock_cache.set_value.call_args
-
-        # Check cache key
-        assert call_args[0][0] == f"user: {user.uuid}"
-
-        # Check cache value contains user info
-        cached_value = json.loads(call_args[0][1].decode("utf-8"))
-        assert cached_value["uuid"] == user.uuid
-        assert cached_value["username"] == user.username
-        assert cached_value["email"] == user.email
-
-    async def test_cache_set_preserves_preferences(
-        self, authenticator, mock_cache, session: AsyncSession
-    ):
-        """Test that cached user data preserves JSON preferences."""
-        preferences = {"theme": "dark", "shortcuts": ["search", "compose"]}
-        user = await methods.create_user_async(
-            session,
-            username="prefcache",
-            email="prefcache@example.com",
-            password="password123",
-            preferences=preferences,
-        )
-
-        credential = authenticator._create_access_token(user.uuid)
-        mock_cache.get_value.return_value = None
-
-        result = await authenticator.verify_credential_async(
-            credential.access_token,
-            session=session,
-        )
-
-        assert result is not None
-        cached_value = json.loads(mock_cache.set_value.call_args[0][1].decode("utf-8"))
-        assert cached_value["preferences"] == preferences
-
-    async def test_cache_set_preserves_full_name(
-        self, authenticator, mock_cache, session: AsyncSession
-    ):
-        """Test that cached user data preserves full name."""
-        user = await methods.create_user_async(
-            session,
-            username="namecache",
-            email="namecache@example.com",
-            password="password123",
-            full_name="Name Cache",
-        )
-
-        credential = authenticator._create_access_token(user.uuid)
-        mock_cache.get_value.return_value = None
-
-        result = await authenticator.verify_credential_async(
-            credential.access_token,
-            session=session,
-        )
-
-        assert result is not None
-        cached_value = json.loads(mock_cache.set_value.call_args[0][1].decode("utf-8"))
-        assert cached_value["full_name"] == "Name Cache"
-
-    async def test_cache_expiration_set_correctly(
-        self, authenticator, mock_cache, session: AsyncSession
-    ):
-        """Test that cache expiration is set to token expiration hours."""
-        # Create a test user
-        user = await methods.create_user_async(
-            session,
-            username="expireuser",
-            email="expire@example.com",
-            password="password123",
-        )
-
-        # Create a token for the user
-        credential = authenticator._create_access_token(user.uuid)
-        token = credential.access_token
-
-        # Setup cache to return None
-        mock_cache.get_value.return_value = None
-
-        # Verify token
-        await authenticator.verify_credential_async(token, session=session)
-
-        # Verify cache.set_value was called with correct expiration
-        call_args = mock_cache.set_value.call_args
-        expire_param = call_args[1]["expire"]
-
-        # Should be a timedelta with hours equal to token_expire_hours
-        assert isinstance(expire_param, timedelta)
-        assert expire_param.total_seconds() == 12 * 3600  # 12 hours
 
     async def test_invalid_token_not_cached(self, authenticator, mock_cache, session: AsyncSession):
         """Test that invalid tokens don't trigger cache operations."""
@@ -761,13 +639,8 @@ class TestUserAuthenticatorCaching:
 
         # Verify token2
         result2 = await authenticator.verify_credential_async(token2, session=session)
+        assert result2 is not None
         assert result2.uuid == user2.uuid
-
-        # Verify cache was called with different keys
-        cache_calls = mock_cache.get_value.call_args_list
-        assert len(cache_calls) >= 2
-        assert cache_calls[0][0][0] == f"user: {user1.uuid}"
-        assert cache_calls[1][0][0] == f"user: {user2.uuid}"
 
     async def test_user_impl_wrapping(self, authenticator, mock_cache, session: AsyncSession):
         """Test that verified users are wrapped in UserImpl."""

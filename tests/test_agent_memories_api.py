@@ -1,105 +1,24 @@
 """Integration tests for agent_memories read-only HTTP API."""
 
-import os
-import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
-from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import NullPool
-from sqlmodel import SQLModel
 
-from fivccliche.modules.users.models import User  # noqa: F401
-from fivccliche.services.implements.modules import ModuleSiteImpl
 from fivccliche.services.interfaces.agent_memories import (
     MemoryContent,
     MemoryListResult,
     MemoryRecallResult,
 )
-from fivccliche.utils.deps import get_db_session_async, get_memory_provider_async
-from fivccliche.utils import deps
-from fivcglue.implements.utils import load_component_site
+from fivccliche.utils.deps import get_memory_provider_async
+from tests.conftest import make_api_client
 
 
 @pytest.fixture
 def client():
     """Create a test client with users + agent_memories modules."""
-    import asyncio
-
-    from fivccliche.modules.users import methods
-
-    temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
-    temp_db.close()
-    database_url = f"sqlite+aiosqlite:///{temp_db.name}"
-
-    async def create_tables():
-        engine = create_async_engine(
-            database_url,
-            connect_args={"check_same_thread": False},
-            poolclass=NullPool,
-        )
-        async with engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
-        return engine
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        engine = loop.run_until_complete(create_tables())
-        async_session = AsyncSession(engine, expire_on_commit=False)
-
-        components_path = os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "src",
-            "fivccliche",
-            "settings",
-            "services.yml",
-        )
-        component_site = load_component_site(filename=components_path, fmt="yaml")
-        module_site = ModuleSiteImpl(component_site, modules=["users", "agent_memories"])
-        app = module_site.create_application()
-
-        async def override_get_db_session_async():
-            yield async_session
-
-        app.dependency_overrides[get_db_session_async] = override_get_db_session_async
-
-        loop.run_until_complete(
-            methods.create_user_async(
-                async_session,
-                username="admin",
-                email="admin@example.com",
-                password="admin123",
-                is_superuser=True,
-            )
-        )
-
-        @asynccontextmanager
-        async def override_get_db_session_context_async(session=None):
-            yield async_session
-
-        with patch.object(
-            deps, "get_db_session_context_async", override_get_db_session_context_async
-        ):
-            with TestClient(app) as test_client:
-                yield test_client
-
-        async def cleanup():
-            await async_session.close()
-            await engine.dispose()
-
-        loop.run_until_complete(cleanup())
-    finally:
-        loop.close()
-        try:
-            Path(temp_db.name).unlink()
-        except Exception:
-            pass
+    yield from make_api_client(["users", "agent_memories"])
 
 
 @pytest.fixture

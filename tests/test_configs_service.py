@@ -3289,7 +3289,7 @@ class TestAuditFieldsRegression:
         config = await methods.create_embedding_config_async(
             session, "user123", config_create, updated_user_uuid="user123"
         )
-        schema = config.to_schema(include_api_key=False)
+        schema = config.to_schema()
 
         assert schema.updated_at is not None
         assert schema.updated_user_uuid == "user123"

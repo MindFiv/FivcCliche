@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -14,16 +15,17 @@ from fivccliche.services.interfaces.modules import (
     IModuleSite,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _make_lifespan(scheduler: AsyncIOScheduler):
     @asynccontextmanager
     async def _lifespan(_: FastAPI):
         # Startup
-        print("Application starting up...")
+        logger.info("Application starting up")
         scheduler.start()
         yield
-        # Shutdown
-        print("Application shutting down...")
+        logger.info("Application shutting down")
         scheduler.shutdown(wait=False)
 
     return _lifespan

@@ -1,4 +1,5 @@
 from functools import cached_property
+import logging
 from typing import Any
 
 from sqlalchemy.engine.url import make_url, URL
@@ -13,6 +14,8 @@ from fivcglue import IComponentSite, query_component
 from fivcglue.interfaces.configs import IConfig
 
 from fivccliche.services.interfaces.db import IDatabase
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_optional_int(value: Any) -> int | None:
@@ -38,7 +41,7 @@ class DatabaseImpl(IDatabase):
         self.parsed_url = make_url(config_url)
         self.pool_size = _parse_optional_int(config.get_value("DB_POOL_SIZE"))
         self.max_overflow = _parse_optional_int(config.get_value("DB_MAX_OVERFLOW"))
-        print(self.parsed_url)
+        logger.info("database url: %s", self.parsed_url)
 
     @cached_property
     def engine(self) -> AsyncEngine:

@@ -1,111 +1,30 @@
 """Integration tests for agent_chats API endpoints."""
 
-import os
-import tempfile
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
-from contextlib import asynccontextmanager
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import NullPool
-from sqlmodel import SQLModel
 
-from fivccliche.utils.deps import get_db_session_async
-from fivccliche.utils import deps
-from fivccliche.services.implements.modules import ModuleSiteImpl
-from fivcglue.implements.utils import load_component_site
-
-# Import models to ensure they're registered with SQLModel
+from fivccliche.modules.agent_chats.models import UserChat
 from fivccliche.modules.users.models import User
-from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage  # noqa: F401
+from tests.conftest import make_api_client
 
 
 @pytest.fixture
 def client():
     """Create a test client with temporary database and test user."""
-    import asyncio
-    from fivccliche.modules.users import methods
-
-    # Create a temporary file for the database
-    temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
-    temp_db.close()
-    database_url = f"sqlite+aiosqlite:///{temp_db.name}"
-
-    # Create engine and tables
-    async def create_tables():
-        engine = create_async_engine(
-            database_url,
-            connect_args={"check_same_thread": False},
-            poolclass=NullPool,
-        )
-        async with engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
-        return engine
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        engine = loop.run_until_complete(create_tables())
-        async_session = AsyncSession(engine, expire_on_commit=False)
-
-        # Load components
-        components_path = os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "src",
-            "fivccliche",
-            "settings",
-            "services.yml",
-        )
-        component_site = load_component_site(filename=components_path, fmt="yaml")
-        module_site = ModuleSiteImpl(component_site, modules=["users", "agent_chats"])
-        app = module_site.create_application()
-
-        # Override the database dependency
-        async def override_get_db_session_async():
-            yield async_session
-
-        app.dependency_overrides[get_db_session_async] = override_get_db_session_async
-
-        client = TestClient(app)
-
-        # Create admin user and regular test user
-        loop.run_until_complete(
-            methods.create_user_async(
-                async_session,
-                username="admin",
-                email="admin@example.com",
-                password="admin123",
-                is_superuser=True,
-            )
-        )
-        loop.run_until_complete(
-            methods.create_user_async(
-                async_session,
-                username="testuser",
-                email="test@example.com",
-                password="password123",
-                is_superuser=False,
-            )
-        )
-
-        # Store loop and async_session in client for test access
-        client.loop = loop
-        client.async_session = async_session
-
-        @asynccontextmanager
-        async def override_get_db_session_context_async(session=None):
-            yield async_session
-
-        with patch.object(
-            deps, "get_db_session_context_async", override_get_db_session_context_async
-        ):
-            yield client
-    finally:
-        loop.run_until_complete(async_session.close())
-        loop.run_until_complete(engine.dispose())
+    yield from make_api_client(
+        ["users", "agent_chats"],
+        extra_users=[
+            {
+                "username": "testuser",
+                "email": "test@example.com",
+                "password": "password123",
+                "is_superuser": False,
+            }
+        ],
+    )
 
 
 @pytest.fixture

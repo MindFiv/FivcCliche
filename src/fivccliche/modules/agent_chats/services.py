@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from fastapi import FastAPI
 from fivcglue import IComponentSite
@@ -14,6 +15,8 @@ from fivccliche.utils.deps import get_db_session_context_async
 
 from . import methods, routers
 from .jobs import ChatMemorizeJob
+
+logger = logging.getLogger(__name__)
 
 
 class UserChatRepositoryImpl(UserChatRepository):
@@ -181,7 +184,7 @@ class UserChatProviderImpl(IUserChatProvider):
     """Chat provider implementation."""
 
     def __init__(self, component_site: IComponentSite, **kwargs):
-        print("agent chats provider initialized...")
+        logger.info("agent chats provider initialized")
         self.component_site = component_site
 
     def get_chat_repository(
@@ -208,7 +211,7 @@ class ModuleImpl(IModule):
     def __init__(self, component_site: IComponentSite, **kwargs):
         self._component_site = component_site
         self._jobs: list[IModuleJob] = [ChatMemorizeJob(component_site)]
-        print("agent chats module initialized.")
+        logger.info("agent chats module initialized")
 
     @property
     def name(self):
@@ -228,6 +231,6 @@ class ModuleImpl(IModule):
         return None
 
     def mount(self, app: FastAPI, **kwargs) -> None:
-        print("agent_chats module mounted.")
+        logger.info("agent_chats module mounted")
         app.include_router(routers.router_chats, **kwargs)
         app.include_router(routers.router_messages, **kwargs)

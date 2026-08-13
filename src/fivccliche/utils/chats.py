@@ -94,7 +94,7 @@ class ChatTask:
                     ev, ev_run = await asyncio.wait_for(self._chat_queue.get(), timeout=0.5)
                 except asyncio.TimeoutError:
                     if self._asyncio_task is None or not self._asyncio_task.done():
-                        print("⏱️  [QUEUE] Timeout waiting for event, task still running")
+                        logger.debug("Timeout waiting for chat event, task still running")
                     continue
 
                 data_fields_basics = {
@@ -149,7 +149,7 @@ class ChatTask:
         except Exception as e:
             data = {"event": "error", "info": {"message": str(e)}}
             data = json.dumps(data)
-            print(f"❌ [QUEUE] Error in chat queue: {e}")
+            logger.exception("Error in chat queue")
             yield f"data: {data}\n\n"
 
     async def _run_async(self) -> None:
