@@ -17,7 +17,7 @@ from fivccliche.modules.agent_chats import utils as methods
 from fivccliche.modules.agent_chats.jobs import (
     MEMORIZE_JOB_ID,
     ChatMemorizeJob,
-    build_conversation_turns,
+    _get_memorize_content,
 )
 from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage
 from fivccliche.modules.agent_chats.services import ModuleImpl
@@ -82,35 +82,34 @@ async def _add_message(
     return msg
 
 
-class TestBuildConversationTurns:
-    def test_builds_user_and_assistant_turns(self):
+class TestGetMemorizeContent:
+    def test_builds_user_and_assistant_json(self):
         msg = UserChatMessage(
             chat_uuid="c",
             query={"text": "帮我看看这段代码为什么报错"},
             reply={"text": "你的第 12 行变量未定义,应该是..."},
         )
-        turns = build_conversation_turns([msg])
-        assert turns == [
+        content = _get_memorize_content([msg])
+        assert json.loads(content) == [
             {"role": "user", "content": "帮我看看这段代码为什么报错"},
             {"role": "assistant", "content": "你的第 12 行变量未定义,应该是..."},
         ]
 
-    def test_slash_query_skips_user_keeps_assistant(self):
+    def test_slash_query_without_user_returns_empty(self):
         msg = UserChatMessage(
             chat_uuid="c",
             query={"text": "/help"},
             reply={"text": "这里是帮助"},
         )
-        turns = build_conversation_turns([msg])
-        assert turns == [{"role": "assistant", "content": "这里是帮助"}]
+        assert _get_memorize_content([msg]) == ""
 
-    def test_slash_query_without_reply_yields_empty(self):
+    def test_slash_query_without_reply_returns_empty(self):
         msg = UserChatMessage(
             chat_uuid="c",
             query={"text": "/status"},
             reply=None,
         )
-        assert build_conversation_turns([msg]) == []
+        assert _get_memorize_content([msg]) == ""
 
 
 class TestMemorizeMethods:
@@ -492,10 +491,10 @@ class TestMemorizeJob:
 
         session = MagicMock()
         session.get_value.side_effect = lambda key: {
-            "MEMORIZE_INTERVAL_MINUTES": "15",
-            "MEMORIZE_BATCH_SIZE": "0",
-            "MEMORIZE_MAX_BATCHES_PER_RUN": "bad",
-            "MEMORIZE_MIN_AGE_HOURS": "48",
+            "INTERVAL_MINUTES": "15",
+            "BATCH_SIZE": "0",
+            "MAX_BATCHES_PER_RUN": "bad",
+            "MIN_AGE_HOURS": "48",
         }.get(key)
         config = MagicMock()
         config.get_session.return_value = session
@@ -504,6 +503,7 @@ class TestMemorizeJob:
             return_value=config,
         ):
             job = ChatMemorizeJob(component_site)
+        config.get_session.assert_called_with("CHAT_MEMORIZE")
         assert job.interval_minutes == 15
         assert job.batch_size == 50  # invalid 0 → default
         assert job.max_batches_per_run == 20  # invalid → default

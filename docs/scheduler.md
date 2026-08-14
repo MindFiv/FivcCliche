@@ -159,6 +159,6 @@ within the test window.
 `agent_chats` constructs `ChatMemorizeJob(component_site)` in `ModuleImpl`
 `__init__` and exposes it via `list_jobs`. `ModuleSiteImpl` registers
 `agent-chats-memorize` from `job.config` (interval from
-`agent_chats.MEMORIZE_INTERVAL_MINUTES`, default 5). See
+`CHAT_MEMORIZE.INTERVAL_MINUTES`, default 5). See
 [agent-memories.md](agent-memories.md) for chat-level retain semantics and
 per-chat Redis mutex details.

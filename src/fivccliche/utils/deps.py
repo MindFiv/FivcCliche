@@ -15,6 +15,7 @@ from fivccliche.services.interfaces.agent_memories import IUserMemoryProvider
 from fivccliche.services.interfaces.db import IDatabase
 from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator
 from fivccliche.services.implements import service_site
+from fivccliche.utils import UNSET, UnsetType
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 default_security = HTTPBearer()
@@ -125,6 +126,48 @@ async def get_mutex_site_async() -> mutexes.IMutexSite | None:
     """Get the distributed mutex site for dependency injection."""
     mutex_site = default_mutex_site()
     return SafeMutexSite(mutex_site) if mutex_site else None
+
+
+@asynccontextmanager
+async def get_mutex_context_async(
+    mtx_name: str,
+    *,
+    expire: timedelta,
+    timeout: timedelta | None = None,
+    mutex_site: mutexes.IMutexSite | None | UnsetType = UNSET,
+) -> AsyncGenerator[mutexes.IMutex | None, None]:
+    """Acquire a named mutex for the duration of the block.
+
+    Pass an existing ``mutex_site`` to reuse it (same idea as passing ``session``
+    to ``get_db_session_context_async``). When ``mutex_site`` is omitted, resolve
+    via ``get_mutex_site_async``.
+
+    Yields ``None`` when the site/mutex is missing or acquire fails (no release).
+    On success, yields the acquired mutex and releases it in ``finally``.
+    """
+    site: mutexes.IMutexSite | None
+    if isinstance(mutex_site, UnsetType):
+        site = await get_mutex_site_async()
+    else:
+        site = mutex_site
+    if site is None:
+        yield None
+        return
+
+    mutex = site.get_mutex(mtx_name)
+    if mutex is None:
+        yield None
+        return
+
+    acquired = await mutex.acquire_async(expire=expire, timeout=timeout)
+    if not acquired:
+        yield None
+        return
+
+    try:
+        yield mutex
+    finally:
+        await mutex.release_async()
 
 
 async def get_db_session_async() -> AsyncGenerator[AsyncSession, None]:

@@ -1,10 +1,11 @@
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.pool.impl import NullPool
 
 from fivccliche.services.implements.db import DatabaseImpl
-from fivccliche.utils.deps import get_db_session_context_async
+from fivccliche.utils.deps import get_db_session_context_async, get_mutex_context_async
 
 
 def _make_db(config_values: dict[str, str | None]) -> DatabaseImpl:
@@ -128,3 +129,105 @@ class TestGetDbSessionContextAsync:
             async with get_db_session_context_async() as scoped:
                 assert scoped is owned
         owned.close.assert_awaited_once()
+
+
+class TestGetMutexContextAsync:
+    @pytest.mark.asyncio
+    async def test_yields_none_when_mutex_site_missing(self):
+        async with get_mutex_context_async(
+            "lock",
+            expire=timedelta(minutes=1),
+            mutex_site=None,
+        ) as mutex:
+            assert mutex is None
+
+    @pytest.mark.asyncio
+    async def test_yields_none_when_mutex_missing(self):
+        site = MagicMock()
+        site.get_mutex.return_value = None
+        async with get_mutex_context_async(
+            "lock",
+            expire=timedelta(minutes=1),
+            mutex_site=site,
+        ) as mutex:
+            assert mutex is None
+        site.get_mutex.assert_called_once_with("lock")
+
+    @pytest.mark.asyncio
+    async def test_yields_none_when_acquire_fails(self):
+        lock = MagicMock()
+        lock.acquire_async = AsyncMock(return_value=False)
+        lock.release_async = AsyncMock(return_value=True)
+        site = MagicMock()
+        site.get_mutex.return_value = lock
+
+        async with get_mutex_context_async(
+            "lock",
+            expire=timedelta(minutes=1),
+            timeout=None,
+            mutex_site=site,
+        ) as mutex:
+            assert mutex is None
+
+        lock.acquire_async.assert_awaited_once()
+        lock.release_async.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_releases_after_successful_acquire(self):
+        lock = MagicMock()
+        lock.acquire_async = AsyncMock(return_value=True)
+        lock.release_async = AsyncMock(return_value=True)
+        site = MagicMock()
+        site.get_mutex.return_value = lock
+
+        async with get_mutex_context_async(
+            "lock",
+            expire=timedelta(minutes=1),
+            mutex_site=site,
+        ) as mutex:
+            assert mutex is lock
+
+        lock.release_async.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_releases_when_body_raises(self):
+        lock = MagicMock()
+        lock.acquire_async = AsyncMock(return_value=True)
+        lock.release_async = AsyncMock(return_value=True)
+        site = MagicMock()
+        site.get_mutex.return_value = lock
+
+        async def run():
+            async with get_mutex_context_async(
+                "lock",
+                expire=timedelta(minutes=1),
+                mutex_site=site,
+            ) as mutex:
+                assert mutex is lock
+                raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await run()
+
+        lock.release_async.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_resolves_site_when_unset(self):
+        lock = MagicMock()
+        lock.acquire_async = AsyncMock(return_value=True)
+        lock.release_async = AsyncMock(return_value=True)
+        site = MagicMock()
+        site.get_mutex.return_value = lock
+
+        with patch(
+            "fivccliche.utils.deps.get_mutex_site_async",
+            AsyncMock(return_value=site),
+        ):
+            async with get_mutex_context_async(
+                "agent-chats:memorize:x",
+                expire=timedelta(minutes=30),
+            ) as mutex:
+                assert mutex is lock
+
+        site.get_mutex.assert_called_once_with("agent-chats:memorize:x")
+        lock.release_async.assert_awaited_once()

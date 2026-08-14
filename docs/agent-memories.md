@@ -82,25 +82,25 @@ not import Hindsight.
 | `API_KEY` | `null` | Optional API key |
 | `TIMEOUT` | `300` | Client timeout (seconds) |
 
-### Memorize job (`.env.json` session `agent_chats`)
+### Memorize job (`.env.json` session `CHAT_MEMORIZE`)
 
 ```json
 {
-  "agent_chats": {
-    "MEMORIZE_INTERVAL_MINUTES": "5",
-    "MEMORIZE_BATCH_SIZE": "50",
-    "MEMORIZE_MAX_BATCHES_PER_RUN": "20",
-    "MEMORIZE_MIN_AGE_HOURS": "24"
+  "CHAT_MEMORIZE": {
+    "INTERVAL_MINUTES": "5",
+    "BATCH_SIZE": "50",
+    "MAX_BATCHES_PER_RUN": "20",
+    "MIN_AGE_HOURS": "24"
   }
 }
 ```
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `MEMORIZE_INTERVAL_MINUTES` | `5` | Scheduler interval |
-| `MEMORIZE_BATCH_SIZE` | `50` | Max chats per drain batch |
-| `MEMORIZE_MAX_BATCHES_PER_RUN` | `20` | Max batches while holding the job tick |
-| `MEMORIZE_MIN_AGE_HOURS` | `24` | Only messages older than this are memorized |
+| `INTERVAL_MINUTES` | `5` | Scheduler interval |
+| `BATCH_SIZE` | `50` | Max chats per drain batch |
+| `MAX_BATCHES_PER_RUN` | `20` | Max batches while holding the job tick |
+| `MIN_AGE_HOURS` | `24` | Only messages older than this are memorized |
 
 Missing / invalid values fall back to the defaults above.
 
@@ -146,7 +146,7 @@ Per tick:
 
 1. Skip if memory provider or mutex site is missing.
 2. Load chats that have completed, unmemorized messages with
-   `created_at <= now - MEMORIZE_MIN_AGE_HOURS` (and non-null `user_uuid`).
+   `created_at <= now - MIN_AGE_HOURS` (and non-null `user_uuid`).
 3. Process up to `BATCH_SIZE` chats **sequentially** in this process, then
    drain further batches until empty or `MAX_BATCHES_PER_RUN`. Cross-node
    parallelism comes from multiple service replicas + per-chat Redis mutex.
