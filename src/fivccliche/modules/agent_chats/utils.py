@@ -7,6 +7,7 @@ from sqlalchemy import exists, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from fivccliche.utils.filters import FilterSet
 from fivccliche.utils.types import UNSET, UnsetType
 
 from . import models, schemas
@@ -58,19 +59,15 @@ async def create_chat_async(
 async def get_chat_async(
     session: AsyncSession,
     chat_uuid: str,
-    user_uuid: str,
+    *,
+    filters: FilterSet,
     agent_id: str | None = None,
 ) -> models.UserChat | None:
-    """Get a chat session by UUID for a specific user."""
-    statement = select(models.UserChat).where(
-        (models.UserChat.uuid == chat_uuid)
-        & (
-            (models.UserChat.user_uuid == user_uuid)
-            | (models.UserChat.user_uuid == None)  # noqa: E711
-        )
-    )
+    """Get a chat session by UUID (visibility via ``filters``)."""
+    statement = select(models.UserChat).where(models.UserChat.uuid == chat_uuid)
     if agent_id is not None:
         statement = statement.where(models.UserChat.agent_id == agent_id)
+    statement = filters.filter(statement)
 
     result = await session.execute(statement)
     return result.scalars().first()
@@ -78,24 +75,19 @@ async def get_chat_async(
 
 async def list_chats_async(
     session: AsyncSession,
-    user_uuid: str,
+    *,
+    filters: ChatFilterSet,
     skip: int = 0,
     limit: int = 100,
-    filters: ChatFilterSet | None = None,
 ) -> list[models.UserChat]:
-    """List all chat sessions for a user with pagination."""
+    """List chat sessions with pagination (visibility via ``filters``)."""
     statement = (
         select(models.UserChat)
-        .where(
-            (models.UserChat.user_uuid == user_uuid)
-            | (models.UserChat.user_uuid == None)  # noqa: E711
-        )
         .order_by(col(models.UserChat.created_at).desc())
         .offset(skip)
         .limit(limit)
     )
-    if filters is not None:
-        statement = filters.filter(statement)
+    statement = filters.filter(statement)
 
     result = await session.execute(statement)
     return list(result.scalars().all())
@@ -103,15 +95,12 @@ async def list_chats_async(
 
 async def count_chats_async(
     session: AsyncSession,
-    user_uuid: str,
-    filters: ChatFilterSet | None = None,
+    *,
+    filters: ChatFilterSet,
 ) -> int:
-    """Count the number of chat sessions for a user."""
-    statement = select(func.count(col(models.UserChat.uuid))).where(
-        (models.UserChat.user_uuid == user_uuid) | (models.UserChat.user_uuid == None)  # noqa: E711
-    )
-    if filters is not None:
-        statement = filters.filter(statement)
+    """Count chat sessions (visibility via ``filters``)."""
+    statement = select(func.count(col(models.UserChat.uuid)))
+    statement = filters.filter(statement)
 
     result = await session.execute(statement)
     return result.scalar() or 0

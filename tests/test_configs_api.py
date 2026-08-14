@@ -1999,8 +1999,8 @@ class TestQuestionConfigAPI:
             },
         )
 
-        assert response.status_code == 403
-        assert "Cannot update global configs" in response.json()["detail"]
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
     def test_regular_user_cannot_delete_global_question(
         self, client: TestClient, admin_token: str, auth_token: str
@@ -2021,8 +2021,8 @@ class TestQuestionConfigAPI:
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 
-        assert response.status_code == 403
-        assert "Cannot delete global configs" in response.json()["detail"]
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
     def test_question_response_has_expected_fields(self, client: TestClient, auth_token: str):
         """Test question config response field shape."""
@@ -2219,7 +2219,8 @@ class TestGlobalConfigAuthorization:
         assert create_response.status_code == 201
         config_uuid = create_response.json()["uuid"]
 
-        # Try to update as regular user - should fail with 403
+        # Try to update as regular user - should fail with 404
+
         response = client.patch(
             f"/configs/embeddings/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
@@ -2228,8 +2229,8 @@ class TestGlobalConfigAuthorization:
                 "model": "text-embedding-3-large",
             },
         )
-        assert response.status_code == 403
-        assert "Cannot update global configs" in response.json()["detail"]
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
     def test_regular_user_cannot_delete_global_embedding_config(
         self, client: TestClient, admin_token: str, auth_token: str
@@ -2249,13 +2250,14 @@ class TestGlobalConfigAuthorization:
         assert create_response.status_code == 201
         config_uuid = create_response.json()["uuid"]
 
-        # Try to delete as regular user - should fail with 403
+        # Try to delete as regular user - should fail with 404
+
         response = client.delete(
             f"/configs/embeddings/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert response.status_code == 403
-        assert "Cannot delete global configs" in response.json()["detail"]
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
     def test_superuser_cannot_update_other_user_config(
         self, client: TestClient, admin_token: str, auth_token: str
@@ -2389,7 +2391,8 @@ class TestGlobalConfigAuthorization:
         assert create_response.status_code == 201
         config_uuid = create_response.json()["uuid"]
 
-        # Try to update as regular user - should fail with 403
+        # Try to update as regular user - should fail with 404
+
         response = client.patch(
             f"/configs/models/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
@@ -2398,8 +2401,8 @@ class TestGlobalConfigAuthorization:
                 "model": "gpt-4-turbo",
             },
         )
-        assert response.status_code == 403
-        assert "Cannot update global configs" in response.json()["detail"]
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
     def test_regular_user_cannot_delete_global_llm_config(
         self, client: TestClient, admin_token: str, auth_token: str
@@ -2419,13 +2422,14 @@ class TestGlobalConfigAuthorization:
         assert create_response.status_code == 201
         config_uuid = create_response.json()["uuid"]
 
-        # Try to delete as regular user - should fail with 403
+        # Try to delete as regular user - should fail with 404
+
         response = client.delete(
             f"/configs/models/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
-        assert response.status_code == 403
-        assert "Cannot delete global configs" in response.json()["detail"]
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
 
 # ============================================================================

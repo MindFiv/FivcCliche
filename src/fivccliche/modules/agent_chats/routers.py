@@ -18,7 +18,6 @@ from sqlmodel import col, select
 
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
-from fivccliche.utils.permissions import has_ownership
 from fivccliche.utils.chats import ChatTask
 from fivccliche.utils.deps import (
     IUser,
@@ -32,7 +31,7 @@ from fivccliche.utils.filters import FilterError
 from fivccliche.utils.schemas import PaginatedResponse
 
 from . import models, schemas, utils
-from .filters import ChatFilterSet
+from .filters import ChatEditableFilterSet, ChatFilterSet
 
 # ============================================================================
 # Chat Session Endpoints
@@ -82,7 +81,7 @@ async def list_chats_async(
 ) -> PaginatedResponse[schemas.UserChatSchema]:
     """List all chat sessions for the authenticated user."""
     try:
-        filters = ChatFilterSet()
+        filters = ChatFilterSet(user.uuid, is_superuser=user.is_superuser)
         filters.parse(
             agent_id=agent_id,
             **{
@@ -98,14 +97,12 @@ async def list_chats_async(
         ) from exc
     sessions = await utils.list_chats_async(
         session,
-        user.uuid,
+        filters=filters,
         skip=skip,
         limit=limit,
-        filters=filters,
     )
     total = await utils.count_chats_async(
         session,
-        user.uuid,
         filters=filters,
     )
     return PaginatedResponse[schemas.UserChatSchema](
@@ -125,7 +122,11 @@ async def get_chat_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserChatSchema:
     """Get a chat session by ID."""
-    chat = await utils.get_chat_async(session, chat_uuid, user.uuid)
+    chat = await utils.get_chat_async(
+        session,
+        chat_uuid,
+        filters=ChatFilterSet(user.uuid, is_superuser=user.is_superuser),
+    )
     if not chat:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -145,19 +146,16 @@ async def delete_chat_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
     """Delete a chat session."""
-    chat = await utils.get_chat_async(session, chat_uuid, user.uuid)
+    chat = await utils.get_chat_async(
+        session,
+        chat_uuid,
+        filters=ChatEditableFilterSet(user.uuid, is_superuser=user.is_superuser),
+    )
     if not chat:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Chat not found",
         )
-
-    has_ownership(
-        user,
-        chat.user_uuid,
-        global_detail="Cannot delete global chats",
-        other_detail="Cannot delete other user's chats",
-    )
 
     await session.delete(chat)
     await session.commit()
@@ -188,19 +186,16 @@ async def create_chat_messages_async(
 ) -> responses.StreamingResponse:
     """Send a new message to an existing chat session."""
     # Verify chat exists and user owns it
-    chat = await utils.get_chat_async(session, chat_uuid, user.uuid)
+    chat = await utils.get_chat_async(
+        session,
+        chat_uuid,
+        filters=ChatEditableFilterSet(user.uuid, is_superuser=user.is_superuser),
+    )
     if not chat:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Chat not found",
         )
-
-    has_ownership(
-        user,
-        chat.user_uuid,
-        global_detail="Cannot message global chats",
-        other_detail="Cannot message other user's chats",
-    )
 
     # Use the chat's existing agent_id, not from query
     chat_agent_id = chat.agent_id
@@ -263,7 +258,11 @@ async def list_chat_messages_async(
 ) -> PaginatedResponse[schemas.UserChatMessageSchema]:
     """List all chat messages for a session."""
     # Verify the session belongs to the user
-    chat = await utils.get_chat_async(session, chat_uuid, user.uuid)
+    chat = await utils.get_chat_async(
+        session,
+        chat_uuid,
+        filters=ChatFilterSet(user.uuid, is_superuser=user.is_superuser),
+    )
     if not chat:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -295,19 +294,16 @@ async def delete_chat_message_async(
 ) -> None:
     """Delete a chat message."""
     # First verify the chat exists and user has access
-    chat = await utils.get_chat_async(session, chat_uuid, user.uuid)
+    chat = await utils.get_chat_async(
+        session,
+        chat_uuid,
+        filters=ChatEditableFilterSet(user.uuid, is_superuser=user.is_superuser),
+    )
     if not chat:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Chat not found",
         )
-
-    has_ownership(
-        user,
-        chat.user_uuid,
-        global_detail="Cannot delete messages in global chats",
-        other_detail="Cannot delete messages in other user's chats",
-    )
 
     # Now get and delete the message
     message = await utils.get_chat_message_async(

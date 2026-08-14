@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.modules.agent_configs import models, utils as methods
+from fivccliche.modules.agent_configs.filters import UserScopedReadableFilterSet
 from fivccliche.modules.users.models import User
 
 
@@ -46,6 +47,10 @@ CONFIG_MODELS = [
 ]
 
 
+def _readable(model, user_uuid: str) -> UserScopedReadableFilterSet:
+    return UserScopedReadableFilterSet(model.user_uuid, user_uuid, is_superuser=False)
+
+
 @pytest.fixture
 async def owner(session: AsyncSession) -> User:
     user = User(
@@ -68,24 +73,31 @@ class TestUserScopedConfigHelpers:
         await session.refresh(created)
 
         fetched = await methods.get_user_scoped_async(
-            session, model, owner.uuid, config_id=fields["id"]
+            session, model, filters=_readable(model, owner.uuid), config_id=fields["id"]
         )
         assert fetched is not None
         assert fetched.uuid == created.uuid
 
         by_uuid = await methods.get_user_scoped_async(
-            session, model, owner.uuid, config_uuid=created.uuid
+            session, model, filters=_readable(model, owner.uuid), config_uuid=created.uuid
         )
         assert by_uuid is not None
         assert by_uuid.id == fields["id"]
 
-        listed = await methods.list_user_scoped_async(session, model, owner.uuid)
+        listed = await methods.list_user_scoped_async(
+            session, model, filters=_readable(model, owner.uuid)
+        )
         assert [item.id for item in listed] == [fields["id"]]
-        assert await methods.count_user_scoped_async(session, model, owner.uuid) == 1
+        assert (
+            await methods.count_user_scoped_async(
+                session, model, filters=_readable(model, owner.uuid)
+            )
+            == 1
+        )
 
         assert (
             await methods.get_user_scoped_async(
-                session, model, "other-user", config_id=fields["id"]
+                session, model, filters=_readable(model, "other-user"), config_id=fields["id"]
             )
             is None
         )
@@ -94,8 +106,14 @@ class TestUserScopedConfigHelpers:
         self, session: AsyncSession, owner: User, model, fields
     ):
         with pytest.raises(ValueError, match="Exactly one"):
-            await methods.get_user_scoped_async(session, model, owner.uuid)
+            await methods.get_user_scoped_async(
+                session, model, filters=_readable(model, owner.uuid)
+            )
         with pytest.raises(ValueError, match="Exactly one"):
             await methods.get_user_scoped_async(
-                session, model, owner.uuid, config_uuid="x", config_id="y"
+                session,
+                model,
+                filters=_readable(model, owner.uuid),
+                config_uuid="x",
+                config_id="y",
             )

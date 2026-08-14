@@ -35,6 +35,7 @@ from fivccliche.services.interfaces.agent_configs import (
 from fivccliche.utils.deps import get_db_session_context_async
 
 from . import models, routers, utils
+from .filters import UserScopedEditableFilterSet, UserScopedReadableFilterSet
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,12 @@ class _UserScopedConfigRepository:
     async def _upsert_async(self, model, updater, creator, config, *, kind: str | None = None):
         async with get_db_session_context_async() as db_session:
             existing = await utils.get_user_scoped_async(
-                db_session, model, self.user_uuid, config_id=config.id
+                db_session,
+                model,
+                filters=UserScopedEditableFilterSet(
+                    model.user_uuid, self.user_uuid, is_superuser=False
+                ),
+                config_id=config.id,
             )
             if kind and existing and not existing.is_active:
                 raise RuntimeError(f"Cannot update inactive {kind} config")
@@ -104,7 +110,12 @@ class _UserScopedConfigRepository:
     async def _get_schema_async(self, model, config_id: str, *, active_only: bool = False):
         async with get_db_session_context_async() as db_session:
             config = await utils.get_user_scoped_async(
-                db_session, model, self.user_uuid, config_id=config_id
+                db_session,
+                model,
+                filters=UserScopedReadableFilterSet(
+                    model.user_uuid, self.user_uuid, is_superuser=False
+                ),
+                config_id=config_id,
             )
             if not config:
                 return None
@@ -117,7 +128,13 @@ class _UserScopedConfigRepository:
     ) -> list:
         async with get_db_session_context_async() as db_session:
             configs = await utils.list_user_scoped_async(
-                db_session, model, self.user_uuid, skip=skip, limit=limit
+                db_session,
+                model,
+                filters=UserScopedReadableFilterSet(
+                    model.user_uuid, self.user_uuid, is_superuser=False
+                ),
+                skip=skip,
+                limit=limit,
             )
             if active_only:
                 configs = [item for item in configs if item.is_active]
@@ -126,7 +143,12 @@ class _UserScopedConfigRepository:
     async def _delete_async(self, model, config_id: str, *, kind: str | None = None):
         async with get_db_session_context_async() as db_session:
             config = await utils.get_user_scoped_async(
-                db_session, model, self.user_uuid, config_id=config_id
+                db_session,
+                model,
+                filters=UserScopedEditableFilterSet(
+                    model.user_uuid, self.user_uuid, is_superuser=False
+                ),
+                config_id=config_id,
             )
             if kind and config and not config.is_active:
                 raise RuntimeError(f"Cannot delete inactive {kind} config")

@@ -611,10 +611,10 @@ class TestGlobalChatAuthorization:
 
         chat_uuid = loop.run_until_complete(setup())
 
-        # Try to delete as regular user - should fail with 403
+        # Try to delete as regular user - should fail with 404
         response = client.delete(f"/chats/{chat_uuid}", headers=headers)
-        assert response.status_code == 403
-        assert "Cannot delete global chats" in response.json()["detail"]
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
     def test_superuser_cannot_delete_other_user_chat(
         self, client: TestClient, regular_user_token: str
@@ -736,13 +736,13 @@ class TestGlobalChatAuthorization:
 
         chat_uuid, message_uuid = loop.run_until_complete(setup())
 
-        # Try to delete message as regular user - should fail with 403
+        # Try to delete message as regular user - should fail with 404
         response = client.delete(
             f"/chats/{chat_uuid}/messages/{message_uuid}",
             headers=headers,
         )
-        assert response.status_code == 403
-        assert "Cannot delete messages in global chats" in response.json()["detail"]
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
     def test_superuser_can_delete_message_in_global_chat(self, client: TestClient):
         """Test that superuser can delete messages in global chats."""
@@ -824,7 +824,7 @@ class TestChatDeleteAuthorization:
     """Test authorization for chat deletion across users."""
 
     def test_regular_user_cannot_delete_global_chat(self, client, regular_user_token):
-        """Verify 403 error when regular user tries to delete global chat."""
+        """Verify 404 error when regular user tries to delete global chat."""
         from fivccliche.modules.agent_chats import utils as chat_methods
 
         session = client.async_session
@@ -844,8 +844,8 @@ class TestChatDeleteAuthorization:
         # Try to delete as regular user
         headers = {"Authorization": f"Bearer {regular_user_token}"}
         response = client.delete(f"/chats/{chat_uuid}", headers=headers)
-        assert response.status_code == 403
-        assert "cannot delete global chats" in response.json()["detail"].lower()
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
     def test_regular_user_cannot_delete_other_users_chat(self, client, regular_user_token):
         """Verify 404 when regular user tries to delete another user's chat (not visible)."""
@@ -942,7 +942,7 @@ class TestMessageDeleteAuthorization:
     """Test authorization for message deletion across users."""
 
     def test_regular_user_cannot_delete_message_in_global_chat(self, client, regular_user_token):
-        """Verify 403 error when regular user tries to delete message in global chat."""
+        """Verify 404 error when regular user tries to delete message in global chat."""
         from fivccliche.modules.agent_chats import utils as chat_methods
 
         session = client.async_session
@@ -972,8 +972,8 @@ class TestMessageDeleteAuthorization:
             f"/chats/{chat_uuid}/messages/{message_uuid}",
             headers=headers,
         )
-        assert response.status_code == 403
-        assert "cannot delete messages in global chats" in response.json()["detail"].lower()
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
     def test_regular_user_cannot_delete_message_in_other_users_chat(
         self, client, regular_user_token
@@ -1515,9 +1515,9 @@ class TestCreateChatMessages:
             json={"query": "Hello"},
             headers=headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
         data = response.json()
-        assert "Cannot message global chats" in data["detail"]
+        assert "not found" in data["detail"].lower()
 
     def test_create_message_missing_query_field(self, client: TestClient, auth_token: str):
         """Test creating message without query field."""
@@ -1617,6 +1617,7 @@ class TestChatContextFlow:
     def test_chat_context_retrieved_in_service_layer(self, client: TestClient, auth_token: str):
         """Test that context can be retrieved in the service layer."""
         from fivccliche.modules.agent_chats import utils as chat_methods
+        from fivccliche.modules.agent_chats.filters import ChatFilterSet
         from fivccliche.modules.users.utils import get_user_async
 
         session = client.async_session
@@ -1637,7 +1638,9 @@ class TestChatContextFlow:
 
             # Retrieve the chat
             retrieved_chat = await chat_methods.get_chat_async(
-                session, chat.uuid, str(admin_user.uuid)
+                session,
+                chat.uuid,
+                filters=ChatFilterSet(str(admin_user.uuid), is_superuser=admin_user.is_superuser),
             )
             assert retrieved_chat is not None
             assert retrieved_chat.context == context_data

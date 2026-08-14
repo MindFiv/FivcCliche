@@ -13,7 +13,7 @@ from fivcplayground.agents.types import AgentConfig
 from fivcplayground.tools.types import ToolConfig
 
 from fivccliche.modules.agent_configs import models, utils as methods
-from fivccliche.modules.agent_configs.filters import QuestionFilterSet
+from fivccliche.modules.agent_configs.filters import QuestionFilterSet, UserScopedReadableFilterSet
 from fivccliche.modules.agent_configs.services import (
     UserEmbeddingRepositoryImpl,
     UserLLMRepositoryImpl,
@@ -148,7 +148,12 @@ class TestEmbeddingConfigService:
         )
         created = await methods.create_embedding_config_async(session, "user123", config_create)
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserEmbedding, "user123", config_uuid=created.uuid
+            session,
+            models.UserEmbedding,
+            filters=UserScopedReadableFilterSet(
+                models.UserEmbedding.user_uuid, "user123", is_superuser=False
+            ),
+            config_uuid=created.uuid,
         )
 
         assert retrieved is not None
@@ -166,7 +171,12 @@ class TestEmbeddingConfigService:
         created = await methods.create_embedding_config_async(session, "user123", config_create)
         # User456 should not be able to access user123's config
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserEmbedding, created.uuid, config_uuid="user456"
+            session,
+            models.UserEmbedding,
+            filters=UserScopedReadableFilterSet(
+                models.UserEmbedding.user_uuid, created.uuid, is_superuser=False
+            ),
+            config_uuid="user456",
         )
 
         assert retrieved is None
@@ -190,10 +200,20 @@ class TestEmbeddingConfigService:
 
         # Any user should be able to access the global config
         retrieved_user1 = await methods.get_user_scoped_async(
-            session, models.UserEmbedding, "user123", config_uuid=config_uuid
+            session,
+            models.UserEmbedding,
+            filters=UserScopedReadableFilterSet(
+                models.UserEmbedding.user_uuid, "user123", is_superuser=False
+            ),
+            config_uuid=config_uuid,
         )
         retrieved_user2 = await methods.get_user_scoped_async(
-            session, models.UserEmbedding, "user456", config_uuid=config_uuid
+            session,
+            models.UserEmbedding,
+            filters=UserScopedReadableFilterSet(
+                models.UserEmbedding.user_uuid, "user456", is_superuser=False
+            ),
+            config_uuid=config_uuid,
         )
 
         assert retrieved_user1 is not None, "User1 should be able to access global config"
@@ -213,7 +233,13 @@ class TestEmbeddingConfigService:
             await methods.create_embedding_config_async(session, "user123", config_create)
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserEmbedding, "user123", skip=0, limit=100
+            session,
+            models.UserEmbedding,
+            filters=UserScopedReadableFilterSet(
+                models.UserEmbedding.user_uuid, "user123", is_superuser=False
+            ),
+            skip=0,
+            limit=100,
         )
         assert len(configs) == 3
         assert [config.id for config in configs] == [
@@ -234,7 +260,13 @@ class TestEmbeddingConfigService:
             await methods.create_embedding_config_async(session, "user123", config_create)
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserEmbedding, "user123", skip=1, limit=1
+            session,
+            models.UserEmbedding,
+            filters=UserScopedReadableFilterSet(
+                models.UserEmbedding.user_uuid, "user123", is_superuser=False
+            ),
+            skip=1,
+            limit=1,
         )
 
         assert [config.id for config in configs] == ["embedding-page-bravo"]
@@ -251,7 +283,13 @@ class TestEmbeddingConfigService:
             await methods.create_embedding_config_async(session, "user123", config_create)
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserEmbedding, "user123", skip=0, limit=2
+            session,
+            models.UserEmbedding,
+            filters=UserScopedReadableFilterSet(
+                models.UserEmbedding.user_uuid, "user123", is_superuser=False
+            ),
+            skip=0,
+            limit=2,
         )
         assert len(configs) == 2
 
@@ -314,7 +352,12 @@ class TestEmbeddingConfigService:
         await session.commit()
 
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserEmbedding, config.uuid, config_uuid="user123"
+            session,
+            models.UserEmbedding,
+            filters=UserScopedReadableFilterSet(
+                models.UserEmbedding.user_uuid, config.uuid, is_superuser=False
+            ),
+            config_uuid="user123",
         )
         assert retrieved is None
 
@@ -329,7 +372,13 @@ class TestEmbeddingConfigService:
             )
             await methods.create_embedding_config_async(session, "user123", config_create)
 
-        count = await methods.count_user_scoped_async(session, models.UserEmbedding, "user123")
+        count = await methods.count_user_scoped_async(
+            session,
+            models.UserEmbedding,
+            filters=UserScopedReadableFilterSet(
+                models.UserEmbedding.user_uuid, "user123", is_superuser=False
+            ),
+        )
         assert count == 3
 
     async def test_list_embedding_configs_includes_global(self, session: AsyncSession):
@@ -360,7 +409,13 @@ class TestEmbeddingConfigService:
 
         # List should include both user-specific and global configs
         configs = await methods.list_user_scoped_async(
-            session, models.UserEmbedding, "user123", skip=0, limit=100
+            session,
+            models.UserEmbedding,
+            filters=UserScopedReadableFilterSet(
+                models.UserEmbedding.user_uuid, "user123", is_superuser=False
+            ),
+            skip=0,
+            limit=100,
         )
         assert len(configs) == 3  # 2 user-specific + 1 global
 
@@ -397,7 +452,13 @@ class TestEmbeddingConfigService:
         await session.commit()
 
         # Count should include both user-specific and global configs
-        count = await methods.count_user_scoped_async(session, models.UserEmbedding, "user456")
+        count = await methods.count_user_scoped_async(
+            session,
+            models.UserEmbedding,
+            filters=UserScopedReadableFilterSet(
+                models.UserEmbedding.user_uuid, "user456", is_superuser=False
+            ),
+        )
         assert count == 3  # 2 user-specific + 1 global
 
 
@@ -434,7 +495,12 @@ class TestLLMConfigService:
         )
         created = await methods.create_llm_config_async(session, "user123", config_create)
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserLLM, "user123", config_uuid=created.uuid
+            session,
+            models.UserLLM,
+            filters=UserScopedReadableFilterSet(
+                models.UserLLM.user_uuid, "user123", is_superuser=False
+            ),
+            config_uuid=created.uuid,
         )
 
         assert retrieved is not None
@@ -452,7 +518,13 @@ class TestLLMConfigService:
             await methods.create_llm_config_async(session, "user123", config_create)
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserLLM, "user123", skip=0, limit=100
+            session,
+            models.UserLLM,
+            filters=UserScopedReadableFilterSet(
+                models.UserLLM.user_uuid, "user123", is_superuser=False
+            ),
+            skip=0,
+            limit=100,
         )
         assert len(configs) == 3
         assert [config.id for config in configs] == [
@@ -523,7 +595,12 @@ class TestLLMConfigService:
         await session.commit()
 
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserLLM, config.uuid, config_uuid="user123"
+            session,
+            models.UserLLM,
+            filters=UserScopedReadableFilterSet(
+                models.UserLLM.user_uuid, config.uuid, is_superuser=False
+            ),
+            config_uuid="user123",
         )
         assert retrieved is None
 
@@ -538,7 +615,13 @@ class TestLLMConfigService:
             )
             await methods.create_llm_config_async(session, "user123", config_create)
 
-        count = await methods.count_user_scoped_async(session, models.UserLLM, "user123")
+        count = await methods.count_user_scoped_async(
+            session,
+            models.UserLLM,
+            filters=UserScopedReadableFilterSet(
+                models.UserLLM.user_uuid, "user123", is_superuser=False
+            ),
+        )
         assert count == 3
 
     async def test_get_llm_config_global_accessible(self, session: AsyncSession):
@@ -560,10 +643,20 @@ class TestLLMConfigService:
 
         # Any user should be able to access the global config
         retrieved_user1 = await methods.get_user_scoped_async(
-            session, models.UserLLM, "user123", config_uuid=config_uuid
+            session,
+            models.UserLLM,
+            filters=UserScopedReadableFilterSet(
+                models.UserLLM.user_uuid, "user123", is_superuser=False
+            ),
+            config_uuid=config_uuid,
         )
         retrieved_user2 = await methods.get_user_scoped_async(
-            session, models.UserLLM, "user456", config_uuid=config_uuid
+            session,
+            models.UserLLM,
+            filters=UserScopedReadableFilterSet(
+                models.UserLLM.user_uuid, "user456", is_superuser=False
+            ),
+            config_uuid=config_uuid,
         )
 
         assert retrieved_user1 is not None
@@ -602,7 +695,13 @@ class TestLLMConfigService:
 
         # List should include both user-specific and global configs
         configs = await methods.list_user_scoped_async(
-            session, models.UserLLM, "user123", skip=0, limit=100
+            session,
+            models.UserLLM,
+            filters=UserScopedReadableFilterSet(
+                models.UserLLM.user_uuid, "user123", is_superuser=False
+            ),
+            skip=0,
+            limit=100,
         )
         assert len(configs) == 3  # 2 user-specific + 1 global
 
@@ -639,7 +738,13 @@ class TestLLMConfigService:
         await session.commit()
 
         # Count should include both user-specific and global configs
-        count = await methods.count_user_scoped_async(session, models.UserLLM, "user456")
+        count = await methods.count_user_scoped_async(
+            session,
+            models.UserLLM,
+            filters=UserScopedReadableFilterSet(
+                models.UserLLM.user_uuid, "user456", is_superuser=False
+            ),
+        )
         assert count == 3  # 2 user-specific + 1 global
 
 
@@ -673,7 +778,12 @@ class TestAgentConfigService:
         )
         created = await methods.create_agent_config_async(session, "user123", config_create)
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserAgent, "user123", config_uuid=created.uuid
+            session,
+            models.UserAgent,
+            filters=UserScopedReadableFilterSet(
+                models.UserAgent.user_uuid, "user123", is_superuser=False
+            ),
+            config_uuid=created.uuid,
         )
 
         assert retrieved is not None
@@ -689,7 +799,13 @@ class TestAgentConfigService:
             await methods.create_agent_config_async(session, "user123", config_create)
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserAgent, "user123", skip=0, limit=100
+            session,
+            models.UserAgent,
+            filters=UserScopedReadableFilterSet(
+                models.UserAgent.user_uuid, "user123", is_superuser=False
+            ),
+            skip=0,
+            limit=100,
         )
         assert len(configs) == 3
         assert [config.id for config in configs] == [
@@ -762,7 +878,12 @@ class TestAgentConfigService:
         await session.commit()
 
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserAgent, config.uuid, config_uuid="user123"
+            session,
+            models.UserAgent,
+            filters=UserScopedReadableFilterSet(
+                models.UserAgent.user_uuid, config.uuid, is_superuser=False
+            ),
+            config_uuid="user123",
         )
         assert retrieved is None
 
@@ -775,7 +896,13 @@ class TestAgentConfigService:
             )
             await methods.create_agent_config_async(session, "user123", config_create)
 
-        count = await methods.count_user_scoped_async(session, models.UserAgent, "user123")
+        count = await methods.count_user_scoped_async(
+            session,
+            models.UserAgent,
+            filters=UserScopedReadableFilterSet(
+                models.UserAgent.user_uuid, "user123", is_superuser=False
+            ),
+        )
         assert count == 3
 
     async def test_get_agent_config_global_accessible(self, session: AsyncSession):
@@ -796,10 +923,20 @@ class TestAgentConfigService:
 
         # Any user should be able to access the global config
         retrieved_user1 = await methods.get_user_scoped_async(
-            session, models.UserAgent, "user123", config_uuid=config_uuid
+            session,
+            models.UserAgent,
+            filters=UserScopedReadableFilterSet(
+                models.UserAgent.user_uuid, "user123", is_superuser=False
+            ),
+            config_uuid=config_uuid,
         )
         retrieved_user2 = await methods.get_user_scoped_async(
-            session, models.UserAgent, "user456", config_uuid=config_uuid
+            session,
+            models.UserAgent,
+            filters=UserScopedReadableFilterSet(
+                models.UserAgent.user_uuid, "user456", is_superuser=False
+            ),
+            config_uuid=config_uuid,
         )
 
         assert retrieved_user1 is not None
@@ -835,7 +972,13 @@ class TestAgentConfigService:
 
         # List should include both user-specific and global configs
         configs = await methods.list_user_scoped_async(
-            session, models.UserAgent, "user123", skip=0, limit=100
+            session,
+            models.UserAgent,
+            filters=UserScopedReadableFilterSet(
+                models.UserAgent.user_uuid, "user123", is_superuser=False
+            ),
+            skip=0,
+            limit=100,
         )
         assert len(configs) == 3  # 2 user-specific + 1 global
 
@@ -869,7 +1012,13 @@ class TestAgentConfigService:
         await session.commit()
 
         # Count should include both user-specific and global configs
-        count = await methods.count_user_scoped_async(session, models.UserAgent, "user456")
+        count = await methods.count_user_scoped_async(
+            session,
+            models.UserAgent,
+            filters=UserScopedReadableFilterSet(
+                models.UserAgent.user_uuid, "user456", is_superuser=False
+            ),
+        )
         assert count == 3  # 2 user-specific + 1 global
 
 
@@ -892,7 +1041,12 @@ class TestEmbeddingRepositoryImpl:
 
         # Verify it was created
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserEmbedding, "user123", config_id="repo-embedding-1"
+            session,
+            models.UserEmbedding,
+            filters=UserScopedReadableFilterSet(
+                models.UserEmbedding.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="repo-embedding-1",
         )
         assert retrieved is not None
         assert retrieved.dimension == 1536
@@ -923,7 +1077,12 @@ class TestEmbeddingRepositoryImpl:
 
         # Verify it was updated
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserEmbedding, "user123", config_id="repo-embedding-2"
+            session,
+            models.UserEmbedding,
+            filters=UserScopedReadableFilterSet(
+                models.UserEmbedding.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="repo-embedding-2",
         )
         assert retrieved.dimension == 3072
 
@@ -988,7 +1147,12 @@ class TestEmbeddingRepositoryImpl:
 
         # Verify it was deleted
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserEmbedding, "repo-embedding-delete", config_uuid="user123"
+            session,
+            models.UserEmbedding,
+            filters=UserScopedReadableFilterSet(
+                models.UserEmbedding.user_uuid, "repo-embedding-delete", is_superuser=False
+            ),
+            config_uuid="user123",
         )
         assert retrieved is None
 
@@ -1014,7 +1178,12 @@ class TestLLMRepositoryImpl:
 
         # Verify it was created
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserLLM, "user123", config_id="repo-llm-1"
+            session,
+            models.UserLLM,
+            filters=UserScopedReadableFilterSet(
+                models.UserLLM.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="repo-llm-1",
         )
         assert retrieved is not None
         assert retrieved.temperature == 0.7
@@ -1048,7 +1217,12 @@ class TestLLMRepositoryImpl:
 
         # Verify it was updated
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserLLM, "user123", config_id="repo-llm-2"
+            session,
+            models.UserLLM,
+            filters=UserScopedReadableFilterSet(
+                models.UserLLM.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="repo-llm-2",
         )
         assert retrieved.temperature == 0.9
         assert retrieved.enable_thinking is False
@@ -1116,7 +1290,12 @@ class TestLLMRepositoryImpl:
 
         # Verify it was deleted
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserLLM, "repo-llm-delete", config_uuid="user123"
+            session,
+            models.UserLLM,
+            filters=UserScopedReadableFilterSet(
+                models.UserLLM.user_uuid, "repo-llm-delete", is_superuser=False
+            ),
+            config_uuid="user123",
         )
         assert retrieved is None
 
@@ -1140,7 +1319,12 @@ class TestAgentRepositoryImpl:
 
         # Verify it was created
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserAgent, "user123", config_id="repo-agent-1"
+            session,
+            models.UserAgent,
+            filters=UserScopedReadableFilterSet(
+                models.UserAgent.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="repo-agent-1",
         )
         assert retrieved is not None
         assert retrieved.system_prompt == "You are helpful"
@@ -1171,7 +1355,12 @@ class TestAgentRepositoryImpl:
 
         # Verify it was updated
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserAgent, "user123", config_id="repo-agent-2"
+            session,
+            models.UserAgent,
+            filters=UserScopedReadableFilterSet(
+                models.UserAgent.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="repo-agent-2",
         )
         assert retrieved.system_prompt == "New prompt"
 
@@ -1230,7 +1419,12 @@ class TestAgentRepositoryImpl:
 
         # Verify it was deleted
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserAgent, "repo-agent-delete", config_uuid="user123"
+            session,
+            models.UserAgent,
+            filters=UserScopedReadableFilterSet(
+                models.UserAgent.user_uuid, "repo-agent-delete", is_superuser=False
+            ),
+            config_uuid="user123",
         )
         assert retrieved is None
 
@@ -1273,7 +1467,12 @@ class TestToolConfigMethods:
         created = await methods.create_tool_config_async(session, "user123", config_create)
 
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserTool, "user123", config_uuid=created.uuid
+            session,
+            models.UserTool,
+            filters=UserScopedReadableFilterSet(
+                models.UserTool.user_uuid, "user123", is_superuser=False
+            ),
+            config_uuid=created.uuid,
         )
 
         assert retrieved is not None
@@ -1291,7 +1490,12 @@ class TestToolConfigMethods:
         await methods.create_tool_config_async(session, "user123", config_create)
 
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserTool, "user123", config_id="test-tool-id"
+            session,
+            models.UserTool,
+            filters=UserScopedReadableFilterSet(
+                models.UserTool.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="test-tool-id",
         )
 
         assert retrieved is not None
@@ -1302,7 +1506,12 @@ class TestToolConfigMethods:
     async def test_get_tool_config_not_found(self, session: AsyncSession):
         """Test getting a non-existent tool config."""
         result = await methods.get_user_scoped_async(
-            session, models.UserTool, "user123", config_id="nonexistent"
+            session,
+            models.UserTool,
+            filters=UserScopedReadableFilterSet(
+                models.UserTool.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="nonexistent",
         )
 
         assert result is None
@@ -1318,7 +1527,13 @@ class TestToolConfigMethods:
             await methods.create_tool_config_async(session, "user123", config)
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserTool, "user123", skip=0, limit=100
+            session,
+            models.UserTool,
+            filters=UserScopedReadableFilterSet(
+                models.UserTool.user_uuid, "user123", is_superuser=False
+            ),
+            skip=0,
+            limit=100,
         )
 
         assert len(configs) == 3
@@ -1340,13 +1555,25 @@ class TestToolConfigMethods:
             await methods.create_tool_config_async(session, "user123", config)
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserTool, "user123", skip=0, limit=2
+            session,
+            models.UserTool,
+            filters=UserScopedReadableFilterSet(
+                models.UserTool.user_uuid, "user123", is_superuser=False
+            ),
+            skip=0,
+            limit=2,
         )
 
         assert len(configs) == 2
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserTool, "user123", skip=2, limit=2
+            session,
+            models.UserTool,
+            filters=UserScopedReadableFilterSet(
+                models.UserTool.user_uuid, "user123", is_superuser=False
+            ),
+            skip=2,
+            limit=2,
         )
 
         assert len(configs) == 2
@@ -1361,7 +1588,13 @@ class TestToolConfigMethods:
             )
             await methods.create_tool_config_async(session, "user123", config)
 
-        count = await methods.count_user_scoped_async(session, models.UserTool, "user123")
+        count = await methods.count_user_scoped_async(
+            session,
+            models.UserTool,
+            filters=UserScopedReadableFilterSet(
+                models.UserTool.user_uuid, "user123", is_superuser=False
+            ),
+        )
 
         assert count == 3
 
@@ -1468,7 +1701,12 @@ class TestToolConfigMethods:
         await session.commit()
 
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserTool, "user123", config_id="tool-delete"
+            session,
+            models.UserTool,
+            filters=UserScopedReadableFilterSet(
+                models.UserTool.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="tool-delete",
         )
         assert retrieved is None
 
@@ -1519,7 +1757,12 @@ class TestToolConfigRepository:
 
         # Verify it was created
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserTool, "user123", config_id="repo-tool"
+            session,
+            models.UserTool,
+            filters=UserScopedReadableFilterSet(
+                models.UserTool.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="repo-tool",
         )
         assert retrieved is not None
         assert retrieved.id == "repo-tool"
@@ -1583,7 +1826,12 @@ class TestToolConfigRepository:
 
         # Verify it was deleted
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserTool, "user123", config_id="repo-tool-delete"
+            session,
+            models.UserTool,
+            filters=UserScopedReadableFilterSet(
+                models.UserTool.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="repo-tool-delete",
         )
         assert retrieved is None
 
@@ -1603,7 +1851,12 @@ class TestToolConfigRepository:
 
         # Verify it was created
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserTool, "user123", config_id="repo-tool-update-1"
+            session,
+            models.UserTool,
+            filters=UserScopedReadableFilterSet(
+                models.UserTool.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="repo-tool-update-1",
         )
         assert retrieved is not None
         assert retrieved.id == "repo-tool-update-1"
@@ -1636,7 +1889,12 @@ class TestToolConfigRepository:
 
         # Verify it was updated
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserTool, "user123", config_id="repo-tool-update-2"
+            session,
+            models.UserTool,
+            filters=UserScopedReadableFilterSet(
+                models.UserTool.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="repo-tool-update-2",
         )
         assert retrieved.description == "Updated description"
         assert retrieved.transport == "sse"
@@ -1671,7 +1929,13 @@ class TestSkillConfigMethods:
             await methods.create_skill_config_async(session, "user123", config_create)
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserSkill, "user123", skip=0, limit=100
+            session,
+            models.UserSkill,
+            filters=UserScopedReadableFilterSet(
+                models.UserSkill.user_uuid, "user123", is_superuser=False
+            ),
+            skip=0,
+            limit=100,
         )
 
         assert [config.id for config in configs] == [
@@ -1759,7 +2023,12 @@ class TestQuestionConfigMethods:
         created = await _create_question_async(session, "user123", config_create)
 
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserQuestion, "user123", config_uuid=created.uuid
+            session,
+            models.UserQuestion,
+            filters=UserScopedReadableFilterSet(
+                models.UserQuestion.user_uuid, "user123", is_superuser=False
+            ),
+            config_uuid=created.uuid,
         )
 
         assert retrieved is not None
@@ -1775,7 +2044,12 @@ class TestQuestionConfigMethods:
         await _create_question_async(session, "user123", config_create)
 
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserQuestion, "user123", config_id="question-id"
+            session,
+            models.UserQuestion,
+            filters=UserScopedReadableFilterSet(
+                models.UserQuestion.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="question-id",
         )
 
         assert retrieved is not None
@@ -1785,7 +2059,12 @@ class TestQuestionConfigMethods:
     async def test_get_question_not_found(self, session: AsyncSession):
         """Test getting a non-existent question config."""
         result = await methods.get_user_scoped_async(
-            session, models.UserQuestion, "user123", config_id="missing"
+            session,
+            models.UserQuestion,
+            filters=UserScopedReadableFilterSet(
+                models.UserQuestion.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="missing",
         )
 
         assert result is None
@@ -1800,7 +2079,13 @@ class TestQuestionConfigMethods:
             await _create_question_async(session, "user123", config_create)
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserQuestion, "user123", skip=0, limit=100
+            session,
+            models.UserQuestion,
+            filters=UserScopedReadableFilterSet(
+                models.UserQuestion.user_uuid, "user123", is_superuser=False
+            ),
+            skip=0,
+            limit=100,
         )
 
         assert len(configs) == 3
@@ -1821,13 +2106,25 @@ class TestQuestionConfigMethods:
             await _create_question_async(session, "user123", config_create)
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserQuestion, "user123", skip=0, limit=2
+            session,
+            models.UserQuestion,
+            filters=UserScopedReadableFilterSet(
+                models.UserQuestion.user_uuid, "user123", is_superuser=False
+            ),
+            skip=0,
+            limit=2,
         )
 
         assert len(configs) == 2
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserQuestion, "user123", skip=2, limit=2
+            session,
+            models.UserQuestion,
+            filters=UserScopedReadableFilterSet(
+                models.UserQuestion.user_uuid, "user123", is_superuser=False
+            ),
+            skip=2,
+            limit=2,
         )
 
         assert len(configs) == 2
@@ -1862,22 +2159,20 @@ class TestQuestionConfigMethods:
             ),
         )
 
-        active_filters = QuestionFilterSet()
+        active_filters = QuestionFilterSet("user123", is_superuser=False)
         active_filters.parse(is_active=True)
         active_configs = await methods.list_user_scoped_async(
             session,
             models.UserQuestion,
-            "user123",
             skip=0,
             limit=100,
             filters=active_filters,
         )
-        inactive_filters = QuestionFilterSet()
+        inactive_filters = QuestionFilterSet("user123", is_superuser=False)
         inactive_filters.parse(is_active=False)
         inactive_configs = await methods.list_user_scoped_async(
             session,
             models.UserQuestion,
-            "user123",
             skip=0,
             limit=100,
             filters=inactive_filters,
@@ -1898,7 +2193,13 @@ class TestQuestionConfigMethods:
             )
             await _create_question_async(session, "user123", config_create)
 
-        count = await methods.count_user_scoped_async(session, models.UserQuestion, "user123")
+        count = await methods.count_user_scoped_async(
+            session,
+            models.UserQuestion,
+            filters=UserScopedReadableFilterSet(
+                models.UserQuestion.user_uuid, "user123", is_superuser=False
+            ),
+        )
 
         assert count == 3
 
@@ -1923,20 +2224,18 @@ class TestQuestionConfigMethods:
             ),
         )
 
-        active_filters = QuestionFilterSet()
+        active_filters = QuestionFilterSet("user123", is_superuser=False)
         active_filters.parse(is_active=True)
         active_count = await methods.count_user_scoped_async(
             session,
             models.UserQuestion,
-            "user123",
             filters=active_filters,
         )
-        inactive_filters = QuestionFilterSet()
+        inactive_filters = QuestionFilterSet("user123", is_superuser=False)
         inactive_filters.parse(is_active=False)
         inactive_count = await methods.count_user_scoped_async(
             session,
             models.UserQuestion,
-            "user123",
             filters=inactive_filters,
         )
 
@@ -2016,7 +2315,12 @@ class TestQuestionConfigMethods:
         await session.commit()
 
         retrieved = await methods.get_user_scoped_async(
-            session, models.UserQuestion, "user123", config_id="question-delete"
+            session,
+            models.UserQuestion,
+            filters=UserScopedReadableFilterSet(
+                models.UserQuestion.user_uuid, "user123", is_superuser=False
+            ),
+            config_id="question-delete",
         )
         assert retrieved is None
 
@@ -2029,10 +2333,20 @@ class TestQuestionConfigMethods:
         created = await _create_question_async(session, None, config_create)
 
         retrieved_user1 = await methods.get_user_scoped_async(
-            session, models.UserQuestion, "user123", config_uuid=created.uuid
+            session,
+            models.UserQuestion,
+            filters=UserScopedReadableFilterSet(
+                models.UserQuestion.user_uuid, "user123", is_superuser=False
+            ),
+            config_uuid=created.uuid,
         )
         retrieved_user2 = await methods.get_user_scoped_async(
-            session, models.UserQuestion, "user456", config_uuid=created.uuid
+            session,
+            models.UserQuestion,
+            filters=UserScopedReadableFilterSet(
+                models.UserQuestion.user_uuid, "user456", is_superuser=False
+            ),
+            config_uuid=created.uuid,
         )
 
         assert retrieved_user1 is not None
@@ -2054,7 +2368,13 @@ class TestQuestionConfigMethods:
         )
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserQuestion, "user123", skip=0, limit=100
+            session,
+            models.UserQuestion,
+            filters=UserScopedReadableFilterSet(
+                models.UserQuestion.user_uuid, "user123", is_superuser=False
+            ),
+            skip=0,
+            limit=100,
         )
         ids = {config.id for config in configs}
 
@@ -2073,7 +2393,13 @@ class TestQuestionConfigMethods:
             schemas.UserQuestionSchema(id="global-count-question", question="Global question?"),
         )
 
-        count = await methods.count_user_scoped_async(session, models.UserQuestion, "user456")
+        count = await methods.count_user_scoped_async(
+            session,
+            models.UserQuestion,
+            filters=UserScopedReadableFilterSet(
+                models.UserQuestion.user_uuid, "user456", is_superuser=False
+            ),
+        )
 
         assert count == 2
 

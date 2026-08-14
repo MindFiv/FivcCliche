@@ -7,8 +7,11 @@ from sqlalchemy import JSON, Column, String, select
 from sqlalchemy.orm import declarative_base
 
 from fivccliche.utils.filters import (
+    FilterEditableField,
     FilterError,
+    FilterField,
     FilterJsonField,
+    FilterReadableField,
     FilterSet,
     FilterSimpleField,
 )
@@ -150,3 +153,127 @@ def test_fields_property_is_read_only_tuple():
     fs = make_filterset()
     assert isinstance(fs.fields, tuple)
     assert [field.name for field in fs.fields] == ["agent_id", "context", "options"]
+
+
+class FixedOwnerField(FilterField):
+    """Fixed predicate that does not depend on query params."""
+
+    def __init__(self, owner_uuid: str) -> None:
+        self._owner_uuid = owner_uuid
+
+    @property
+    def name(self) -> str:
+        return "owner"
+
+    def filter(self, statement: object) -> object:
+        return statement.where(QueryTestModel.uuid == self._owner_uuid)
+
+
+def test_fixed_field_applies_without_parse():
+    fs = FilterSet([FixedOwnerField("user-1")])
+    compiled = compile_statement(fs.filter(select(QueryTestModel)))
+
+    assert "user-1" in compiled
+
+
+def test_fixed_field_combines_with_simple_field():
+    fs = FilterSet(
+        [
+            FixedOwnerField("user-1"),
+            FilterSimpleField("agent_id", QueryTestModel.agent_id, operator.eq),
+        ]
+    )
+    fs.parse(agent_id="agent_1")
+    compiled = compile_statement(fs.filter(select(QueryTestModel)))
+
+    assert "user-1" in compiled
+    assert "agent_1" in compiled
+
+
+class OwnershipTestModel(Base):
+    """Model with a nullable owner column for readable/editable fields."""
+
+    __tablename__ = "ownership_test_model"
+
+    uuid = Column(String, primary_key=True)
+    user_uuid = Column(String)
+
+
+def test_readable_field_includes_own_and_global_for_regular_user():
+    fs = FilterSet(
+        [
+            FilterReadableField(
+                "readable",
+                OwnershipTestModel.user_uuid,
+                "user-1",
+                is_superuser=False,
+            )
+        ]
+    )
+    compiled = compile_statement(fs.filter(select(OwnershipTestModel)))
+
+    assert "user-1" in compiled
+    assert "IS NULL" in compiled.upper() or " = NULL" in compiled.upper() or "IS NULL" in compiled
+
+
+def test_readable_field_same_predicate_for_superuser():
+    regular = compile_statement(
+        FilterSet(
+            [
+                FilterReadableField(
+                    "readable",
+                    OwnershipTestModel.user_uuid,
+                    "user-1",
+                    is_superuser=False,
+                )
+            ]
+        ).filter(select(OwnershipTestModel))
+    )
+    admin = compile_statement(
+        FilterSet(
+            [
+                FilterReadableField(
+                    "readable",
+                    OwnershipTestModel.user_uuid,
+                    "user-1",
+                    is_superuser=True,
+                )
+            ]
+        ).filter(select(OwnershipTestModel))
+    )
+
+    assert regular == admin
+
+
+def test_editable_field_own_only_for_regular_user():
+    fs = FilterSet(
+        [
+            FilterEditableField(
+                "editable",
+                OwnershipTestModel.user_uuid,
+                "user-1",
+                is_superuser=False,
+            )
+        ]
+    )
+    compiled = compile_statement(fs.filter(select(OwnershipTestModel)))
+
+    assert "user-1" in compiled
+    assert "IS NULL" not in compiled.upper()
+
+
+def test_editable_field_own_or_global_for_superuser():
+    fs = FilterSet(
+        [
+            FilterEditableField(
+                "editable",
+                OwnershipTestModel.user_uuid,
+                "user-1",
+                is_superuser=True,
+            )
+        ]
+    )
+    compiled = compile_statement(fs.filter(select(OwnershipTestModel)))
+
+    assert "user-1" in compiled
+    assert "IS NULL" in compiled.upper() or "NULL" in compiled.upper()

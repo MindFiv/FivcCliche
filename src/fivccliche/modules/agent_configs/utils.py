@@ -17,21 +17,19 @@ TConfig = TypeVar("TConfig", bound=SQLModel)
 async def get_user_scoped_async(
     session: AsyncSession,
     model: type[TConfig],
-    user_uuid: str,
     *,
+    filters: FilterSet,
     config_uuid: str | None = None,
     config_id: str | None = None,
 ) -> TConfig | None:
-    """Get a user-scoped config by uuid or id (user-owned or global)."""
+    """Get a user-scoped config by uuid or id (visibility via ``filters``)."""
     if (config_uuid is None) == (config_id is None):
         raise ValueError("Exactly one of config_uuid or config_id must be provided")
 
     table = cast(Any, model)
     identity = table.uuid == config_uuid if config_uuid is not None else table.id == config_id
-    statement = select(model).where(
-        identity,
-        (table.user_uuid == user_uuid) | (table.user_uuid == None),  # noqa: E711
-    )
+    statement = select(model).where(identity)
+    statement = filters.filter(statement)
     result = await session.execute(statement)
     return result.scalars().first()
 
@@ -39,23 +37,15 @@ async def get_user_scoped_async(
 async def list_user_scoped_async(
     session: AsyncSession,
     model: type[TConfig],
-    user_uuid: str,
     *,
+    filters: FilterSet,
     skip: int = 0,
     limit: int = 100,
-    filters: FilterSet | None = None,
 ) -> list[TConfig]:
-    """List user-owned and global configs, ordered by id."""
+    """List user-scoped configs ordered by id (visibility via ``filters``)."""
     table = cast(Any, model)
-    statement = (
-        select(model)
-        .where((table.user_uuid == user_uuid) | (table.user_uuid == None))  # noqa: E711
-        .order_by(col(table.id).asc())
-        .offset(skip)
-        .limit(limit)
-    )
-    if filters is not None:
-        statement = filters.filter(statement)
+    statement = select(model).order_by(col(table.id).asc()).offset(skip).limit(limit)
+    statement = filters.filter(statement)
     result = await session.execute(statement)
     return list(result.scalars().all())
 
@@ -63,17 +53,13 @@ async def list_user_scoped_async(
 async def count_user_scoped_async(
     session: AsyncSession,
     model: type[TConfig],
-    user_uuid: str,
     *,
-    filters: FilterSet | None = None,
+    filters: FilterSet,
 ) -> int:
-    """Count user-owned and global configs."""
+    """Count user-scoped configs (visibility via ``filters``)."""
     table = cast(Any, model)
-    statement = select(func.count(col(table.uuid))).where(
-        (table.user_uuid == user_uuid) | (table.user_uuid == None)  # noqa: E711
-    )
-    if filters is not None:
-        statement = filters.filter(statement)
+    statement = select(func.count(col(table.uuid)))
+    statement = filters.filter(statement)
     result = await session.execute(statement)
     return result.scalar() or 0
 

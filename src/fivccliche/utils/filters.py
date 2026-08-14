@@ -13,23 +13,29 @@ class FilterError(ValueError):
 
 
 class FilterField(ABC):
-    """Bind a query param key to a column predicate.
+    """Bind filter state to a SQLAlchemy statement.
 
-    Subclasses must implement ``name`` and ``filter``.
+    Subclasses must implement ``name`` and ``filter``. Query-bound fields
+    override ``parse`` to store values; fixed fields may set state in
+    ``__init__`` and leave ``parse`` as a no-op.
     """
 
     @property
     @abstractmethod
     def name(self) -> str:
-        """Query param root name for this field."""
+        """Identity / query param root name for this field."""
+
+    def parse(self, value: Any) -> None:
+        """Store a value for later ``filter``. Default is a no-op."""
+        return None
 
     @abstractmethod
-    def filter(self, statement: Any, key: str, value: Any) -> Any:
-        """Apply this field's predicate for ``key``/``value`` to ``statement``."""
+    def filter(self, statement: Any) -> Any:
+        """Apply this field's predicate to ``statement``, or return it unchanged."""
 
 
 class FilterSimpleField(FilterField):
-    """Exact match on a scalar column when ``key`` equals ``name``."""
+    """Exact match on a scalar column when a non-empty value was parsed."""
 
     def __init__(
         self,
@@ -40,21 +46,23 @@ class FilterSimpleField(FilterField):
         self._name = name
         self.col = col
         self.op = op
+        self._value: Any = None
 
     @property
     def name(self) -> str:
         return self._name
 
-    def filter(self, statement: Any, key: str, value: Any) -> Any:
-        if key != self.name:
+    def parse(self, value: Any) -> None:
+        self._value = value
+
+    def filter(self, statement: Any) -> Any:
+        if self._value is None or self._value == "":
             return statement
-        if value is None or value == "":
-            return statement
-        return statement.where(self.op(self.col, value))
+        return statement.where(self.op(self.col, self._value))
 
 
 class FilterJsonField(FilterField):
-    """Match ``name.key=value`` or a grouped ``name={...}`` mapping on a JSON column."""
+    """Match top-level keys on a JSON column from a parsed mapping."""
 
     def __init__(
         self,
@@ -65,27 +73,77 @@ class FilterJsonField(FilterField):
         self._name = name
         self.col = col
         self.op = op
+        self._value: Any = None
 
     @property
     def name(self) -> str:
         return self._name
 
-    def filter(self, statement: Any, key: str, value: Any) -> Any:
-        if key == self.name:
-            if not isinstance(value, Mapping):
-                raise FilterError(f"JSON filters must use {self.name}.<key> query parameters")
-            for json_key, json_value in value.items():
-                statement = statement.where(
-                    self.op(self.col[str(json_key)].as_string(), str(json_value))
-                )
-            return statement
+    def parse(self, value: Any) -> None:
+        self._value = value
 
-        root, _separator, json_key = key.partition(".")
-        if root != self.name or not json_key:
+    def filter(self, statement: Any) -> Any:
+        if self._value is None:
             return statement
-        if value is None or value == "":
-            return statement
-        return statement.where(self.op(self.col[json_key].as_string(), str(value)))
+        if not isinstance(self._value, Mapping):
+            raise FilterError(f"JSON filters must use {self.name}.<key> query parameters")
+        for json_key, json_value in self._value.items():
+            statement = statement.where(
+                self.op(self.col[str(json_key)].as_string(), str(json_value))
+            )
+        return statement
+
+
+class FilterReadableField(FilterField):
+    """Rows the user may read: owned or global (same for regular and superuser today)."""
+
+    def __init__(
+        self,
+        name: str,
+        col: Any,
+        user_uuid: str,
+        *,
+        is_superuser: bool,
+    ) -> None:
+        self._name = name
+        self.col = col
+        self.user_uuid = user_uuid
+        self.is_superuser = is_superuser
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def filter(self, statement: Any) -> Any:
+        # is_superuser is accepted for API symmetry with Editable; predicate matches
+        # current list/get visibility for both roles (own or global, not others').
+        return statement.where((self.col == self.user_uuid) | (self.col == None))  # noqa: E711
+
+
+class FilterEditableField(FilterField):
+    """Rows the user may edit: owned only; superusers may also edit globals."""
+
+    def __init__(
+        self,
+        name: str,
+        col: Any,
+        user_uuid: str,
+        *,
+        is_superuser: bool,
+    ) -> None:
+        self._name = name
+        self.col = col
+        self.user_uuid = user_uuid
+        self.is_superuser = is_superuser
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def filter(self, statement: Any) -> Any:
+        if self.is_superuser:
+            return statement.where((self.col == self.user_uuid) | (self.col == None))  # noqa: E711
+        return statement.where(self.col == self.user_uuid)
 
 
 class FilterSet:
@@ -93,7 +151,6 @@ class FilterSet:
 
     def __init__(self, fields: Sequence[FilterField]) -> None:
         self._fields: tuple[FilterField, ...] = tuple(fields)
-        self._params: dict[str, Any] | None = None
 
     @property
     def fields(self) -> tuple[FilterField, ...]:
@@ -110,23 +167,22 @@ class FilterSet:
             if not json_key or "." in json_key:
                 raise FilterError(f"JSON filters only support top-level keys under '{root}'")
 
-        self._params = dict(query_params)
-
-    def filter(self, statement: Any) -> Any:
-        if self._params is None:
-            return statement
-        for key, value in self._params.items():
-            field = self._resolve_field(key)
-            if field is None:
-                continue
-            statement = field.filter(statement, key, value)
-        return statement
-
-    def _resolve_field(self, key: str) -> FilterField | None:
         for field in self._fields:
             if isinstance(field, FilterJsonField):
-                if key == field.name or key.startswith(f"{field.name}."):
-                    return field
-            elif key == field.name:
-                return field
-        return None
+                grouped: dict[str, Any] = {}
+                bare = query_params.get(field.name)
+                for query_key, query_value in query_params.items():
+                    root, separator, json_key = query_key.partition(".")
+                    if separator and root == field.name and json_key:
+                        grouped[json_key] = query_value
+                if bare is not None:
+                    field.parse(bare)
+                elif grouped:
+                    field.parse(grouped)
+            elif field.name in query_params:
+                field.parse(query_params[field.name])
+
+    def filter(self, statement: Any) -> Any:
+        for field in self._fields:
+            statement = field.filter(statement)
+        return statement

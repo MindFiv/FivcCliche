@@ -79,24 +79,32 @@ class TestChatMethods:
 
     async def test_get_chat_async(self, session: AsyncSession, test_chat: UserChat):
         """Test getting a chat by UUID."""
-        chat = await methods.get_chat_async(session, test_chat.uuid, test_chat.user_uuid)
+        chat = await methods.get_chat_async(
+            session, test_chat.uuid, filters=ChatFilterSet(test_chat.user_uuid, is_superuser=False)
+        )
         assert chat is not None
         assert chat.uuid == test_chat.uuid
         assert chat.agent_id == "test_agent"
 
     async def test_get_chat_async_not_found(self, session: AsyncSession, test_user):
         """Test getting a non-existent chat."""
-        chat = await methods.get_chat_async(session, "nonexistent", test_user.uuid)
+        chat = await methods.get_chat_async(
+            session, "nonexistent", filters=ChatFilterSet(test_user.uuid, is_superuser=False)
+        )
         assert chat is None
 
     async def test_get_chat_async_wrong_user(self, session: AsyncSession, test_chat: UserChat):
         """Test getting a chat with wrong user UUID."""
-        chat = await methods.get_chat_async(session, test_chat.uuid, "wrong_user_uuid")
+        chat = await methods.get_chat_async(
+            session, test_chat.uuid, filters=ChatFilterSet("wrong_user_uuid", is_superuser=False)
+        )
         assert chat is None
 
     async def test_list_chats_async(self, session: AsyncSession, test_user, test_chat: UserChat):
         """Test listing chats for a user."""
-        chats = await methods.list_chats_async(session, test_user.uuid)
+        chats = await methods.list_chats_async(
+            session, filters=ChatFilterSet(test_user.uuid, is_superuser=False)
+        )
         assert len(chats) == 1
         assert chats[0].uuid == test_chat.uuid
 
@@ -123,7 +131,9 @@ class TestChatMethods:
         session.add_all([oldest_chat, newest_chat, middle_chat])
         await session.commit()
 
-        chats = await methods.list_chats_async(session, test_user.uuid)
+        chats = await methods.list_chats_async(
+            session, filters=ChatFilterSet(test_user.uuid, is_superuser=False)
+        )
 
         assert [chat.uuid for chat in chats] == [
             newest_chat.uuid,
@@ -133,7 +143,9 @@ class TestChatMethods:
 
     async def test_list_chats_async_empty(self, session: AsyncSession, test_user):
         """Test listing chats when none exist."""
-        chats = await methods.list_chats_async(session, test_user.uuid)
+        chats = await methods.list_chats_async(
+            session, filters=ChatFilterSet(test_user.uuid, is_superuser=False)
+        )
         assert len(chats) == 0
 
     async def test_list_chats_async_multiple_users(self, session: AsyncSession, test_user):
@@ -157,12 +169,16 @@ class TestChatMethods:
         await session.commit()
 
         # List chats for user1
-        chats1 = await methods.list_chats_async(session, test_user.uuid)
+        chats1 = await methods.list_chats_async(
+            session, filters=ChatFilterSet(test_user.uuid, is_superuser=False)
+        )
         assert len(chats1) == 1
         assert chats1[0].user_uuid == test_user.uuid
 
         # List chats for user2
-        chats2 = await methods.list_chats_async(session, user2.uuid)
+        chats2 = await methods.list_chats_async(
+            session, filters=ChatFilterSet(user2.uuid, is_superuser=False)
+        )
         assert len(chats2) == 1
         assert chats2[0].user_uuid == user2.uuid
 
@@ -179,10 +195,14 @@ class TestChatMethods:
         await session.commit()
 
         # Test pagination
-        chats = await methods.list_chats_async(session, test_user.uuid, skip=0, limit=2)
+        chats = await methods.list_chats_async(
+            session, filters=ChatFilterSet(test_user.uuid, is_superuser=False), skip=0, limit=2
+        )
         assert len(chats) == 2
 
-        chats = await methods.list_chats_async(session, test_user.uuid, skip=2, limit=2)
+        chats = await methods.list_chats_async(
+            session, filters=ChatFilterSet(test_user.uuid, is_superuser=False), skip=2, limit=2
+        )
         assert len(chats) == 2
 
     async def test_count_chats_async(self, session: AsyncSession, test_user):
@@ -196,7 +216,9 @@ class TestChatMethods:
             session.add(chat)
         await session.commit()
 
-        count = await methods.count_chats_async(session, test_user.uuid)
+        count = await methods.count_chats_async(
+            session, filters=ChatFilterSet(test_user.uuid, is_superuser=False)
+        )
         assert count == 3
 
     async def test_list_chats_async_filters_by_context_profile_uuid(
@@ -217,11 +239,10 @@ class TestChatMethods:
         session.add_all([matching_chat, other_chat, no_context_chat])
         await session.commit()
 
-        filters = ChatFilterSet()
+        filters = ChatFilterSet(test_user.uuid, is_superuser=False)
         filters.parse(context={"profile_uuid": "profile-1"})
         chats = await methods.list_chats_async(
             session,
-            test_user.uuid,
             filters=filters,
         )
 
@@ -248,11 +269,10 @@ class TestChatMethods:
         )
         await session.commit()
 
-        filters = ChatFilterSet()
+        filters = ChatFilterSet(test_user.uuid, is_superuser=False)
         filters.parse(context={"profile_uuid": "profile-1"})
         count = await methods.count_chats_async(
             session,
-            test_user.uuid,
             filters=filters,
         )
 
@@ -275,14 +295,13 @@ class TestChatMethods:
         session.add_all([matching_chat, wrong_agent_chat])
         await session.commit()
 
-        filters = ChatFilterSet()
+        filters = ChatFilterSet(test_user.uuid, is_superuser=False)
         filters.parse(
             agent_id="agent_1",
             context={"profile_uuid": "profile-1"},
         )
         chats = await methods.list_chats_async(
             session,
-            test_user.uuid,
             filters=filters,
         )
 
@@ -310,7 +329,7 @@ class TestChatMethods:
         session.add_all([matching_chat, partial_match_chat, missing_key_chat])
         await session.commit()
 
-        filters = ChatFilterSet()
+        filters = ChatFilterSet(test_user.uuid, is_superuser=False)
         filters.parse(
             context={
                 "profile_uuid": "profile-1",
@@ -319,7 +338,6 @@ class TestChatMethods:
         )
         chats = await methods.list_chats_async(
             session,
-            test_user.uuid,
             filters=filters,
         )
 
@@ -329,7 +347,9 @@ class TestChatMethods:
         """Test deleting a chat."""
         await session.delete(test_chat)
         await session.commit()
-        chat = await methods.get_chat_async(session, test_chat.uuid, test_chat.user_uuid)
+        chat = await methods.get_chat_async(
+            session, test_chat.uuid, filters=ChatFilterSet(test_chat.user_uuid, is_superuser=False)
+        )
         assert chat is None
 
     async def test_create_chat_with_context_async(self, session: AsyncSession, test_user):
@@ -366,7 +386,9 @@ class TestChatMethods:
             agent_id="test_agent",
             context=context,
         )
-        retrieved = await methods.get_chat_async(session, chat.uuid, test_user.uuid)
+        retrieved = await methods.get_chat_async(
+            session, chat.uuid, filters=ChatFilterSet(test_user.uuid, is_superuser=False)
+        )
         assert retrieved is not None
         assert retrieved.context == context
 
@@ -597,7 +619,9 @@ class TestUserChatRepositoryImpl:
         await repository.update_agent_run_session_async(session_data)
 
         # Verify it was created
-        chat = await methods.get_chat_async(session, "chat-1", test_user.uuid)
+        chat = await methods.get_chat_async(
+            session, "chat-1", filters=ChatFilterSet(test_user.uuid, is_superuser=False)
+        )
         assert chat is not None
         assert chat.uuid == "chat-1"
         assert chat.agent_id == "agent1"
@@ -626,7 +650,9 @@ class TestUserChatRepositoryImpl:
         # Verify it was updated (fresh session; repo writes on a different connection)
         engine = create_async_engine(database_url, poolclass=NullPool)
         async with AsyncSession(engine, expire_on_commit=False) as db:
-            chat = await methods.get_chat_async(db, test_chat.uuid, test_user.uuid)
+            chat = await methods.get_chat_async(
+                db, test_chat.uuid, filters=ChatFilterSet(test_user.uuid, is_superuser=False)
+            )
         await engine.dispose()
         assert chat is not None
         assert chat.description == "Updated description"
@@ -717,7 +743,9 @@ class TestUserChatRepositoryImpl:
         await repository.delete_agent_run_session_async(test_chat.uuid)
 
         # Verify it was deleted
-        chat = await methods.get_chat_async(session, test_chat.uuid, test_user.uuid)
+        chat = await methods.get_chat_async(
+            session, test_chat.uuid, filters=ChatFilterSet(test_user.uuid, is_superuser=False)
+        )
         assert chat is None
 
     async def test_delete_agent_run_session_not_found(
@@ -1063,7 +1091,9 @@ class TestUserChatRepositoryImpl:
         await repo1.delete_agent_run_session_async(chat.uuid)
 
         # Chat should still exist
-        chat_check = await methods.get_chat_async(session, chat.uuid, user2.uuid)
+        chat_check = await methods.get_chat_async(
+            session, chat.uuid, filters=ChatFilterSet(user2.uuid, is_superuser=False)
+        )
         assert chat_check is not None
 
     async def test_user_isolation_list_runs(self, session: AsyncSession, test_user):
@@ -1122,7 +1152,9 @@ class TestUserChatRepositoryImpl:
 
         engine = create_async_engine(database_url, poolclass=NullPool)
         async with AsyncSession(engine, expire_on_commit=False) as db:
-            chat = await methods.get_chat_async(db, "chat-sync-1", test_user.uuid)
+            chat = await methods.get_chat_async(
+                db, "chat-sync-1", filters=ChatFilterSet(test_user.uuid, is_superuser=False)
+            )
         await engine.dispose()
         assert chat is not None
         assert chat.uuid == "chat-sync-1"
@@ -1163,7 +1195,9 @@ class TestUserChatRepositoryImpl:
 
         engine = create_async_engine(database_url, poolclass=NullPool)
         async with AsyncSession(engine, expire_on_commit=False) as db:
-            chat = await methods.get_chat_async(db, test_chat.uuid, test_user.uuid)
+            chat = await methods.get_chat_async(
+                db, test_chat.uuid, filters=ChatFilterSet(test_user.uuid, is_superuser=False)
+            )
         await engine.dispose()
         assert chat is None
 
@@ -1436,7 +1470,9 @@ class TestCascadeDelete:
         await session.commit()
 
         # Verify chat is deleted
-        deleted_chat = await methods.get_chat_async(session, chat.uuid, test_user.uuid)
+        deleted_chat = await methods.get_chat_async(
+            session, chat.uuid, filters=ChatFilterSet(test_user.uuid, is_superuser=False)
+        )
         assert deleted_chat is None
 
 

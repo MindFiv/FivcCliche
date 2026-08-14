@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fivcplayground.tools import create_tool_retriever_async
 
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
-from fivccliche.utils.permissions import has_ownership
 from fivccliche.utils.deps import (
     IUser,
     get_authenticated_user_async,
@@ -17,7 +16,7 @@ from fivccliche.utils.deps import (
 from fivccliche.utils.schemas import PaginatedResponse
 
 from . import models, schemas, utils
-from .filters import QuestionFilterSet
+from .filters import QuestionFilterSet, UserScopedEditableFilterSet, UserScopedReadableFilterSet
 
 
 def _reject_frozen_agent_update(config, config_update, _user) -> None:
@@ -81,10 +80,13 @@ async def list_embedding_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    configs = await utils.list_user_scoped_async(
-        session, models.UserEmbedding, user.uuid, skip=skip, limit=limit
+    filters = UserScopedReadableFilterSet(
+        models.UserEmbedding.user_uuid, user.uuid, is_superuser=user.is_superuser
     )
-    total = await utils.count_user_scoped_async(session, models.UserEmbedding, user.uuid)
+    configs = await utils.list_user_scoped_async(
+        session, models.UserEmbedding, filters=filters, skip=skip, limit=limit
+    )
+    total = await utils.count_user_scoped_async(session, models.UserEmbedding, filters=filters)
     return PaginatedResponse(
         total=total,
         results=[config.to_schema() for config in configs],
@@ -102,8 +104,11 @@ async def get_embedding_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    filters = UserScopedReadableFilterSet(
+        models.UserEmbedding.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserEmbedding, user.uuid, config_uuid=config_uuid
+        session, models.UserEmbedding, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(
@@ -124,19 +129,16 @@ async def update_embedding_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    filters = UserScopedEditableFilterSet(
+        models.UserEmbedding.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserEmbedding, user.uuid, config_uuid=config_uuid
+        session, models.UserEmbedding, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Embedding config not found"
         )
-    has_ownership(
-        user,
-        config.user_uuid,
-        global_detail="Cannot update global configs",
-        other_detail="Cannot update configs belonging to other users",
-    )
     config = await utils.update_embedding_config_async(
         session, config, config_update, updated_user_uuid=user.uuid
     )
@@ -156,19 +158,16 @@ async def delete_embedding_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
+    filters = UserScopedEditableFilterSet(
+        models.UserEmbedding.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserEmbedding, user.uuid, config_uuid=config_uuid
+        session, models.UserEmbedding, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Embedding config not found"
         )
-    has_ownership(
-        user,
-        config.user_uuid,
-        global_detail="Cannot delete global configs",
-        other_detail="Cannot delete configs belonging to other users",
-    )
     await session.delete(config)
     await session.commit()
 
@@ -215,10 +214,13 @@ async def list_llm_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    configs = await utils.list_user_scoped_async(
-        session, models.UserLLM, user.uuid, skip=skip, limit=limit
+    filters = UserScopedReadableFilterSet(
+        models.UserLLM.user_uuid, user.uuid, is_superuser=user.is_superuser
     )
-    total = await utils.count_user_scoped_async(session, models.UserLLM, user.uuid)
+    configs = await utils.list_user_scoped_async(
+        session, models.UserLLM, filters=filters, skip=skip, limit=limit
+    )
+    total = await utils.count_user_scoped_async(session, models.UserLLM, filters=filters)
     return PaginatedResponse(
         total=total,
         results=[config.to_schema() for config in configs],
@@ -236,8 +238,11 @@ async def get_llm_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    filters = UserScopedReadableFilterSet(
+        models.UserLLM.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserLLM, user.uuid, config_uuid=config_uuid
+        session, models.UserLLM, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM config not found")
@@ -256,17 +261,14 @@ async def update_llm_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    filters = UserScopedEditableFilterSet(
+        models.UserLLM.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserLLM, user.uuid, config_uuid=config_uuid
+        session, models.UserLLM, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM config not found")
-    has_ownership(
-        user,
-        config.user_uuid,
-        global_detail="Cannot update global configs",
-        other_detail="Cannot update configs belonging to other users",
-    )
     config = await utils.update_llm_config_async(
         session, config, config_update, updated_user_uuid=user.uuid
     )
@@ -286,17 +288,14 @@ async def delete_llm_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
+    filters = UserScopedEditableFilterSet(
+        models.UserLLM.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserLLM, user.uuid, config_uuid=config_uuid
+        session, models.UserLLM, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM config not found")
-    has_ownership(
-        user,
-        config.user_uuid,
-        global_detail="Cannot delete global configs",
-        other_detail="Cannot delete configs belonging to other users",
-    )
     await session.delete(config)
     await session.commit()
 
@@ -343,10 +342,13 @@ async def list_agent_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    configs = await utils.list_user_scoped_async(
-        session, models.UserAgent, user.uuid, skip=skip, limit=limit
+    filters = UserScopedReadableFilterSet(
+        models.UserAgent.user_uuid, user.uuid, is_superuser=user.is_superuser
     )
-    total = await utils.count_user_scoped_async(session, models.UserAgent, user.uuid)
+    configs = await utils.list_user_scoped_async(
+        session, models.UserAgent, filters=filters, skip=skip, limit=limit
+    )
+    total = await utils.count_user_scoped_async(session, models.UserAgent, filters=filters)
     return PaginatedResponse(
         total=total,
         results=[config.to_schema() for config in configs],
@@ -364,8 +366,11 @@ async def get_agent_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    filters = UserScopedReadableFilterSet(
+        models.UserAgent.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserAgent, user.uuid, config_uuid=config_uuid
+        session, models.UserAgent, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent config not found")
@@ -384,17 +389,14 @@ async def update_agent_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    filters = UserScopedEditableFilterSet(
+        models.UserAgent.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserAgent, user.uuid, config_uuid=config_uuid
+        session, models.UserAgent, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent config not found")
-    has_ownership(
-        user,
-        config.user_uuid,
-        global_detail="Cannot update global configs",
-        other_detail="Cannot update configs belonging to other users",
-    )
     _reject_frozen_agent_update(config, config_update, user)
     config = await utils.update_agent_config_async(
         session, config, config_update, updated_user_uuid=user.uuid
@@ -415,17 +417,14 @@ async def delete_agent_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
+    filters = UserScopedEditableFilterSet(
+        models.UserAgent.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserAgent, user.uuid, config_uuid=config_uuid
+        session, models.UserAgent, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent config not found")
-    has_ownership(
-        user,
-        config.user_uuid,
-        global_detail="Cannot delete global configs",
-        other_detail="Cannot delete configs belonging to other users",
-    )
     _reject_frozen_agent_delete(config, user)
     await session.delete(config)
     await session.commit()
@@ -468,8 +467,11 @@ async def probe_tool_async(
     session: AsyncSession = Depends(get_db_session_async),
     config_provider: IUserConfigProvider = Depends(get_config_provider_async),
 ) -> schemas.UserToolProbeSchema:
+    filters = UserScopedReadableFilterSet(
+        models.UserTool.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserTool, user.uuid, config_uuid=config_uuid
+        session, models.UserTool, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(
@@ -523,10 +525,13 @@ async def list_tool_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    configs = await utils.list_user_scoped_async(
-        session, models.UserTool, user.uuid, skip=skip, limit=limit
+    filters = UserScopedReadableFilterSet(
+        models.UserTool.user_uuid, user.uuid, is_superuser=user.is_superuser
     )
-    total = await utils.count_user_scoped_async(session, models.UserTool, user.uuid)
+    configs = await utils.list_user_scoped_async(
+        session, models.UserTool, filters=filters, skip=skip, limit=limit
+    )
+    total = await utils.count_user_scoped_async(session, models.UserTool, filters=filters)
     return PaginatedResponse(
         total=total,
         results=[config.to_schema() for config in configs],
@@ -544,8 +549,11 @@ async def get_tool_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    filters = UserScopedReadableFilterSet(
+        models.UserTool.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserTool, user.uuid, config_uuid=config_uuid
+        session, models.UserTool, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool config not found")
@@ -564,17 +572,14 @@ async def update_tool_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    filters = UserScopedEditableFilterSet(
+        models.UserTool.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserTool, user.uuid, config_uuid=config_uuid
+        session, models.UserTool, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool config not found")
-    has_ownership(
-        user,
-        config.user_uuid,
-        global_detail="Cannot update global configs",
-        other_detail="Cannot update configs belonging to other users",
-    )
     config = await utils.update_tool_config_async(
         session, config, config_update, updated_user_uuid=user.uuid
     )
@@ -594,17 +599,14 @@ async def delete_tool_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
+    filters = UserScopedEditableFilterSet(
+        models.UserTool.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserTool, user.uuid, config_uuid=config_uuid
+        session, models.UserTool, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool config not found")
-    has_ownership(
-        user,
-        config.user_uuid,
-        global_detail="Cannot delete global configs",
-        other_detail="Cannot delete configs belonging to other users",
-    )
     await session.delete(config)
     await session.commit()
 
@@ -651,10 +653,13 @@ async def list_skill_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    configs = await utils.list_user_scoped_async(
-        session, models.UserSkill, user.uuid, skip=skip, limit=limit
+    filters = UserScopedReadableFilterSet(
+        models.UserSkill.user_uuid, user.uuid, is_superuser=user.is_superuser
     )
-    total = await utils.count_user_scoped_async(session, models.UserSkill, user.uuid)
+    configs = await utils.list_user_scoped_async(
+        session, models.UserSkill, filters=filters, skip=skip, limit=limit
+    )
+    total = await utils.count_user_scoped_async(session, models.UserSkill, filters=filters)
     return PaginatedResponse(
         total=total,
         results=[config.to_schema() for config in configs],
@@ -672,8 +677,11 @@ async def get_skill_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    filters = UserScopedReadableFilterSet(
+        models.UserSkill.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserSkill, user.uuid, config_uuid=config_uuid
+        session, models.UserSkill, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill config not found")
@@ -692,17 +700,14 @@ async def update_skill_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    filters = UserScopedEditableFilterSet(
+        models.UserSkill.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserSkill, user.uuid, config_uuid=config_uuid
+        session, models.UserSkill, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill config not found")
-    has_ownership(
-        user,
-        config.user_uuid,
-        global_detail="Cannot update global configs",
-        other_detail="Cannot update configs belonging to other users",
-    )
     config = await utils.update_skill_config_async(
         session, config, config_update, updated_user_uuid=user.uuid
     )
@@ -722,17 +727,14 @@ async def delete_skill_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
+    filters = UserScopedEditableFilterSet(
+        models.UserSkill.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserSkill, user.uuid, config_uuid=config_uuid
+        session, models.UserSkill, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill config not found")
-    has_ownership(
-        user,
-        config.user_uuid,
-        global_detail="Cannot delete global configs",
-        other_detail="Cannot delete configs belonging to other users",
-    )
     await session.delete(config)
     await session.commit()
 
@@ -784,19 +786,16 @@ async def list_question_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    filters = QuestionFilterSet()
+    filters = QuestionFilterSet(user.uuid, is_superuser=user.is_superuser)
     filters.parse(is_active=is_active)
     configs = await utils.list_user_scoped_async(
         session,
         models.UserQuestion,
-        user.uuid,
+        filters=filters,
         skip=skip,
         limit=limit,
-        filters=filters,
     )
-    total = await utils.count_user_scoped_async(
-        session, models.UserQuestion, user.uuid, filters=filters
-    )
+    total = await utils.count_user_scoped_async(session, models.UserQuestion, filters=filters)
     return PaginatedResponse(
         total=total,
         results=[config.to_schema() for config in configs],
@@ -814,8 +813,11 @@ async def get_question_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    filters = UserScopedReadableFilterSet(
+        models.UserQuestion.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserQuestion, user.uuid, config_uuid=config_uuid
+        session, models.UserQuestion, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(
@@ -836,19 +838,16 @@ async def update_question_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    filters = UserScopedEditableFilterSet(
+        models.UserQuestion.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserQuestion, user.uuid, config_uuid=config_uuid
+        session, models.UserQuestion, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Question config not found"
         )
-    has_ownership(
-        user,
-        config.user_uuid,
-        global_detail="Cannot update global configs",
-        other_detail="Cannot update configs belonging to other users",
-    )
     fields_set: set[str] = getattr(config_update, "model_fields_set", set())
     if "question" in fields_set and config_update.question is not None:
         config.question = config_update.question
@@ -875,18 +874,15 @@ async def delete_question_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
+    filters = UserScopedEditableFilterSet(
+        models.UserQuestion.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
     config = await utils.get_user_scoped_async(
-        session, models.UserQuestion, user.uuid, config_uuid=config_uuid
+        session, models.UserQuestion, filters=filters, config_uuid=config_uuid
     )
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Question config not found"
         )
-    has_ownership(
-        user,
-        config.user_uuid,
-        global_detail="Cannot delete global configs",
-        other_detail="Cannot delete configs belonging to other users",
-    )
     await session.delete(config)
     await session.commit()

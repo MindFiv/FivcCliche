@@ -4,7 +4,7 @@ Module layering, user-or-global ownership, and HTTP CRUD for user-scoped configs
 
 ## Module layering
 
-Each module under `src/fivccliche/modules/` owns its files. Shared HTTP helpers live in `src/fivccliche/utils/` (deps, permissions, FilterSet). Per-module shared SQL lives in that module's `utils.py`.
+Each module under `src/fivccliche/modules/` owns its files. Shared HTTP helpers live in `src/fivccliche/utils/` (deps, FilterSet). Per-module shared SQL lives in that module's `utils.py`.
 
 | File | Role |
 |------|------|
@@ -43,24 +43,23 @@ User-scoped configs are either owned (`user_uuid` = the user) or global (`user_u
 [`get_user_scoped_async` / `list_user_scoped_async` / `count_user_scoped_async`](../src/fivccliche/modules/agent_configs/utils.py):
 
 - Lookup by exactly one of `config_uuid` or `config_id`
-- Visibility: `(user_uuid == me) | (user_uuid == None)`
+- Visibility via a required `filters: FilterSet` that includes [`FilterReadableField`](../src/fivccliche/utils/filters.py) (owned or global; same predicate for regular users and superusers today)
 - List order: `id` ascending, with `skip` / `limit`
 
-Do not extract that SQL condition into a named helper. Routers and playground repositories call these helpers with the model class. Create/update field mapping for playground types stays in `utils.py` and does not `commit`; the HTTP handler or repository commits. Questions create/update/delete SQL is in the HTTP handlers.
+Callers construct [`UserScopedReadableFilterSet`](../src/fivccliche/modules/agent_configs/filters.py) (or a module FilterSet that embeds Readable). Create/update field mapping for playground types stays in `utils.py` and does not `commit`; the HTTP handler or repository commits. Questions create/update/delete SQL is in the HTTP handlers.
 
 ### HTTP
 
-- **404** if get returns nothing
-- **403** on update/delete via [`has_ownership`](../src/fivccliche/utils/permissions.py): non-superusers cannot change globals; nobody can change another user's rows; superusers may change globals
+- **404** if get/update/delete returns nothing (update/delete look up via `FilterEditableField`)
 - **Create:** `None if user.is_superuser else user.uuid` so superusers create globals
 
-Chats use the same assert helper for chat ownership; they are not user-or-global configs.
+Chats use the same Readable/Editable FilterSets for chat ownership; they are not user-or-global configs in the HTTP create sense, but list/get still include globals.
 
-HTTP list filters that bind query params to SQL belong in that module's `filters.py` as a `FilterSet` subclass. Do not put them in `schemas.py` or in [`utils/filters.py`](../src/fivccliche/utils/filters.py) (reusable `FilterField` / `FilterSimpleField` / `FilterJsonField` / `FilterSet`). Do not use FilterSet as a FastAPI `Depends`; declare scalar query params with `Query()` on the handler, instantiate the FilterSet, call `parse(...)` (plus any dotted JSON keys from the request), then pass it into SQL helpers that call `filter(statement)`.
+HTTP list filters that bind query params to SQL belong in that module's `filters.py` as a `FilterSet` subclass. Do not put them in `schemas.py` or in [`utils/filters.py`](../src/fivccliche/utils/filters.py) (reusable `FilterField` / `FilterSimpleField` / `FilterJsonField` / `FilterReadableField` / `FilterEditableField` / `FilterSet`). Do not use FilterSet as a FastAPI `Depends`; declare scalar query params with `Query()` on the handler, instantiate the FilterSet, call `parse(...)` (plus any dotted JSON keys from the request), then pass it into SQL helpers that call `filter(statement)`.
 
-Chat list uses [`ChatFilterSet`](../src/fivccliche/modules/agent_chats/filters.py): instantiate → `parse(agent_id=..., context.*=...)` → `filter(statement)`.
+Chat list uses [`ChatFilterSet`](../src/fivccliche/modules/agent_chats/filters.py): `ChatFilterSet(user_uuid, is_superuser=...)` → `parse(agent_id=..., context.*=...)` → `filter(statement)` (includes Readable).
 
-Question list uses [`QuestionFilterSet`](../src/fivccliche/modules/agent_configs/filters.py): instantiate → `parse(is_active=...)` → passed into `list_user_scoped_async` / `count_user_scoped_async` as `filters`.
+Question list uses [`QuestionFilterSet`](../src/fivccliche/modules/agent_configs/filters.py): `QuestionFilterSet(user_uuid, is_superuser=...)` → `parse(is_active=...)` → passed into `list_user_scoped_async` / `count_user_scoped_async` as `filters`.
 
 - `?agent_id=` exact match on the chat agent
 - `?context.<key>=<value>` exact match on a top-level JSON key of `context` (one level only)
@@ -68,4 +67,5 @@ Question list uses [`QuestionFilterSet`](../src/fivccliche/modules/agent_configs
 - Nested keys such as `context.profile.uuid` return 422; bare `context=` is invalid if passed into `parse`
 - Question list: `?is_active=` exact match when provided
 - Pagination `skip` / `limit` stay on the handler, not on the FilterSet
-- Field classes only implement `filter` (and their own `__init__`); `FilterSet.parse` stores key/value pairs and returns nothing
+- Field classes implement `filter(statement)` and optionally override `parse(value)` to store query-bound state; `FilterSet.filter` always calls every field, and each field decides whether to add a WHERE or return the statement unchanged
+- `FilterReadableField` / `FilterEditableField` take `user_uuid` and `is_superuser`: Readable is always owned-or-global; Editable is owned-only for regular users and owned-or-global for superusers. GET/LIST use Readable; PATCH/DELETE (and chat message create) look up via Editable and return 404 when the row is not editable.

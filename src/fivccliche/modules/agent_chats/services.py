@@ -14,6 +14,7 @@ from fivccliche.services.interfaces.modules import IModule, IModuleJob
 from fivccliche.utils.deps import get_db_session_context_async
 
 from . import routers, utils
+from .filters import ChatFilterSet
 from .jobs import ChatMemorizeJob
 
 logger = logging.getLogger(__name__)
@@ -68,7 +69,9 @@ class UserChatRepositoryImpl(UserChatRepository):
     async def update_agent_run_session_async(self, session: AgentRunSession) -> None:
         """Create or update an agent run session (chat)."""
         async with get_db_session_context_async() as db_session:
-            existing = await utils.get_chat_async(db_session, session.id, self.user_uuid)
+            existing = await utils.get_chat_async(
+                db_session, session.id, filters=ChatFilterSet(self.user_uuid, is_superuser=False)
+            )
             if existing:
                 if session.description is not None:
                     existing.description = session.description
@@ -92,7 +95,9 @@ class UserChatRepositoryImpl(UserChatRepository):
     async def get_agent_run_session_async(self, session_id: str) -> AgentRunSession | None:
         """Retrieve an agent run session (chat) by ID."""
         async with get_db_session_context_async() as db_session:
-            chat = await utils.get_chat_async(db_session, session_id, self.user_uuid)
+            chat = await utils.get_chat_async(
+                db_session, session_id, filters=ChatFilterSet(self.user_uuid, is_superuser=False)
+            )
             return chat.to_schema() if chat else None
 
     async def list_agent_run_sessions_async(self, **kwargs) -> list[AgentRunSession]:
@@ -100,13 +105,20 @@ class UserChatRepositoryImpl(UserChatRepository):
         skip = kwargs.get("skip", 0)
         limit = kwargs.get("limit", 100)
         async with get_db_session_context_async() as db_session:
-            chats = await utils.list_chats_async(db_session, self.user_uuid, skip=skip, limit=limit)
+            chats = await utils.list_chats_async(
+                db_session,
+                filters=ChatFilterSet(self.user_uuid, is_superuser=False),
+                skip=skip,
+                limit=limit,
+            )
             return [chat.to_schema() for chat in chats]
 
     async def delete_agent_run_session_async(self, session_id: str) -> None:
         """Delete an agent run session (chat)."""
         async with get_db_session_context_async() as db_session:
-            chat = await utils.get_chat_async(db_session, session_id, self.user_uuid)
+            chat = await utils.get_chat_async(
+                db_session, session_id, filters=ChatFilterSet(self.user_uuid, is_superuser=False)
+            )
             if chat:
                 await db_session.delete(chat)
                 await db_session.commit()
@@ -114,7 +126,9 @@ class UserChatRepositoryImpl(UserChatRepository):
     async def update_agent_run_async(self, session_id: str, agent_run: AgentRun) -> None:
         """Create or update an agent run (chat message)."""
         async with get_db_session_context_async() as db_session:
-            chat = await utils.get_chat_async(db_session, session_id, self.user_uuid)
+            chat = await utils.get_chat_async(
+                db_session, session_id, filters=ChatFilterSet(self.user_uuid, is_superuser=False)
+            )
             if not chat:
                 raise ValueError(f"Chat session {session_id} not found for user {self.user_uuid}")
 
@@ -148,7 +162,9 @@ class UserChatRepositoryImpl(UserChatRepository):
     async def get_agent_run_async(self, session_id: str, run_id: str) -> AgentRun | None:
         """Retrieve an agent run (chat message) by ID."""
         async with get_db_session_context_async() as db_session:
-            chat = await utils.get_chat_async(db_session, session_id, self.user_uuid)
+            chat = await utils.get_chat_async(
+                db_session, session_id, filters=ChatFilterSet(self.user_uuid, is_superuser=False)
+            )
             if not chat:
                 return None
 
@@ -158,7 +174,9 @@ class UserChatRepositoryImpl(UserChatRepository):
     async def list_agent_runs_async(self, session_id: str, **kwargs) -> list[AgentRun]:
         """List all agent runs (chat messages) for a session."""
         async with get_db_session_context_async() as db_session:
-            chat = await utils.get_chat_async(db_session, session_id, self.user_uuid)
+            chat = await utils.get_chat_async(
+                db_session, session_id, filters=ChatFilterSet(self.user_uuid, is_superuser=False)
+            )
             if not chat:
                 return []
 
@@ -172,7 +190,9 @@ class UserChatRepositoryImpl(UserChatRepository):
     async def delete_agent_run_async(self, session_id: str, run_id: str) -> None:
         """Delete an agent run (chat message)."""
         async with get_db_session_context_async() as db_session:
-            chat = await utils.get_chat_async(db_session, session_id, self.user_uuid)
+            chat = await utils.get_chat_async(
+                db_session, session_id, filters=ChatFilterSet(self.user_uuid, is_superuser=False)
+            )
             if not chat:
                 raise ValueError(f"Chat session {session_id} not found for user {self.user_uuid}")
 

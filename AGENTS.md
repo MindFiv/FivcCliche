@@ -8,7 +8,6 @@ Do not extract one-liners or 2–4 line pass-throughs into named helpers. They l
 
 Do not wrap, for example:
 
-- a single SQL condition (`(user_uuid == me) | (user_uuid == None)`)
 - `session.add` + `commit` + `refresh`
 - `session.delete` + `commit`
 - `None if user.is_superuser else user.uuid`
@@ -16,7 +15,9 @@ Do not wrap, for example:
 - `datetime.now(timezone.utc)`
 - an assert that only forwards error-message strings to another assert
 
-This applies to every refactor, cleanup, and shared-layer extraction. Extract only logic with real rules (uuid/id dual lookup plus user-or-global visibility). Do not add get/list/count/delete wrappers around those helpers. Module `utils.py` must not `commit`; callers own the transaction.
+Ownership visibility SQL belongs in `FilterReadableField` / `FilterEditableField` (via module FilterSets), not in ad-hoc named helpers around a single WHERE. Do not add get/list/count/delete wrappers around those helpers. Module `utils.py` must not `commit`; callers own the transaction.
+
+This applies to every refactor, cleanup, and shared-layer extraction. Extract only logic with real rules (uuid/id dual lookup plus user-or-global visibility).
 
 ## HTTP filter models
 

@@ -65,11 +65,11 @@ Each module in `src/fivccliche/modules/` uses this layout:
 
 Modules: `users`, `agent_configs`, `agent_chats`, `agent_memories`. All mounted under `/api`.
 
-HTTP CRUD is hand-written FastAPI handlers in each module's `routers.py`. Shared helpers: [`src/fivccliche/utils/permissions.py`](src/fivccliche/utils/permissions.py), [`src/fivccliche/utils/filters.py`](src/fivccliche/utils/filters.py) (`FilterSet` / `FilterField` base; not module filter fields; not a route Depends), [`src/fivccliche/utils/deps.py`](src/fivccliche/utils/deps.py).
+HTTP CRUD is hand-written FastAPI handlers in each module's `routers.py`. Shared helpers: [`src/fivccliche/utils/filters.py`](src/fivccliche/utils/filters.py) (`FilterSet` / `FilterField` base; not module filter fields; not a route Depends), [`src/fivccliche/utils/deps.py`](src/fivccliche/utils/deps.py).
 
 ### Ownership
 
-List/get returns the caller's rows plus globals (`user_uuid is None`). Create: superuser gets `user_uuid=None`, everyone else their own uuid. Update/delete use `has_ownership` (superuser may change globals; nobody may change another user's rows). Details: [docs/architecture.md](docs/architecture.md).
+List/get returns the caller's rows plus globals (`user_uuid is None`). Create: superuser gets `user_uuid=None`, everyone else their own uuid. Update/delete look up via `FilterEditableField` (superuser may change globals; missing/uneditable rows are 404). Details: [docs/architecture.md](docs/architecture.md).
 
 HTTP list/get returns inactive tools/skills. Playground repositories filter `is_active` themselves so agents never pick up disabled configs.
 
@@ -99,7 +99,6 @@ Do not extract one-liners or 2–4 line pass-throughs into named helpers. They l
 
 Do not wrap, for example:
 
-- a single SQL condition (`(user_uuid == me) | (user_uuid == None)`)
 - `session.add` + `commit` + `refresh`
 - `session.delete` + `commit`
 - `None if user.is_superuser else user.uuid`
@@ -107,7 +106,9 @@ Do not wrap, for example:
 - `datetime.now(timezone.utc)`
 - an assert that only forwards error-message strings to another assert
 
-This applies to every refactor, cleanup, and shared-layer extraction. Extract only logic with real rules (uuid/id dual lookup plus user-or-global visibility). Do not add get/list/count/delete wrappers around those helpers. Module `utils.py` must not `commit`; callers own the transaction.
+Ownership visibility SQL belongs in `FilterReadableField` / `FilterEditableField` (via module FilterSets), not in ad-hoc named helpers around a single WHERE. Do not add get/list/count/delete wrappers around those helpers. Module `utils.py` must not `commit`; callers own the transaction.
+
+This applies to every refactor, cleanup, and shared-layer extraction. Extract only logic with real rules (uuid/id dual lookup plus user-or-global visibility).
 
 ### HTTP filter models
 
