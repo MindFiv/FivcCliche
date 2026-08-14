@@ -13,6 +13,7 @@ from fivcplayground.agents.types import AgentConfig
 from fivcplayground.tools.types import ToolConfig
 
 from fivccliche.modules.agent_configs import models, utils as methods
+from fivccliche.modules.agent_configs.filters import QuestionFilterSet
 from fivccliche.modules.agent_configs.services import (
     UserEmbeddingRepositoryImpl,
     UserLLMRepositoryImpl,
@@ -1799,7 +1800,7 @@ class TestQuestionConfigMethods:
             await _create_question_async(session, "user123", config_create)
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserQuestion, "user123", skip=0, limit=100, extra_conditions=None
+            session, models.UserQuestion, "user123", skip=0, limit=100
         )
 
         assert len(configs) == 3
@@ -1820,13 +1821,13 @@ class TestQuestionConfigMethods:
             await _create_question_async(session, "user123", config_create)
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserQuestion, "user123", skip=0, limit=2, extra_conditions=None
+            session, models.UserQuestion, "user123", skip=0, limit=2
         )
 
         assert len(configs) == 2
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserQuestion, "user123", skip=2, limit=2, extra_conditions=None
+            session, models.UserQuestion, "user123", skip=2, limit=2
         )
 
         assert len(configs) == 2
@@ -1861,21 +1862,25 @@ class TestQuestionConfigMethods:
             ),
         )
 
+        active_filters = QuestionFilterSet()
+        active_filters.parse(is_active=True)
         active_configs = await methods.list_user_scoped_async(
             session,
             models.UserQuestion,
             "user123",
             skip=0,
             limit=100,
-            extra_conditions=[models.UserQuestion.is_active.is_(True)],
+            filters=active_filters,
         )
+        inactive_filters = QuestionFilterSet()
+        inactive_filters.parse(is_active=False)
         inactive_configs = await methods.list_user_scoped_async(
             session,
             models.UserQuestion,
             "user123",
             skip=0,
             limit=100,
-            extra_conditions=[models.UserQuestion.is_active.is_(False)],
+            filters=inactive_filters,
         )
 
         assert {config.id for config in active_configs} == {
@@ -1893,9 +1898,7 @@ class TestQuestionConfigMethods:
             )
             await _create_question_async(session, "user123", config_create)
 
-        count = await methods.count_user_scoped_async(
-            session, models.UserQuestion, "user123", extra_conditions=None
-        )
+        count = await methods.count_user_scoped_async(session, models.UserQuestion, "user123")
 
         assert count == 3
 
@@ -1920,17 +1923,21 @@ class TestQuestionConfigMethods:
             ),
         )
 
+        active_filters = QuestionFilterSet()
+        active_filters.parse(is_active=True)
         active_count = await methods.count_user_scoped_async(
             session,
             models.UserQuestion,
             "user123",
-            extra_conditions=[models.UserQuestion.is_active.is_(True)],
+            filters=active_filters,
         )
+        inactive_filters = QuestionFilterSet()
+        inactive_filters.parse(is_active=False)
         inactive_count = await methods.count_user_scoped_async(
             session,
             models.UserQuestion,
             "user123",
-            extra_conditions=[models.UserQuestion.is_active.is_(False)],
+            filters=inactive_filters,
         )
 
         assert active_count == 1
@@ -2047,7 +2054,7 @@ class TestQuestionConfigMethods:
         )
 
         configs = await methods.list_user_scoped_async(
-            session, models.UserQuestion, "user123", skip=0, limit=100, extra_conditions=None
+            session, models.UserQuestion, "user123", skip=0, limit=100
         )
         ids = {config.id for config in configs}
 
@@ -2066,9 +2073,7 @@ class TestQuestionConfigMethods:
             schemas.UserQuestionSchema(id="global-count-question", question="Global question?"),
         )
 
-        count = await methods.count_user_scoped_async(
-            session, models.UserQuestion, "user456", extra_conditions=None
-        )
+        count = await methods.count_user_scoped_async(session, models.UserQuestion, "user456")
 
         assert count == 2
 

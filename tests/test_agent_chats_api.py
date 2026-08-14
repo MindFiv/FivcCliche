@@ -244,8 +244,8 @@ class TestChatContextAPI:
 
         assert response.status_code == 422
 
-    def test_list_chats_rejects_unknown_json_filter_root(self, client: TestClient, auth_token: str):
-        """Test chat list rejects JSON roots that are not whitelisted."""
+    def test_list_chats_ignores_unknown_json_filter_root(self, client: TestClient, auth_token: str):
+        """Undeclared dotted roots are not passed into ChatFilterSet.parse."""
         headers = {"Authorization": f"Bearer {auth_token}"}
 
         response = client.get(
@@ -253,7 +253,7 @@ class TestChatContextAPI:
             headers=headers,
         )
 
-        assert response.status_code == 422
+        assert response.status_code == 200
 
 
 class TestChatMessageAPI:

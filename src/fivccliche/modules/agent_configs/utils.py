@@ -7,6 +7,8 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, col, select
 
+from fivccliche.utils.filters import FilterSet
+
 from . import models, schemas
 
 TConfig = TypeVar("TConfig", bound=SQLModel)
@@ -41,16 +43,19 @@ async def list_user_scoped_async(
     *,
     skip: int = 0,
     limit: int = 100,
-    extra_conditions: list | None = None,
+    filters: FilterSet | None = None,
 ) -> list[TConfig]:
     """List user-owned and global configs, ordered by id."""
     table = cast(Any, model)
-    conditions = [(table.user_uuid == user_uuid) | (table.user_uuid == None)]  # noqa: E711
-    if extra_conditions:
-        conditions.extend(extra_conditions)
     statement = (
-        select(model).where(*conditions).order_by(col(table.id).asc()).offset(skip).limit(limit)
+        select(model)
+        .where((table.user_uuid == user_uuid) | (table.user_uuid == None))  # noqa: E711
+        .order_by(col(table.id).asc())
+        .offset(skip)
+        .limit(limit)
     )
+    if filters is not None:
+        statement = filters.filter(statement)
     result = await session.execute(statement)
     return list(result.scalars().all())
 
@@ -60,14 +65,15 @@ async def count_user_scoped_async(
     model: type[TConfig],
     user_uuid: str,
     *,
-    extra_conditions: list | None = None,
+    filters: FilterSet | None = None,
 ) -> int:
     """Count user-owned and global configs."""
     table = cast(Any, model)
-    conditions = [(table.user_uuid == user_uuid) | (table.user_uuid == None)]  # noqa: E711
-    if extra_conditions:
-        conditions.extend(extra_conditions)
-    statement = select(func.count(col(table.uuid))).where(*conditions)
+    statement = select(func.count(col(table.uuid))).where(
+        (table.user_uuid == user_uuid) | (table.user_uuid == None)  # noqa: E711
+    )
+    if filters is not None:
+        statement = filters.filter(statement)
     result = await session.execute(statement)
     return result.scalar() or 0
 

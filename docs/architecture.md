@@ -4,13 +4,13 @@ Module layering, user-or-global ownership, and HTTP CRUD for user-scoped configs
 
 ## Module layering
 
-Each module under `src/fivccliche/modules/` owns its files. Shared HTTP helpers live in `src/fivccliche/utils/` (deps, permissions, chat dotted-JSON). Per-module shared SQL lives in that module's `utils.py`.
+Each module under `src/fivccliche/modules/` owns its files. Shared HTTP helpers live in `src/fivccliche/utils/` (deps, permissions, FilterSet). Per-module shared SQL lives in that module's `utils.py`.
 
 | File | Role |
 |------|------|
 | `models.py` | SQLModel tables (UUID primary keys) |
 | `schemas.py` | Request/response bodies only |
-| `queries.py` | Optional. HTTP list/filter query models, only when list has extra filters |
+| `filters.py` | Optional. HTTP list FilterSet (or extra Query params), only when list has extra filters |
 | `utils.py` | Optional. SQL used by routers and services/jobs/CLI |
 | `routers.py` | FastAPI handlers; HTTP-only SQL is written here |
 | `services.py` | `ModuleImpl` (registers routers) plus provider/authenticator implementations |
@@ -56,4 +56,16 @@ Do not extract that SQL condition into a named helper. Routers and playground re
 
 Chats use the same assert helper for chat ownership; they are not user-or-global configs.
 
-HTTP list/filter Pydantic models belong in that module's `queries.py`. Do not put them in `schemas.py` or in [`utils/queries.py`](../src/fivccliche/utils/queries.py) (that file parses dotted JSON for chats, e.g. `context.profile_uuid=`). List endpoints that only need extra scalar filters (for example question `is_active`) use FastAPI `Query()` parameters on the handler.
+HTTP list filters that bind query params to SQL belong in that module's `filters.py` as a `FilterSet` subclass. Do not put them in `schemas.py` or in [`utils/filters.py`](../src/fivccliche/utils/filters.py) (reusable `FilterField` / `FilterSimpleField` / `FilterJsonField` / `FilterSet`). Do not use FilterSet as a FastAPI `Depends`; declare scalar query params with `Query()` on the handler, instantiate the FilterSet, call `parse(...)` (plus any dotted JSON keys from the request), then pass it into SQL helpers that call `filter(statement)`.
+
+Chat list uses [`ChatFilterSet`](../src/fivccliche/modules/agent_chats/filters.py): instantiate → `parse(agent_id=..., context.*=...)` → `filter(statement)`.
+
+Question list uses [`QuestionFilterSet`](../src/fivccliche/modules/agent_configs/filters.py): instantiate → `parse(is_active=...)` → passed into `list_user_scoped_async` / `count_user_scoped_async` as `filters`.
+
+- `?agent_id=` exact match on the chat agent
+- `?context.<key>=<value>` exact match on a top-level JSON key of `context` (one level only)
+- Repeated paths use the last value
+- Nested keys such as `context.profile.uuid` return 422; bare `context=` is invalid if passed into `parse`
+- Question list: `?is_active=` exact match when provided
+- Pagination `skip` / `limit` stay on the handler, not on the FilterSet
+- Field classes only implement `filter` (and their own `__init__`); `FilterSet.parse` stores key/value pairs and returns nothing

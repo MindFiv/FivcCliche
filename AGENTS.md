@@ -18,9 +18,9 @@ Do not wrap, for example:
 
 This applies to every refactor, cleanup, and shared-layer extraction. Extract only logic with real rules (uuid/id dual lookup plus user-or-global visibility). Do not add get/list/count/delete wrappers around those helpers. Module `utils.py` must not `commit`; callers own the transaction.
 
-## Query filter models
+## HTTP filter models
 
-HTTP list/filter Pydantic models belong in that module's `queries.py`. Do not put them in `schemas.py` (`schemas.py` is request/response bodies only). Do not put module-specific filter models in `utils/queries.py` (that file is dotted JSON query parsing for chats).
+HTTP list/filter models belong in that module's `filters.py` as a `FilterSet` subclass. Do not put them in `schemas.py` (`schemas.py` is request/response bodies only). Do not put module-specific filter fields in `utils/filters.py` (that file is the reusable FilterSet base). Do not inject FilterSet via `Depends`; handlers declare `Query()` params, call `parse`, then `filter` on statements.
 
 ## Config HTTP CRUD
 

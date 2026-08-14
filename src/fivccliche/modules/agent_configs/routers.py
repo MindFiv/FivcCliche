@@ -17,6 +17,7 @@ from fivccliche.utils.deps import (
 from fivccliche.utils.schemas import PaginatedResponse
 
 from . import models, schemas, utils
+from .filters import QuestionFilterSet
 
 
 def _reject_frozen_agent_update(config, config_update, _user) -> None:
@@ -783,17 +784,18 @@ async def list_question_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    extra = [models.UserQuestion.is_active == is_active] if is_active is not None else None
+    filters = QuestionFilterSet()
+    filters.parse(is_active=is_active)
     configs = await utils.list_user_scoped_async(
         session,
         models.UserQuestion,
         user.uuid,
         skip=skip,
         limit=limit,
-        extra_conditions=extra,
+        filters=filters,
     )
     total = await utils.count_user_scoped_async(
-        session, models.UserQuestion, user.uuid, extra_conditions=extra
+        session, models.UserQuestion, user.uuid, filters=filters
     )
     return PaginatedResponse(
         total=total,

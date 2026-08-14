@@ -58,14 +58,14 @@ Key interfaces (in `src/fivccliche/services/interfaces/`):
 Each module in `src/fivccliche/modules/` uses this layout:
 - `models.py` — SQLModel tables (UUID primary keys)
 - `schemas.py` — Pydantic request/response bodies only
-- `queries.py` — optional; HTTP list/filter query models, only when list has extra filters
+- `filters.py` — optional; HTTP list FilterSet (or extra Query params), only when list has extra filters
 - `utils.py` — optional; SQL shared by routers and services/jobs/CLI (stages writes; callers commit)
 - `routers.py` — FastAPI handlers (HTTP-only SQL is written here)
 - `services.py` — `ModuleImpl` (registers routers) plus provider/authenticator implementations; not a `UserService` business layer
 
 Modules: `users`, `agent_configs`, `agent_chats`, `agent_memories`. All mounted under `/api`.
 
-HTTP CRUD is hand-written FastAPI handlers in each module's `routers.py`. Shared helpers: [`src/fivccliche/utils/permissions.py`](src/fivccliche/utils/permissions.py), [`src/fivccliche/utils/queries.py`](src/fivccliche/utils/queries.py) (dotted JSON for chats, not filter models), [`src/fivccliche/utils/deps.py`](src/fivccliche/utils/deps.py).
+HTTP CRUD is hand-written FastAPI handlers in each module's `routers.py`. Shared helpers: [`src/fivccliche/utils/permissions.py`](src/fivccliche/utils/permissions.py), [`src/fivccliche/utils/filters.py`](src/fivccliche/utils/filters.py) (`FilterSet` / `FilterField` base; not module filter fields; not a route Depends), [`src/fivccliche/utils/deps.py`](src/fivccliche/utils/deps.py).
 
 ### Ownership
 
@@ -109,6 +109,6 @@ Do not wrap, for example:
 
 This applies to every refactor, cleanup, and shared-layer extraction. Extract only logic with real rules (uuid/id dual lookup plus user-or-global visibility). Do not add get/list/count/delete wrappers around those helpers. Module `utils.py` must not `commit`; callers own the transaction.
 
-### Query filter models
+### HTTP filter models
 
-HTTP list/filter Pydantic models belong in that module's `queries.py`. Do not put them in `schemas.py` (`schemas.py` is request/response bodies only). Do not put module-specific filter models in `utils/queries.py` (that file is dotted JSON query parsing for chats).
+HTTP list/filter models belong in that module's `filters.py` as a `FilterSet` subclass. Do not put them in `schemas.py` (`schemas.py` is request/response bodies only). Do not put module-specific filter fields in `utils/filters.py` (that file is the reusable FilterSet base). Do not inject FilterSet via `Depends`; handlers declare `Query()` params, call `parse`, then `filter` on statements.

@@ -11,6 +11,7 @@ from sqlmodel import col, select
 
 from fivccliche.modules.agent_chats import utils as methods
 from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage
+from fivccliche.modules.agent_chats.filters import ChatFilterSet
 from fivccliche.services.interfaces.agent_chats import IUserChatContext
 
 if TYPE_CHECKING:
@@ -216,10 +217,12 @@ class TestChatMethods:
         session.add_all([matching_chat, other_chat, no_context_chat])
         await session.commit()
 
+        filters = ChatFilterSet()
+        filters.parse(context={"profile_uuid": "profile-1"})
         chats = await methods.list_chats_async(
             session,
             test_user.uuid,
-            context={"profile_uuid": "profile-1"},
+            filters=filters,
         )
 
         assert [chat.uuid for chat in chats] == [matching_chat.uuid]
@@ -245,10 +248,12 @@ class TestChatMethods:
         )
         await session.commit()
 
+        filters = ChatFilterSet()
+        filters.parse(context={"profile_uuid": "profile-1"})
         count = await methods.count_chats_async(
             session,
             test_user.uuid,
-            context={"profile_uuid": "profile-1"},
+            filters=filters,
         )
 
         assert count == 1
@@ -270,11 +275,15 @@ class TestChatMethods:
         session.add_all([matching_chat, wrong_agent_chat])
         await session.commit()
 
+        filters = ChatFilterSet()
+        filters.parse(
+            agent_id="agent_1",
+            context={"profile_uuid": "profile-1"},
+        )
         chats = await methods.list_chats_async(
             session,
             test_user.uuid,
-            agent_id="agent_1",
-            context={"profile_uuid": "profile-1"},
+            filters=filters,
         )
 
         assert [chat.uuid for chat in chats] == [matching_chat.uuid]
@@ -301,13 +310,17 @@ class TestChatMethods:
         session.add_all([matching_chat, partial_match_chat, missing_key_chat])
         await session.commit()
 
-        chats = await methods.list_chats_async(
-            session,
-            test_user.uuid,
+        filters = ChatFilterSet()
+        filters.parse(
             context={
                 "profile_uuid": "profile-1",
                 "project_uuid": "project-1",
-            },
+            }
+        )
+        chats = await methods.list_chats_async(
+            session,
+            test_user.uuid,
+            filters=filters,
         )
 
         assert [chat.uuid for chat in chats] == [matching_chat.uuid]

@@ -28,13 +28,11 @@ from fivccliche.utils.deps import (
     get_db_session_async,
     get_mutex_site_async,
 )
-from fivccliche.utils.queries import (
-    InvalidDottedJsonFilterError,
-    parse_dotted_json_filters,
-)
+from fivccliche.utils.filters import FilterError
 from fivccliche.utils.schemas import PaginatedResponse
 
 from . import models, schemas, utils
+from .filters import ChatFilterSet
 
 # ============================================================================
 # Chat Session Endpoints
@@ -84,11 +82,16 @@ async def list_chats_async(
 ) -> PaginatedResponse[schemas.UserChatSchema]:
     """List all chat sessions for the authenticated user."""
     try:
-        json_filters = parse_dotted_json_filters(
-            request.query_params.multi_items(),
-            allowed_fields=utils.CHAT_JSON_FILTER_FIELDS.keys(),
+        filters = ChatFilterSet()
+        filters.parse(
+            agent_id=agent_id,
+            **{
+                key: value
+                for key, value in request.query_params.multi_items()
+                if key.startswith("context.")
+            },
         )
-    except InvalidDottedJsonFilterError as exc:
+    except FilterError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
@@ -98,14 +101,12 @@ async def list_chats_async(
         user.uuid,
         skip=skip,
         limit=limit,
-        agent_id=agent_id,
-        context=json_filters.get("context"),
+        filters=filters,
     )
     total = await utils.count_chats_async(
         session,
         user.uuid,
-        agent_id=agent_id,
-        context=json_filters.get("context"),
+        filters=filters,
     )
     return PaginatedResponse[schemas.UserChatSchema](
         total=total,
