@@ -1,19 +1,15 @@
 """Unit tests for agent_chats service layer."""
 
-import tempfile
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 from fivcplayground.tools import Tool
-from sqlalchemy import event, text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import NullPool
-from sqlmodel import SQLModel
+from sqlalchemy import func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
 
-from fivccliche.modules.agent_chats import methods
-from fivccliche.modules.users.models import User  # noqa: F401
+from fivccliche.modules.agent_chats import utils as methods
 from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage
 from fivccliche.services.interfaces.agent_chats import IUserChatContext
 
@@ -21,49 +17,24 @@ if TYPE_CHECKING:
     from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
 
 
-@pytest.fixture
-async def session():
-    """Create a temporary SQLite database for testing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test.db"
-        database_url = f"sqlite+aiosqlite:///{db_path}"
-
-        engine = create_async_engine(
-            database_url,
-            connect_args={"check_same_thread": False, "timeout": 30},
-            poolclass=NullPool,
-            echo=False,
-        )
-
-        # Add event listener to enable foreign keys on each connection
-        @event.listens_for(engine.sync_engine, "connect")
-        def set_sqlite_pragma(dbapi_conn, connection_record):
-            cursor = dbapi_conn.cursor()
-            cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.close()
-
-        # Create all tables
-        async with engine.begin() as conn:
-            await conn.execute(text("PRAGMA foreign_keys = ON"))
-            await conn.run_sync(SQLModel.metadata.create_all)
-
-        # Create session
-        async_session = AsyncSession(engine, expire_on_commit=False)
-        try:
-            yield async_session
-        finally:
-            await async_session.close()
-            await engine.dispose()
-
-
 @pytest.fixture(autouse=True)
-async def patch_db_session_context(session: AsyncSession):
+async def patch_db_session_context(database_url: str):
+    """Open a loop-local session so sync wrappers (asyncio.run) work under asyncpg."""
     from contextlib import asynccontextmanager
     from unittest.mock import patch
 
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.pool import NullPool
+
     @asynccontextmanager
     async def override_ctx(*_args, **_kwargs):
-        yield session
+        engine = create_async_engine(database_url, poolclass=NullPool)
+        db_session = AsyncSession(engine, expire_on_commit=False)
+        try:
+            yield db_session
+        finally:
+            await db_session.close()
+            await engine.dispose()
 
     with patch(
         "fivccliche.modules.agent_chats.services.get_db_session_context_async",
@@ -75,7 +46,7 @@ async def patch_db_session_context(session: AsyncSession):
 @pytest.fixture
 async def test_user(session: AsyncSession):
     """Create a test user."""
-    from fivccliche.modules.users import methods as user_methods
+    from fivccliche.modules.users import utils as user_methods
 
     user = await user_methods.create_user_async(
         session,
@@ -83,6 +54,8 @@ async def test_user(session: AsyncSession):
         email="test@example.com",
         password="password123",
     )
+    await session.commit()
+    await session.refresh(user)
     return user
 
 
@@ -164,7 +137,7 @@ class TestChatMethods:
 
     async def test_list_chats_async_multiple_users(self, session: AsyncSession, test_user):
         """Test that chats are isolated per user."""
-        from fivccliche.modules.users import methods as user_methods
+        from fivccliche.modules.users import utils as user_methods
 
         # Create another user
         user2 = await user_methods.create_user_async(
@@ -173,6 +146,7 @@ class TestChatMethods:
             email="test2@example.com",
             password="password123",
         )
+        await session.commit()
 
         # Create chats for both users
         chat1 = UserChat(user_uuid=test_user.uuid, agent_id="agent1")
@@ -340,7 +314,8 @@ class TestChatMethods:
 
     async def test_delete_chat_async(self, session: AsyncSession, test_chat: UserChat):
         """Test deleting a chat."""
-        await methods.delete_chat_async(session, test_chat)
+        await session.delete(test_chat)
+        await session.commit()
         chat = await methods.get_chat_async(session, test_chat.uuid, test_chat.user_uuid)
         assert chat is None
 
@@ -447,7 +422,12 @@ class TestChatMessageMethods:
             session.add(message)
         await session.commit()
 
-        count = await methods.count_chat_messages_async(session, test_chat.uuid)
+        result = await session.execute(
+            select(func.count(col(UserChatMessage.uuid))).where(
+                UserChatMessage.chat_uuid == test_chat.uuid
+            )
+        )
+        count = result.scalar() or 0
         assert count == 4
 
     async def test_get_chat_message_async(self, session: AsyncSession, test_chat: UserChat):
@@ -467,7 +447,8 @@ class TestChatMessageMethods:
         session.add(message)
         await session.commit()
 
-        await methods.delete_chat_message_async(session, message)
+        await session.delete(message)
+        await session.commit()
         retrieved = await methods.get_chat_message_async(session, message.uuid, test_chat.uuid)
         assert retrieved is None
 
@@ -533,7 +514,12 @@ class TestChatMessageMethods:
 
     async def test_count_chat_messages_empty(self, session: AsyncSession, test_chat: UserChat):
         """Test counting messages when none exist."""
-        count = await methods.count_chat_messages_async(session, test_chat.uuid)
+        result = await session.execute(
+            select(func.count(col(UserChatMessage.uuid))).where(
+                UserChatMessage.chat_uuid == test_chat.uuid
+            )
+        )
+        count = result.scalar() or 0
         assert count == 0
 
     async def test_list_chat_messages_different_chats(self, session: AsyncSession, test_user):
@@ -607,12 +593,14 @@ class TestUserChatRepositoryImpl:
     async def test_update_agent_run_session_update_existing(
         self,
         repository: "UserChatRepositoryImpl",
-        session: AsyncSession,
+        database_url: str,
         test_user,
         test_chat: UserChat,
     ):
         """Test updating an existing agent run session."""
         from fivcplayground.agents.types import AgentRunSession
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
 
         session_data = AgentRunSession(
             id=test_chat.uuid,
@@ -622,8 +610,11 @@ class TestUserChatRepositoryImpl:
 
         await repository.update_agent_run_session_async(session_data)
 
-        # Verify it was updated
-        chat = await methods.get_chat_async(session, test_chat.uuid, test_user.uuid)
+        # Verify it was updated (fresh session; repo writes on a different connection)
+        engine = create_async_engine(database_url, poolclass=NullPool)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            chat = await methods.get_chat_async(db, test_chat.uuid, test_user.uuid)
+        await engine.dispose()
         assert chat is not None
         assert chat.description == "Updated description"
 
@@ -761,11 +752,14 @@ class TestUserChatRepositoryImpl:
         self,
         repository: "UserChatRepositoryImpl",
         session: AsyncSession,
+        database_url: str,
         test_user,
         test_chat: UserChat,
     ):
         """Test updating an existing agent run (chat message)."""
         from fivcplayground.agents.types import AgentRun
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
 
         # Create initial message
         message = UserChatMessage(
@@ -788,7 +782,10 @@ class TestUserChatRepositoryImpl:
         await repository.update_agent_run_async(test_chat.uuid, agent_run)
 
         # Verify it was updated
-        updated = await methods.get_chat_message_async(session, "run-1", test_chat.uuid)
+        engine = create_async_engine(database_url, poolclass=NullPool)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            updated = await methods.get_chat_message_async(db, "run-1", test_chat.uuid)
+        await engine.dispose()
         assert updated is not None
         assert updated.status == "completed"
         assert updated.reply is not None
@@ -975,7 +972,7 @@ class TestUserChatRepositoryImpl:
     async def test_user_isolation_list_sessions(self, session: AsyncSession, test_user):
         """Test that users can only see their own chat sessions."""
         from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
-        from fivccliche.modules.users import methods as user_methods
+        from fivccliche.modules.users import utils as user_methods
 
         # Create another user
         user2 = await user_methods.create_user_async(
@@ -984,6 +981,7 @@ class TestUserChatRepositoryImpl:
             email="test2@example.com",
             password="password123",
         )
+        await session.commit()
 
         # Create chats for both users
         chat1 = UserChat(user_uuid=test_user.uuid, agent_id="agent1")
@@ -1007,7 +1005,7 @@ class TestUserChatRepositoryImpl:
     async def test_user_isolation_get_session(self, session: AsyncSession, test_user):
         """Test that users cannot get other users' chat sessions."""
         from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
-        from fivccliche.modules.users import methods as user_methods
+        from fivccliche.modules.users import utils as user_methods
 
         # Create another user
         user2 = await user_methods.create_user_async(
@@ -1016,6 +1014,7 @@ class TestUserChatRepositoryImpl:
             email="test2@example.com",
             password="password123",
         )
+        await session.commit()
 
         # Create a chat for user2
         chat = UserChat(user_uuid=user2.uuid, agent_id="agent1")
@@ -1030,7 +1029,7 @@ class TestUserChatRepositoryImpl:
     async def test_user_isolation_delete_session(self, session: AsyncSession, test_user):
         """Test that users cannot delete other users' chat sessions."""
         from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
-        from fivccliche.modules.users import methods as user_methods
+        from fivccliche.modules.users import utils as user_methods
 
         # Create another user
         user2 = await user_methods.create_user_async(
@@ -1039,6 +1038,7 @@ class TestUserChatRepositoryImpl:
             email="test2@example.com",
             password="password123",
         )
+        await session.commit()
 
         # Create a chat for user2
         chat = UserChat(user_uuid=user2.uuid, agent_id="agent1")
@@ -1056,7 +1056,7 @@ class TestUserChatRepositoryImpl:
     async def test_user_isolation_list_runs(self, session: AsyncSession, test_user):
         """Test that users can only see messages in their own chats."""
         from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
-        from fivccliche.modules.users import methods as user_methods
+        from fivccliche.modules.users import utils as user_methods
 
         # Create another user
         user2 = await user_methods.create_user_async(
@@ -1065,6 +1065,7 @@ class TestUserChatRepositoryImpl:
             email="test2@example.com",
             password="password123",
         )
+        await session.commit()
 
         # Create chats for both users
         chat1 = UserChat(user_uuid=test_user.uuid, agent_id="agent1")
@@ -1089,162 +1090,145 @@ class TestUserChatRepositoryImpl:
     # Synchronous Wrapper Methods Tests
     # ========================================================================
 
-    def test_update_agent_run_session_sync(
-        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_user
-    ):
+    async def test_update_agent_run_session_sync(self, database_url: str, test_user):
         """Test synchronous wrapper for update_agent_run_session."""
-        from fivcplayground.agents.types import AgentRunSession
+        import asyncio
 
+        from fivcplayground.agents.types import AgentRunSession
+        from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        repository = UserChatRepositoryImpl(user_uuid=test_user.uuid)
         session_data = AgentRunSession(
             id="chat-sync-1",
             agent_id="agent1",
             description="Test sync chat",
         )
+        await asyncio.to_thread(repository.update_agent_run_session, session_data)
 
-        # Call synchronous method
-        repository.update_agent_run_session(session_data)
-
-        # Verify it was created (using async method)
-        import asyncio
-
-        async def verify():
-            chat = await methods.get_chat_async(session, "chat-sync-1", test_user.uuid)
-            return chat
-
-        chat = asyncio.run(verify())
+        engine = create_async_engine(database_url, poolclass=NullPool)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            chat = await methods.get_chat_async(db, "chat-sync-1", test_user.uuid)
+        await engine.dispose()
         assert chat is not None
         assert chat.uuid == "chat-sync-1"
 
-    def test_get_agent_run_session_sync(
-        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
-    ):
+    async def test_get_agent_run_session_sync(self, test_chat: UserChat, test_user):
         """Test synchronous wrapper for get_agent_run_session."""
-        session_data = repository.get_agent_run_session(test_chat.uuid)
+        import asyncio
+
+        from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
+
+        repository = UserChatRepositoryImpl(user_uuid=test_user.uuid)
+        session_data = await asyncio.to_thread(repository.get_agent_run_session, test_chat.uuid)
         assert session_data is not None
         assert session_data.id == test_chat.uuid
 
-    def test_list_agent_run_sessions_sync(
-        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_user
-    ):
+    async def test_list_agent_run_sessions_sync(self, test_user, test_chat: UserChat):
         """Test synchronous wrapper for list_agent_run_sessions."""
         import asyncio
 
-        # Create a chat first
-        async def create_chat():
-            chat = UserChat(user_uuid=test_user.uuid, agent_id="agent1")
-            session.add(chat)
-            await session.commit()
+        from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
 
-        asyncio.run(create_chat())
-
-        # Call synchronous method
-        sessions = repository.list_agent_run_sessions()
+        repository = UserChatRepositoryImpl(user_uuid=test_user.uuid)
+        sessions = await asyncio.to_thread(repository.list_agent_run_sessions)
         assert len(sessions) == 1
 
-    def test_delete_agent_run_session_sync(
-        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
+    async def test_delete_agent_run_session_sync(
+        self, database_url: str, test_chat: UserChat, test_user
     ):
         """Test synchronous wrapper for delete_agent_run_session."""
         import asyncio
 
-        # Delete using sync method
-        repository.delete_agent_run_session(test_chat.uuid)
+        from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
 
-        # Verify it was deleted
-        async def verify():
-            chat = await methods.get_chat_async(session, test_chat.uuid, test_chat.user_uuid)
-            return chat
+        repository = UserChatRepositoryImpl(user_uuid=test_user.uuid)
+        await asyncio.to_thread(repository.delete_agent_run_session, test_chat.uuid)
 
-        chat = asyncio.run(verify())
+        engine = create_async_engine(database_url, poolclass=NullPool)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            chat = await methods.get_chat_async(db, test_chat.uuid, test_user.uuid)
+        await engine.dispose()
         assert chat is None
 
-    def test_update_agent_run_sync(
-        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
-    ):
+    async def test_update_agent_run_sync(self, database_url: str, test_chat: UserChat, test_user):
         """Test synchronous wrapper for update_agent_run."""
-        from fivcplayground.agents.types import AgentRun
+        import asyncio
 
+        from fivcplayground.agents.types import AgentRun
+        from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        repository = UserChatRepositoryImpl(user_uuid=test_user.uuid)
         agent_run = AgentRun(
             id="run-sync-1",
             agent_id="agent1",
             status="completed",
         )
+        await asyncio.to_thread(repository.update_agent_run, test_chat.uuid, agent_run)
 
-        # Call synchronous method
-        repository.update_agent_run(test_chat.uuid, agent_run)
-
-        # Verify it was created
-        import asyncio
-
-        async def verify():
-            message = await methods.get_chat_message_async(session, "run-sync-1", test_chat.uuid)
-            return message
-
-        message = asyncio.run(verify())
+        engine = create_async_engine(database_url, poolclass=NullPool)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            message = await methods.get_chat_message_async(db, "run-sync-1", test_chat.uuid)
+        await engine.dispose()
         assert message is not None
         assert message.uuid == "run-sync-1"
 
-    def test_get_agent_run_sync(
-        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
-    ):
+    async def test_get_agent_run_sync(self, session: AsyncSession, test_chat: UserChat, test_user):
         """Test synchronous wrapper for get_agent_run."""
         import asyncio
 
-        # Create a message first
-        async def create_message():
-            message = UserChatMessage(uuid="run-sync-1", chat_uuid=test_chat.uuid)
-            session.add(message)
-            await session.commit()
+        from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
 
-        asyncio.run(create_message())
+        message = UserChatMessage(uuid="run-sync-1", chat_uuid=test_chat.uuid)
+        session.add(message)
+        await session.commit()
 
-        # Call synchronous method
-        agent_run = repository.get_agent_run(test_chat.uuid, "run-sync-1")
+        repository = UserChatRepositoryImpl(user_uuid=test_user.uuid)
+        agent_run = await asyncio.to_thread(repository.get_agent_run, test_chat.uuid, "run-sync-1")
         assert agent_run is not None
         assert agent_run.id == "run-sync-1"
 
-    def test_list_agent_runs_sync(
-        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
+    async def test_list_agent_runs_sync(
+        self, session: AsyncSession, test_chat: UserChat, test_user
     ):
         """Test synchronous wrapper for list_agent_runs."""
         import asyncio
 
-        # Create messages first
-        async def create_messages():
-            for _i in range(2):
-                message = UserChatMessage(chat_uuid=test_chat.uuid)
-                session.add(message)
-            await session.commit()
+        from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
 
-        asyncio.run(create_messages())
+        for _i in range(2):
+            session.add(UserChatMessage(chat_uuid=test_chat.uuid))
+        await session.commit()
 
-        # Call synchronous method
-        runs = repository.list_agent_runs(test_chat.uuid)
+        repository = UserChatRepositoryImpl(user_uuid=test_user.uuid)
+        runs = await asyncio.to_thread(repository.list_agent_runs, test_chat.uuid)
         assert len(runs) == 2
 
-    def test_delete_agent_run_sync(
-        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
+    async def test_delete_agent_run_sync(
+        self, database_url: str, session: AsyncSession, test_chat: UserChat, test_user
     ):
         """Test synchronous wrapper for delete_agent_run."""
         import asyncio
 
-        # Create a message first
-        async def create_message():
-            message = UserChatMessage(uuid="run-sync-1", chat_uuid=test_chat.uuid)
-            session.add(message)
-            await session.commit()
+        from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
 
-        asyncio.run(create_message())
+        session.add(UserChatMessage(uuid="run-sync-1", chat_uuid=test_chat.uuid))
+        await session.commit()
 
-        # Delete using sync method
-        repository.delete_agent_run(test_chat.uuid, "run-sync-1")
+        repository = UserChatRepositoryImpl(user_uuid=test_user.uuid)
+        await asyncio.to_thread(repository.delete_agent_run, test_chat.uuid, "run-sync-1")
 
-        # Verify it was deleted
-        async def verify():
-            message = await methods.get_chat_message_async(session, "run-sync-1", test_chat.uuid)
-            return message
-
-        message = asyncio.run(verify())
+        engine = create_async_engine(database_url, poolclass=NullPool)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            message = await methods.get_chat_message_async(db, "run-sync-1", test_chat.uuid)
+        await engine.dispose()
         assert message is None
 
     async def test_update_agent_run_with_tool_calls_objects(
@@ -1299,11 +1283,14 @@ class TestUserChatRepositoryImpl:
         self,
         repository: "UserChatRepositoryImpl",
         session: AsyncSession,
+        database_url: str,
         test_user,
         test_chat: UserChat,
     ):
         """Test updating an agent run with AgentRunToolCall objects (JSON serialization)."""
         from fivcplayground.agents.types import AgentRun, AgentRunToolCall
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
 
         # Create initial message
         message = UserChatMessage(
@@ -1337,9 +1324,12 @@ class TestUserChatRepositoryImpl:
         await repository.update_agent_run_async(test_chat.uuid, agent_run)
 
         # Verify it was updated and tool_calls were serialized
-        updated_message = await methods.get_chat_message_async(
-            session, "run-update-tools", test_chat.uuid
-        )
+        engine = create_async_engine(database_url, poolclass=NullPool)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            updated_message = await methods.get_chat_message_async(
+                db, "run-update-tools", test_chat.uuid
+            )
+        await engine.dispose()
         assert updated_message is not None
         assert updated_message.tool_calls is not None
         assert isinstance(updated_message.tool_calls, dict)
@@ -1377,7 +1367,8 @@ class TestCascadeDelete:
         assert len(messages_before) == 3
 
         # Delete the chat
-        await methods.delete_chat_async(session, chat)
+        await session.delete(chat)
+        await session.commit()
 
         # Verify all messages are automatically deleted via cascade
         messages_after = await methods.list_chat_messages_async(session, chat.uuid)
@@ -1410,7 +1401,8 @@ class TestCascadeDelete:
         assert len(messages_chat2_before) == 1
 
         # Delete chat1
-        await methods.delete_chat_async(session, chat1)
+        await session.delete(chat1)
+        await session.commit()
 
         # Verify chat1 messages are deleted but chat2 messages remain
         messages_chat1_after = await methods.list_chat_messages_async(session, chat1.uuid)
@@ -1427,7 +1419,8 @@ class TestCascadeDelete:
         await session.commit()
 
         # Delete the chat (should not raise any errors)
-        await methods.delete_chat_async(session, chat)
+        await session.delete(chat)
+        await session.commit()
 
         # Verify chat is deleted
         deleted_chat = await methods.get_chat_async(session, chat.uuid, test_user.uuid)

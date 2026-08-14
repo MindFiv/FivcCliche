@@ -1,6 +1,5 @@
 from functools import cached_property
 import logging
-from typing import Any
 
 from sqlalchemy.engine.url import make_url, URL
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -14,18 +13,33 @@ from fivcglue import IComponentSite, query_component
 from fivcglue.interfaces.configs import IConfig
 
 from fivccliche.services.interfaces.db import IDatabase
+from fivccliche.utils.parsers import to_optional_int
 
 logger = logging.getLogger(__name__)
 
+_PG0_INSTANCE_NAME = "fivccliche"
 
-def _parse_optional_int(value: Any) -> int | None:
-    """Parse an optional int config value; return None for missing/invalid values."""
-    if value is None or value == "":
-        return None
+
+def _to_asyncpg_url(uri: str) -> str:
+    if uri.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + uri[len("postgresql://") :]
+    if uri.startswith("postgres://"):
+        return "postgresql+asyncpg://" + uri[len("postgres://") :]
+    return uri
+
+
+def _default_db_url() -> str:
+    from pg0 import Pg0, Pg0AlreadyRunningError
+
+    pg = Pg0(name=_PG0_INSTANCE_NAME)
     try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+        pg.start()
+    except Pg0AlreadyRunningError:
+        pass
+    uri = pg.uri or (pg.info().uri if pg.info() else None)
+    if not uri:
+        raise RuntimeError(f"pg0 instance {_PG0_INSTANCE_NAME!r} has no connection URI")
+    return _to_asyncpg_url(uri)
 
 
 class DatabaseImpl(IDatabase):
@@ -37,10 +51,10 @@ class DatabaseImpl(IDatabase):
         """Initialize the database."""
         config = query_component(component_site, IConfig)
         config = config.get_session("database")
-        config_url = config.get_value("DB_URL") or "sqlite:///./fivccliche.db"
+        config_url = config.get_value("DB_URL") or _default_db_url()
         self.parsed_url = make_url(config_url)
-        self.pool_size = _parse_optional_int(config.get_value("DB_POOL_SIZE"))
-        self.max_overflow = _parse_optional_int(config.get_value("DB_MAX_OVERFLOW"))
+        self.pool_size = to_optional_int(config.get_value("DB_POOL_SIZE"))
+        self.max_overflow = to_optional_int(config.get_value("DB_MAX_OVERFLOW"))
         logger.info("database url: %s", self.parsed_url)
 
     @cached_property

@@ -1,15 +1,10 @@
-"""Parametrized tests for user-scoped config SQL helpers in methods."""
-
-import tempfile
-from pathlib import Path
+"""Parametrized tests for user-scoped config SQL helpers."""
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from fivccliche.modules.agent_configs import methods, models
-from fivccliche.modules.users.models import User  # noqa: F401
+from fivccliche.modules.agent_configs import models, utils as methods
+from fivccliche.modules.users.models import User
 
 
 CONFIG_MODELS = [
@@ -52,58 +47,55 @@ CONFIG_MODELS = [
 
 
 @pytest.fixture
-async def session():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        engine = create_async_engine(
-            f"sqlite+aiosqlite:///{Path(tmpdir) / 'test.db'}",
-            connect_args={"check_same_thread": False},
-            poolclass=NullPool,
-        )
-        async with engine.begin() as conn:
-            await conn.execute(text("PRAGMA foreign_keys=OFF"))
-            from sqlmodel import SQLModel
-
-            await conn.run_sync(SQLModel.metadata.create_all)
-        async with AsyncSession(engine, expire_on_commit=False) as db_session:
-            yield db_session
-        await engine.dispose()
+async def owner(session: AsyncSession) -> User:
+    user = User(
+        uuid="user123",
+        username="owner",
+        email="owner@example.com",
+        hashed_password="x",
+    )
+    session.add(user)
+    await session.commit()
+    return user
 
 
 @pytest.mark.parametrize(("model", "fields"), CONFIG_MODELS)
 class TestUserScopedConfigHelpers:
-    async def test_get_list_count(self, session: AsyncSession, model, fields):
-        created = model(user_uuid="user123", **fields)
+    async def test_get_list_count(self, session: AsyncSession, owner: User, model, fields):
+        created = model(user_uuid=owner.uuid, **fields)
         session.add(created)
         await session.commit()
         await session.refresh(created)
 
-        fetched = await methods._get_user_scoped_async(
-            session, model, "user123", config_id=fields["id"]
+        fetched = await methods.get_user_scoped_async(
+            session, model, owner.uuid, config_id=fields["id"]
         )
         assert fetched is not None
         assert fetched.uuid == created.uuid
 
-        by_uuid = await methods._get_user_scoped_async(
-            session, model, "user123", config_uuid=created.uuid
+        by_uuid = await methods.get_user_scoped_async(
+            session, model, owner.uuid, config_uuid=created.uuid
         )
         assert by_uuid is not None
         assert by_uuid.id == fields["id"]
 
-        listed = await methods._list_user_scoped_async(session, model, "user123")
+        listed = await methods.list_user_scoped_async(session, model, owner.uuid)
         assert [item.id for item in listed] == [fields["id"]]
-        assert await methods._count_user_scoped_async(session, model, "user123") == 1
+        assert await methods.count_user_scoped_async(session, model, owner.uuid) == 1
 
         assert (
-            await methods._get_user_scoped_async(
+            await methods.get_user_scoped_async(
                 session, model, "other-user", config_id=fields["id"]
             )
             is None
         )
 
-    async def test_get_requires_exactly_one_identity(self, session: AsyncSession, model, fields):
+    async def test_get_requires_exactly_one_identity(
+        self, session: AsyncSession, owner: User, model, fields
+    ):
         with pytest.raises(ValueError, match="Exactly one"):
-            await methods._get_user_scoped_async(session, model, "user123")
+            await methods.get_user_scoped_async(session, model, owner.uuid)
         with pytest.raises(ValueError, match="Exactly one"):
-            await methods._get_user_scoped_async(
-                session, model, "user123", config_uuid="x", config_id="y"
+            await methods.get_user_scoped_async(
+                session, model, owner.uuid, config_uuid="x", config_id="y"
             )

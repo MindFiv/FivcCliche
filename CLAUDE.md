@@ -37,7 +37,7 @@ python -m fivccliche.cli jobs show <module> <job>
 python -m fivccliche.cli jobs run <module> <job>
 ```
 
-API tests share [`tests/conftest.py`](tests/conftest.py) (`make_api_client`: temp SQLite, admin user, session override).
+API tests share [`tests/conftest.py`](tests/conftest.py) (`make_api_client`: isolated pg0 Postgres DB, admin user, session override).
 
 ## Architecture
 
@@ -59,17 +59,17 @@ Each module in `src/fivccliche/modules/` uses this layout:
 - `models.py` — SQLModel tables (UUID primary keys)
 - `schemas.py` — Pydantic request/response bodies only
 - `queries.py` — optional; HTTP list/filter query models, only when list has extra filters
-- `methods.py` — async SQL (`AsyncSession`)
-- `routers.py` — FastAPI handlers (wire `methods`)
+- `utils.py` — optional; SQL shared by routers and services/jobs/CLI (stages writes; callers commit)
+- `routers.py` — FastAPI handlers (HTTP-only SQL is written here)
 - `services.py` — `ModuleImpl` (registers routers) plus provider/authenticator implementations; not a `UserService` business layer
 
 Modules: `users`, `agent_configs`, `agent_chats`, `agent_memories`. All mounted under `/api`.
 
-HTTP CRUD is hand-written FastAPI handlers in each module's `routers.py`. Shared helpers: [`src/fivccliche/utils/asserts.py`](src/fivccliche/utils/asserts.py), [`src/fivccliche/utils/queries.py`](src/fivccliche/utils/queries.py) (dotted JSON for chats, not filter models), [`src/fivccliche/utils/deps.py`](src/fivccliche/utils/deps.py).
+HTTP CRUD is hand-written FastAPI handlers in each module's `routers.py`. Shared helpers: [`src/fivccliche/utils/permissions.py`](src/fivccliche/utils/permissions.py), [`src/fivccliche/utils/queries.py`](src/fivccliche/utils/queries.py) (dotted JSON for chats, not filter models), [`src/fivccliche/utils/deps.py`](src/fivccliche/utils/deps.py).
 
 ### Ownership
 
-List/get returns the caller's rows plus globals (`user_uuid is None`). Create: superuser gets `user_uuid=None`, everyone else their own uuid. Update/delete use `assert_user_owns_resource` (superuser may change globals; nobody may change another user's rows). Details: [docs/architecture.md](docs/architecture.md).
+List/get returns the caller's rows plus globals (`user_uuid is None`). Create: superuser gets `user_uuid=None`, everyone else their own uuid. Update/delete use `has_ownership` (superuser may change globals; nobody may change another user's rows). Details: [docs/architecture.md](docs/architecture.md).
 
 HTTP list/get returns inactive tools/skills. Playground repositories filter `is_active` themselves so agents never pick up disabled configs.
 
@@ -83,7 +83,7 @@ JWT-based (HS256). Login returns token → Bearer token in Authorization header 
 
 ### Database
 
-Default: SQLite (`sqlite:///./fivccliche.db`) with aiosqlite for async. Uses `NullPool` for SQLite. Supports PostgreSQL/MySQL via `DATABASE_URL` env var. Tests use isolated temporary SQLite databases.
+Default: embedded PostgreSQL via [pg0](https://github.com/vectorize-io/pg0) (`Pg0(name="fivccliche")`) when `DB_URL` is unset; SQLAlchemy uses `postgresql+asyncpg://...`. Set `DB_URL` to point at an external Postgres (or explicit SQLite). Tests use a session-scoped pg0 instance (`fivccliche-test`) with an isolated database per fixture / API client.
 
 ## Code Style
 
@@ -107,7 +107,7 @@ Do not wrap, for example:
 - `datetime.now(timezone.utc)`
 - an assert that only forwards error-message strings to another assert
 
-This applies to every refactor, cleanup, and shared-layer extraction. Extract only logic with real rules (uuid/id dual lookup plus user-or-global visibility).
+This applies to every refactor, cleanup, and shared-layer extraction. Extract only logic with real rules (uuid/id dual lookup plus user-or-global visibility). Do not add get/list/count/delete wrappers around those helpers. Module `utils.py` must not `commit`; callers own the transaction.
 
 ### Query filter models
 

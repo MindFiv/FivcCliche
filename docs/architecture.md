@@ -4,18 +4,18 @@ Module layering, user-or-global ownership, and HTTP CRUD for user-scoped configs
 
 ## Module layering
 
-Each module under `src/fivccliche/modules/` owns its files. Shared HTTP/SQL helpers live in `src/fivccliche/utils/`, not in a second repository layer.
+Each module under `src/fivccliche/modules/` owns its files. Shared HTTP helpers live in `src/fivccliche/utils/` (deps, permissions, chat dotted-JSON). Per-module shared SQL lives in that module's `utils.py`.
 
 | File | Role |
 |------|------|
 | `models.py` | SQLModel tables (UUID primary keys) |
 | `schemas.py` | Request/response bodies only |
 | `queries.py` | Optional. HTTP list/filter query models, only when list has extra filters |
-| `methods.py` | Async SQL (`AsyncSession`) |
-| `routers.py` | FastAPI handlers |
+| `utils.py` | Optional. SQL used by routers and services/jobs/CLI |
+| `routers.py` | FastAPI handlers; HTTP-only SQL is written here |
 | `services.py` | `ModuleImpl` (registers routers) plus provider/authenticator implementations |
 
-Routers call `methods.py`. `methods.py` does not import routers.
+Do not import SQL from `routers.py` (services would cycle). `utils.py` does not import routers.
 
 Modules: `users`, `agent_configs`, `agent_chats`, `agent_memories`. All mounted under `/api`. All HTTP routes are hand-written FastAPI handlers.
 
@@ -30,24 +30,28 @@ HTTP list/get returns every matching row, including inactive tools/skills. Playg
 
 Config responses call `config.to_schema()` with no include/exclude arguments. PATCH bodies use `create_partial_model(schema)`. `api_key` is write-only on the schema (`Field(exclude=True)` on `UserEmbeddingSchema` / `UserLLMSchema`).
 
+Do not add get/list/count/delete wrappers around `get/list/count_user_scoped_async` or around `session.delete` + `commit`.
+
+Module `utils.py` stages writes (`session.add` / field assignment) and does not `commit`. The caller that opened the session (router, service, job, CLI) commits; refresh after commit when returning DB defaults.
+
 ## Ownership
 
 User-scoped configs are either owned (`user_uuid` = the user) or global (`user_uuid is None`).
 
-### SQL (`methods.py`)
+### SQL ([`agent_configs/utils.py`](../src/fivccliche/modules/agent_configs/utils.py))
 
-[`_get_user_scoped_async` / `_list_user_scoped_async` / `_count_user_scoped_async`](../src/fivccliche/modules/agent_configs/methods.py):
+[`get_user_scoped_async` / `list_user_scoped_async` / `count_user_scoped_async`](../src/fivccliche/modules/agent_configs/utils.py):
 
 - Lookup by exactly one of `config_uuid` or `config_id`
 - Visibility: `(user_uuid == me) | (user_uuid == None)`
 - List order: `id` ascending, with `skip` / `limit`
 
-Do not extract that SQL condition into a named helper.
+Do not extract that SQL condition into a named helper. Routers and playground repositories call these helpers with the model class. Create/update field mapping for playground types stays in `utils.py` and does not `commit`; the HTTP handler or repository commits. Questions create/update/delete SQL is in the HTTP handlers.
 
 ### HTTP
 
 - **404** if get returns nothing
-- **403** on update/delete via [`assert_user_owns_resource`](../src/fivccliche/utils/asserts.py): non-superusers cannot change globals; nobody can change another user's rows; superusers may change globals
+- **403** on update/delete via [`has_ownership`](../src/fivccliche/utils/permissions.py): non-superusers cannot change globals; nobody can change another user's rows; superusers may change globals
 - **Create:** `None if user.is_superuser else user.uuid` so superusers create globals
 
 Chats use the same assert helper for chat ownership; they are not user-or-global configs.

@@ -26,6 +26,7 @@ from fivccliche.services.interfaces.agent_memories import (
     MemoryRecallResult,
     MemoryRetainResult,
 )
+from fivccliche.utils.parsers import to_float
 
 logger = logging.getLogger(__name__)
 
@@ -128,8 +129,7 @@ class UserMemoryProviderImpl(IUserMemoryProvider):
         session = self._read_config_session()
         base_url = (session.get_value("BASE_URL") if session else None) or _DEFAULT_BASE_URL
         api_key = session.get_value("API_KEY") if session else None
-        timeout_raw = session.get_value("TIMEOUT") if session else None
-        timeout = float(timeout_raw) if timeout_raw else _DEFAULT_TIMEOUT
+        timeout = to_float(session.get_value("TIMEOUT") if session else None, _DEFAULT_TIMEOUT)
         logger.info("Initializing Hindsight memory client (base_url=%s)", base_url)
         return self._hindsight_cls(base_url=base_url, api_key=api_key, timeout=timeout)
 

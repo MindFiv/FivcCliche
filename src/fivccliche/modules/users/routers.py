@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
 
 from fivccliche.services.interfaces.auth import IUser
 from fivccliche.utils.deps import (
@@ -11,7 +13,7 @@ from fivccliche.utils.deps import (
 )
 from fivccliche.utils.schemas import PaginatedResponse
 
-from . import methods, models, schemas
+from . import models, schemas, utils
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -36,7 +38,7 @@ async def create_user_async(
 ) -> models.User:
     """Create a new user."""
     # Check if username already exists
-    existing_user = await methods.get_user_async(session, username=user_create.username)
+    existing_user = await utils.get_user_async(session, username=user_create.username)
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -45,14 +47,14 @@ async def create_user_async(
 
     # Check if email already exists (only if email is provided)
     if user_create.email:
-        existing_email = await methods.get_user_async(session, email=str(user_create.email))
+        existing_email = await utils.get_user_async(session, email=str(user_create.email))
         if existing_email:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered",
             )
 
-    user = await methods.create_user_async(
+    user = await utils.create_user_async(
         session,
         username=user_create.username,
         email=str(user_create.email) if user_create.email else None,
@@ -60,6 +62,8 @@ async def create_user_async(
         password=user_create.password,
         preferences=user_create.preferences,
     )
+    await session.commit()
+    await session.refresh(user)
     return user
 
 
@@ -97,7 +101,7 @@ async def get_self_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> models.User:
-    db_user = await methods.get_user_async(session, user_uuid=user.uuid)
+    db_user = await utils.get_user_async(session, user_uuid=user.uuid)
     if not db_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -117,7 +121,7 @@ async def update_self_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> models.User:
     """Update the current user's profile."""
-    db_user = await methods.get_user_async(session, user_uuid=user.uuid)
+    db_user = await utils.get_user_async(session, user_uuid=user.uuid)
     if not db_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -126,7 +130,10 @@ async def update_self_async(
     update_data = {
         field: getattr(data, field) for field in getattr(data, "model_fields_set", set())
     }
-    return await methods.update_user_async(session, db_user, **update_data)
+    db_user = await utils.update_user_async(session, db_user, **update_data)
+    await session.commit()
+    await session.refresh(db_user)
+    return db_user
 
 
 @router.patch(
@@ -140,12 +147,22 @@ async def change_password_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> models.User:
     """Change the current user's password."""
-    try:
-        return await methods.change_user_password_async(
-            session, str(user.uuid), data.current_password, data.new_password
+    db_user = await utils.get_user_async(session, user_uuid=user.uuid)
+    if not db_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
         )
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    if not db_user.check_password(data.current_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+    db_user.change_password(data.new_password)
+    session.add(db_user)
+    await session.commit()
+    await session.refresh(db_user)
+    return db_user
 
 
 @router.get(
@@ -160,10 +177,18 @@ async def list_users_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse[schemas.UserRead]:
     """List all users with pagination."""
-    users = await methods.list_users_async(
-        session, skip=skip, limit=limit, order_by=order_by.value, order_dir=order_dir.value
+    order_col = (
+        col(models.User.signed_in_at)
+        if order_by.value == "signed_in_at"
+        else col(models.User.created_at)
     )
-    total = await methods.count_users_async(session)
+    order_expr = order_col.desc() if order_dir.value == "desc" else order_col.asc()
+    result = await session.execute(
+        select(models.User).order_by(order_expr).offset(skip).limit(limit)
+    )
+    users = list(result.scalars().all())
+    total_result = await session.execute(select(func.count(col(models.User.uuid))))
+    total = total_result.scalar() or 0
     return PaginatedResponse[schemas.UserRead](
         total=total, results=[schemas.UserRead.model_validate(u) for u in users]
     )
@@ -178,7 +203,7 @@ async def get_user_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> models.User:
     """Get a user by ID."""
-    user = await methods.get_user_async(session, user_uuid=user_uuid)
+    user = await utils.get_user_async(session, user_uuid=user_uuid)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -198,13 +223,14 @@ async def delete_user_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
     """Delete a user."""
-    user = await methods.get_user_async(session, user_uuid=user_uuid)
+    user = await utils.get_user_async(session, user_uuid=user_uuid)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
-    await methods.delete_user_async(session, user)
+    await session.delete(user)
+    await session.commit()
 
 
 @router.patch(
@@ -219,7 +245,7 @@ async def update_user_status_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> models.User:
     """Update a user's active status."""
-    user = await methods.get_user_async(session, user_uuid=user_uuid)
+    user = await utils.get_user_async(session, user_uuid=user_uuid)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -235,7 +261,10 @@ async def update_user_status_async(
     if user.is_active == status_update.is_active:
         return user
 
-    return await methods.update_user_async(session, user, is_active=status_update.is_active)
+    user = await utils.update_user_async(session, user, is_active=status_update.is_active)
+    await session.commit()
+    await session.refresh(user)
+    return user
 
 
 @router.get(
@@ -248,7 +277,7 @@ async def impersonate_user_async(
     admin_user: IUser = Depends(get_admin_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.UserLoginResponse:
-    user = await methods.get_user_async(session, user_uuid=user_uuid)
+    user = await utils.get_user_async(session, user_uuid=user_uuid)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

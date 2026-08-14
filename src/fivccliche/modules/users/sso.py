@@ -14,6 +14,7 @@ from fivccliche.utils.deps import (
     get_config_async,
     configs,
 )
+from fivccliche.utils.parsers import to_bool
 
 router = APIRouter(prefix="/sso", tags=["sso"])
 
@@ -38,7 +39,7 @@ async def login(
         version=config_sess.get_value("VERSION"),
         service_url=config_sess.get_value("SERVICE_URL"),
         server_url=config_sess.get_value("SERVER_URL"),
-        verify_ssl_certificate=bool(config_sess.get_value("VERIFY_SSL_CERTIFICATE")),
+        verify_ssl_certificate=to_bool(config_sess.get_value("VERIFY_SSL_CERTIFICATE"), False),
     )
     if not ticket:
         return responses.RedirectResponse(cas_client.get_login_url())

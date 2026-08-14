@@ -11,7 +11,7 @@ from fivcglue import IComponentSite, query_component
 from fivcglue.interfaces import configs
 from fivcglue.interfaces.mutexes import IMutexSite
 
-from fivccliche.modules.agent_chats import methods, models
+from fivccliche.modules.agent_chats import models, utils
 from fivccliche.services.interfaces.agent_memories import IUserMemoryProvider
 from fivccliche.services.interfaces.modules import IModuleJob
 from fivccliche.utils.deps import (
@@ -19,6 +19,7 @@ from fivccliche.utils.deps import (
     get_memory_provider_async,
     get_mutex_site_async,
 )
+from fivccliche.utils.parsers import to_int
 
 logger = logging.getLogger(__name__)
 
@@ -38,31 +39,32 @@ class _MemorizeSettings:
     min_age_hours: int
 
 
-def _config_int(session: configs.IConfigSession | None, key: str, default: int) -> int:
-    if session is None:
-        return default
-    raw = session.get_value(key)
-    if raw is None:
-        return default
-    try:
-        value = int(float(raw))
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
-
-
 def _load_memorize_settings(component_site: IComponentSite) -> _MemorizeSettings:
     config = query_component(component_site, configs.IConfig)
     session = config.get_session("agent_chats") if config else None
+    interval_minutes = to_int(
+        session.get_value("MEMORIZE_INTERVAL_MINUTES") if session else None,
+        _DEFAULT_INTERVAL_MINUTES,
+    )
+    batch_size = to_int(
+        session.get_value("MEMORIZE_BATCH_SIZE") if session else None,
+        _DEFAULT_BATCH_SIZE,
+    )
+    max_batches_per_run = to_int(
+        session.get_value("MEMORIZE_MAX_BATCHES_PER_RUN") if session else None,
+        _DEFAULT_MAX_BATCHES_PER_RUN,
+    )
+    min_age_hours = to_int(
+        session.get_value("MEMORIZE_MIN_AGE_HOURS") if session else None,
+        _DEFAULT_MIN_AGE_HOURS,
+    )
     return _MemorizeSettings(
-        interval_minutes=_config_int(
-            session, "MEMORIZE_INTERVAL_MINUTES", _DEFAULT_INTERVAL_MINUTES
+        interval_minutes=interval_minutes if interval_minutes > 0 else _DEFAULT_INTERVAL_MINUTES,
+        batch_size=batch_size if batch_size > 0 else _DEFAULT_BATCH_SIZE,
+        max_batches_per_run=(
+            max_batches_per_run if max_batches_per_run > 0 else _DEFAULT_MAX_BATCHES_PER_RUN
         ),
-        batch_size=_config_int(session, "MEMORIZE_BATCH_SIZE", _DEFAULT_BATCH_SIZE),
-        max_batches_per_run=_config_int(
-            session, "MEMORIZE_MAX_BATCHES_PER_RUN", _DEFAULT_MAX_BATCHES_PER_RUN
-        ),
-        min_age_hours=_config_int(session, "MEMORIZE_MIN_AGE_HOURS", _DEFAULT_MIN_AGE_HOURS),
+        min_age_hours=min_age_hours if min_age_hours > 0 else _DEFAULT_MIN_AGE_HOURS,
     )
 
 
@@ -133,7 +135,7 @@ class ChatMemorizeJob(IModuleJob):
 
         for _ in range(self.max_batches_per_run):
             async with get_db_session_context_async() as session:
-                chats = await methods.list_unmemorized_chats_async(
+                chats = await utils.list_unmemorized_chats_async(
                     session,
                     created_at_to=created_at_to,
                     limit=self.batch_size,
@@ -174,7 +176,7 @@ class ChatMemorizeJob(IModuleJob):
 
         try:
             async with get_db_session_context_async() as session:
-                messages = await methods.list_unmemorized_chat_messages_async(
+                messages = await utils.list_unmemorized_chat_messages_async(
                     session,
                     chat.uuid,
                     created_at_to=created_at_to,
@@ -182,7 +184,6 @@ class ChatMemorizeJob(IModuleJob):
             if not messages:
                 return
 
-            message_uuids = [message.uuid for message in messages]
             turns = build_conversation_turns(messages)
             has_user = any(turn["role"] == "user" for turn in turns)
             if has_user:
@@ -197,7 +198,10 @@ class ChatMemorizeJob(IModuleJob):
                     return
 
             async with get_db_session_context_async() as session:
-                await methods.mark_unmemorized_chat_messages_async(session, message_uuids)
+                await utils.delete_unmemorized_chat_messages_async(
+                    session, chat.uuid, created_at_to=created_at_to
+                )
+                await session.commit()
         except Exception:
             logger.exception("Failed to memorize chat %s", chat.uuid)
         finally:

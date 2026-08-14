@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy.pool.impl import NullPool
 
-from fivccliche.services.implements.db import DatabaseImpl, _parse_optional_int
+from fivccliche.services.implements.db import DatabaseImpl
 from fivccliche.utils.deps import get_db_session_context_async
 
 
@@ -20,15 +20,27 @@ def _make_db(config_values: dict[str, str | None]) -> DatabaseImpl:
         return DatabaseImpl(component_site)
 
 
-class TestParseOptionalInt:
-    def test_parses_int_and_numeric_string(self):
-        assert _parse_optional_int(2) == 2
-        assert _parse_optional_int("10") == 10
+class TestDatabaseImplDefaultUrl:
+    def test_missing_db_url_starts_pg0(self):
+        mock_pg = MagicMock()
+        mock_pg.uri = "postgresql://postgres:postgres@127.0.0.1:54321/postgres"
+        with patch("pg0.Pg0", return_value=mock_pg) as mock_pg0_cls:
+            db = _make_db({"DB_URL": None})
 
-    def test_returns_none_for_missing_or_invalid(self):
-        assert _parse_optional_int(None) is None
-        assert _parse_optional_int("") is None
-        assert _parse_optional_int("abc") is None
+        mock_pg0_cls.assert_called_once_with(name="fivccliche")
+        mock_pg.start.assert_called_once()
+        assert db.get_url() == "postgresql+asyncpg://postgres:postgres@127.0.0.1:54321/postgres"
+
+    def test_missing_db_url_reuses_running_pg0(self):
+        from pg0 import Pg0AlreadyRunningError
+
+        mock_pg = MagicMock()
+        mock_pg.uri = "postgresql://postgres:postgres@127.0.0.1:54321/postgres"
+        mock_pg.start.side_effect = Pg0AlreadyRunningError("already")
+        with patch("pg0.Pg0", return_value=mock_pg):
+            db = _make_db({"DB_URL": None})
+
+        assert db.get_url() == "postgresql+asyncpg://postgres:postgres@127.0.0.1:54321/postgres"
 
 
 class TestDatabaseImplPoolConfig:
@@ -87,6 +99,7 @@ class TestDatabaseImplPoolConfig:
         assert "max_overflow" not in kwargs
 
     def test_sqlite_uses_null_pool_and_ignores_pool_settings(self):
+        pytest.importorskip("aiosqlite")
         db = _make_db(
             {
                 "DB_URL": "sqlite:///:memory:",

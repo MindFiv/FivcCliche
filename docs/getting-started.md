@@ -16,6 +16,8 @@ uv pip install -e ".[dev]"
 
 ## Database and admin user
 
+Unset `DB_URL` to use embedded PostgreSQL via [pg0](https://github.com/vectorize-io/pg0) (instance name `fivccliche`). Or set `DB_URL` to any SQLAlchemy URL (for example `postgresql+asyncpg://...`).
+
 ```bash
 python -m fivccliche.cli migrate
 python -m fivccliche.cli createsuperuser

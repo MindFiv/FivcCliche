@@ -11,9 +11,10 @@ from fivcglue.interfaces.configs import IConfig
 from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator, UserCredential
 from fivccliche.services.interfaces.modules import IModule, IModuleJob
 from fivccliche.utils.deps import get_db_session_context_async
+from fivccliche.utils.parsers import to_float, to_string
 
 from .models import User
-from .methods import create_user_async, get_user_async
+from .utils import create_user_async, get_user_async
 from .routers import router
 
 logger = logging.getLogger(__name__)
@@ -56,10 +57,10 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         self.cache = query_component(component_site, ICache)
         config = query_component(component_site, IConfig)
         config = config.get_session("auth")
-        self.token_expire_hours = float(config.get_value("EXPIRATION_HOURS") or 12)
-        self.token_algorithm = config.get_value("ALGORITHM") or "HS256"
-        self.token_secret_key = (
-            config.get_value("SECRET_KEY") or "your-secret-key-change-this-in-production"
+        self.token_expire_hours = to_float(config.get_value("EXPIRATION_HOURS"), 12)
+        self.token_algorithm = to_string(config.get_value("ALGORITHM"), "HS256")
+        self.token_secret_key = to_string(
+            config.get_value("SECRET_KEY"), "your-secret-key-change-this-in-production"
         )
 
     def _create_access_token(self, user_uuid: str) -> UserCredential:
@@ -111,6 +112,8 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 is_superuser=is_superuser,
                 preferences=preferences,
             )
+            await db_session.commit()
+            await db_session.refresh(user)
             return UserImpl(user) if user else None
 
     async def create_credential_async(

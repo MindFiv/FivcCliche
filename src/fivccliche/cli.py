@@ -318,7 +318,7 @@ async def _create_superuser_async(username: str, email: str, password: str) -> N
 
         try:
             # Check if user already exists
-            from fivccliche.modules.users.methods import get_user_async
+            from fivccliche.modules.users.utils import get_user_async
 
             existing_user = await get_user_async(session, username=username)
             if existing_user:
@@ -425,7 +425,7 @@ async def _change_password_async(username: str, new_password: str) -> None:
         session = db_service.create_session()
 
         try:
-            from fivccliche.modules.users.methods import get_user_async, update_user_async
+            from fivccliche.modules.users.utils import get_user_async, update_user_async
 
             # Look up user
             user = await get_user_async(session, username=username)
@@ -435,6 +435,7 @@ async def _change_password_async(username: str, new_password: str) -> None:
 
             # Update password
             await update_user_async(session, user, password=new_password)
+            await session.commit()
 
             console.print("\n" + "=" * 60)
             console.print("[bold green]✅ Password changed successfully![/bold green]")

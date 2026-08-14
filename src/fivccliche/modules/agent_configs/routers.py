@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic_strict_partial import create_partial_model
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fivcplayground.tools import create_tool_retriever_async
 
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
-from fivccliche.utils.asserts import assert_user_owns_resource
+from fivccliche.utils.permissions import has_ownership
 from fivccliche.utils.deps import (
     IUser,
     get_authenticated_user_async,
@@ -14,7 +16,7 @@ from fivccliche.utils.deps import (
 )
 from fivccliche.utils.schemas import PaginatedResponse
 
-from . import methods, schemas
+from . import models, schemas, utils
 
 
 def _reject_frozen_agent_update(config, config_update, _user) -> None:
@@ -55,12 +57,14 @@ async def create_embedding_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.create_embedding_config_async(
+    config = await utils.create_embedding_config_async(
         session,
         None if user.is_superuser else user.uuid,
         config_create,
         updated_user_uuid=user.uuid,
     )
+    await session.commit()
+    await session.refresh(config)
     return config.to_schema()
 
 
@@ -76,8 +80,10 @@ async def list_embedding_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    configs = await methods.list_embedding_configs_async(session, user.uuid, skip=skip, limit=limit)
-    total = await methods.count_embedding_configs_async(session, user.uuid)
+    configs = await utils.list_user_scoped_async(
+        session, models.UserEmbedding, user.uuid, skip=skip, limit=limit
+    )
+    total = await utils.count_user_scoped_async(session, models.UserEmbedding, user.uuid)
     return PaginatedResponse(
         total=total,
         results=[config.to_schema() for config in configs],
@@ -95,7 +101,9 @@ async def get_embedding_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.get_embedding_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserEmbedding, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Embedding config not found"
@@ -115,20 +123,24 @@ async def update_embedding_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.get_embedding_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserEmbedding, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Embedding config not found"
         )
-    assert_user_owns_resource(
+    has_ownership(
         user,
         config.user_uuid,
         global_detail="Cannot update global configs",
         other_detail="Cannot update configs belonging to other users",
     )
-    config = await methods.update_embedding_config_async(
+    config = await utils.update_embedding_config_async(
         session, config, config_update, updated_user_uuid=user.uuid
     )
+    await session.commit()
+    await session.refresh(config)
     return config.to_schema()
 
 
@@ -143,18 +155,21 @@ async def delete_embedding_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
-    config = await methods.get_embedding_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserEmbedding, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Embedding config not found"
         )
-    assert_user_owns_resource(
+    has_ownership(
         user,
         config.user_uuid,
         global_detail="Cannot delete global configs",
         other_detail="Cannot delete configs belonging to other users",
     )
-    await methods.delete_embedding_config_async(session, config)
+    await session.delete(config)
+    await session.commit()
 
 
 # ============================================================================
@@ -176,12 +191,14 @@ async def create_llm_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.create_llm_config_async(
+    config = await utils.create_llm_config_async(
         session,
         None if user.is_superuser else user.uuid,
         config_create,
         updated_user_uuid=user.uuid,
     )
+    await session.commit()
+    await session.refresh(config)
     return config.to_schema()
 
 
@@ -197,8 +214,10 @@ async def list_llm_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    configs = await methods.list_llm_configs_async(session, user.uuid, skip=skip, limit=limit)
-    total = await methods.count_llm_configs_async(session, user.uuid)
+    configs = await utils.list_user_scoped_async(
+        session, models.UserLLM, user.uuid, skip=skip, limit=limit
+    )
+    total = await utils.count_user_scoped_async(session, models.UserLLM, user.uuid)
     return PaginatedResponse(
         total=total,
         results=[config.to_schema() for config in configs],
@@ -216,7 +235,9 @@ async def get_llm_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.get_llm_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserLLM, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM config not found")
     return config.to_schema()
@@ -234,18 +255,22 @@ async def update_llm_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.get_llm_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserLLM, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM config not found")
-    assert_user_owns_resource(
+    has_ownership(
         user,
         config.user_uuid,
         global_detail="Cannot update global configs",
         other_detail="Cannot update configs belonging to other users",
     )
-    config = await methods.update_llm_config_async(
+    config = await utils.update_llm_config_async(
         session, config, config_update, updated_user_uuid=user.uuid
     )
+    await session.commit()
+    await session.refresh(config)
     return config.to_schema()
 
 
@@ -260,16 +285,19 @@ async def delete_llm_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
-    config = await methods.get_llm_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserLLM, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM config not found")
-    assert_user_owns_resource(
+    has_ownership(
         user,
         config.user_uuid,
         global_detail="Cannot delete global configs",
         other_detail="Cannot delete configs belonging to other users",
     )
-    await methods.delete_llm_config_async(session, config)
+    await session.delete(config)
+    await session.commit()
 
 
 # ============================================================================
@@ -291,12 +319,14 @@ async def create_agent_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.create_agent_config_async(
+    config = await utils.create_agent_config_async(
         session,
         None if user.is_superuser else user.uuid,
         config_create,
         updated_user_uuid=user.uuid,
     )
+    await session.commit()
+    await session.refresh(config)
     return config.to_schema()
 
 
@@ -312,8 +342,10 @@ async def list_agent_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    configs = await methods.list_agent_configs_async(session, user.uuid, skip=skip, limit=limit)
-    total = await methods.count_agent_configs_async(session, user.uuid)
+    configs = await utils.list_user_scoped_async(
+        session, models.UserAgent, user.uuid, skip=skip, limit=limit
+    )
+    total = await utils.count_user_scoped_async(session, models.UserAgent, user.uuid)
     return PaginatedResponse(
         total=total,
         results=[config.to_schema() for config in configs],
@@ -331,7 +363,9 @@ async def get_agent_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.get_agent_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserAgent, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent config not found")
     return config.to_schema()
@@ -349,19 +383,23 @@ async def update_agent_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.get_agent_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserAgent, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent config not found")
-    assert_user_owns_resource(
+    has_ownership(
         user,
         config.user_uuid,
         global_detail="Cannot update global configs",
         other_detail="Cannot update configs belonging to other users",
     )
     _reject_frozen_agent_update(config, config_update, user)
-    config = await methods.update_agent_config_async(
+    config = await utils.update_agent_config_async(
         session, config, config_update, updated_user_uuid=user.uuid
     )
+    await session.commit()
+    await session.refresh(config)
     return config.to_schema()
 
 
@@ -376,17 +414,20 @@ async def delete_agent_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
-    config = await methods.get_agent_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserAgent, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent config not found")
-    assert_user_owns_resource(
+    has_ownership(
         user,
         config.user_uuid,
         global_detail="Cannot delete global configs",
         other_detail="Cannot delete configs belonging to other users",
     )
     _reject_frozen_agent_delete(config, user)
-    await methods.delete_agent_config_async(session, config)
+    await session.delete(config)
+    await session.commit()
 
 
 # ============================================================================
@@ -426,7 +467,9 @@ async def probe_tool_async(
     session: AsyncSession = Depends(get_db_session_async),
     config_provider: IUserConfigProvider = Depends(get_config_provider_async),
 ) -> schemas.UserToolProbeSchema:
-    config = await methods.get_tool_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserTool, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -456,12 +499,14 @@ async def create_tool_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.create_tool_config_async(
+    config = await utils.create_tool_config_async(
         session,
         None if user.is_superuser else user.uuid,
         config_create,
         updated_user_uuid=user.uuid,
     )
+    await session.commit()
+    await session.refresh(config)
     return config.to_schema()
 
 
@@ -477,8 +522,10 @@ async def list_tool_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    configs = await methods.list_tool_configs_async(session, user.uuid, skip=skip, limit=limit)
-    total = await methods.count_tool_configs_async(session, user.uuid)
+    configs = await utils.list_user_scoped_async(
+        session, models.UserTool, user.uuid, skip=skip, limit=limit
+    )
+    total = await utils.count_user_scoped_async(session, models.UserTool, user.uuid)
     return PaginatedResponse(
         total=total,
         results=[config.to_schema() for config in configs],
@@ -496,7 +543,9 @@ async def get_tool_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.get_tool_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserTool, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool config not found")
     return config.to_schema()
@@ -514,18 +563,22 @@ async def update_tool_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.get_tool_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserTool, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool config not found")
-    assert_user_owns_resource(
+    has_ownership(
         user,
         config.user_uuid,
         global_detail="Cannot update global configs",
         other_detail="Cannot update configs belonging to other users",
     )
-    config = await methods.update_tool_config_async(
+    config = await utils.update_tool_config_async(
         session, config, config_update, updated_user_uuid=user.uuid
     )
+    await session.commit()
+    await session.refresh(config)
     return config.to_schema()
 
 
@@ -540,16 +593,19 @@ async def delete_tool_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
-    config = await methods.get_tool_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserTool, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool config not found")
-    assert_user_owns_resource(
+    has_ownership(
         user,
         config.user_uuid,
         global_detail="Cannot delete global configs",
         other_detail="Cannot delete configs belonging to other users",
     )
-    await methods.delete_tool_config_async(session, config)
+    await session.delete(config)
+    await session.commit()
 
 
 # ============================================================================
@@ -571,12 +627,14 @@ async def create_skill_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.create_skill_config_async(
+    config = await utils.create_skill_config_async(
         session,
         None if user.is_superuser else user.uuid,
         config_create,
         updated_user_uuid=user.uuid,
     )
+    await session.commit()
+    await session.refresh(config)
     return config.to_schema()
 
 
@@ -592,8 +650,10 @@ async def list_skill_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    configs = await methods.list_skill_configs_async(session, user.uuid, skip=skip, limit=limit)
-    total = await methods.count_skill_configs_async(session, user.uuid)
+    configs = await utils.list_user_scoped_async(
+        session, models.UserSkill, user.uuid, skip=skip, limit=limit
+    )
+    total = await utils.count_user_scoped_async(session, models.UserSkill, user.uuid)
     return PaginatedResponse(
         total=total,
         results=[config.to_schema() for config in configs],
@@ -611,7 +671,9 @@ async def get_skill_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.get_skill_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserSkill, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill config not found")
     return config.to_schema()
@@ -629,18 +691,22 @@ async def update_skill_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.get_skill_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserSkill, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill config not found")
-    assert_user_owns_resource(
+    has_ownership(
         user,
         config.user_uuid,
         global_detail="Cannot update global configs",
         other_detail="Cannot update configs belonging to other users",
     )
-    config = await methods.update_skill_config_async(
+    config = await utils.update_skill_config_async(
         session, config, config_update, updated_user_uuid=user.uuid
     )
+    await session.commit()
+    await session.refresh(config)
     return config.to_schema()
 
 
@@ -655,16 +721,19 @@ async def delete_skill_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
-    config = await methods.get_skill_config_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserSkill, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill config not found")
-    assert_user_owns_resource(
+    has_ownership(
         user,
         config.user_uuid,
         global_detail="Cannot delete global configs",
         other_detail="Cannot delete configs belonging to other users",
     )
-    await methods.delete_skill_config_async(session, config)
+    await session.delete(config)
+    await session.commit()
 
 
 # ============================================================================
@@ -686,12 +755,18 @@ async def create_question_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.create_question_async(
-        session,
-        None if user.is_superuser else user.uuid,
-        config_create,
+    config = models.UserQuestion(
+        id=config_create.id,
+        user_uuid=None if user.is_superuser else user.uuid,
+        question=config_create.question,
+        answer=config_create.answer,
+        is_active=config_create.is_active if hasattr(config_create, "is_active") else False,
+        updated_at=datetime.now(timezone.utc),
         updated_user_uuid=user.uuid,
     )
+    session.add(config)
+    await session.commit()
+    await session.refresh(config)
     return config.to_schema()
 
 
@@ -708,10 +783,18 @@ async def list_question_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    configs = await methods.list_questions_async(
-        session, user.uuid, skip=skip, limit=limit, is_active=is_active
+    extra = [models.UserQuestion.is_active == is_active] if is_active is not None else None
+    configs = await utils.list_user_scoped_async(
+        session,
+        models.UserQuestion,
+        user.uuid,
+        skip=skip,
+        limit=limit,
+        extra_conditions=extra,
     )
-    total = await methods.count_questions_async(session, user.uuid, is_active=is_active)
+    total = await utils.count_user_scoped_async(
+        session, models.UserQuestion, user.uuid, extra_conditions=extra
+    )
     return PaginatedResponse(
         total=total,
         results=[config.to_schema() for config in configs],
@@ -729,7 +812,9 @@ async def get_question_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.get_question_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserQuestion, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Question config not found"
@@ -749,20 +834,31 @@ async def update_question_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
-    config = await methods.get_question_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserQuestion, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Question config not found"
         )
-    assert_user_owns_resource(
+    has_ownership(
         user,
         config.user_uuid,
         global_detail="Cannot update global configs",
         other_detail="Cannot update configs belonging to other users",
     )
-    config = await methods.update_question_async(
-        session, config, config_update, updated_user_uuid=user.uuid
-    )
+    fields_set: set[str] = getattr(config_update, "model_fields_set", set())
+    if "question" in fields_set and config_update.question is not None:
+        config.question = config_update.question
+    if "answer" in fields_set:
+        config.answer = config_update.answer
+    if "is_active" in fields_set and config_update.is_active is not None:
+        config.is_active = config_update.is_active
+    config.updated_at = datetime.now(timezone.utc)
+    config.updated_user_uuid = user.uuid
+    session.add(config)
+    await session.commit()
+    await session.refresh(config)
     return config.to_schema()
 
 
@@ -777,15 +873,18 @@ async def delete_question_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> None:
-    config = await methods.get_question_async(session, user.uuid, config_uuid=config_uuid)
+    config = await utils.get_user_scoped_async(
+        session, models.UserQuestion, user.uuid, config_uuid=config_uuid
+    )
     if not config:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Question config not found"
         )
-    assert_user_owns_resource(
+    has_ownership(
         user,
         config.user_uuid,
         global_detail="Cannot delete global configs",
         other_detail="Cannot delete configs belonging to other users",
     )
-    await methods.delete_question_async(session, config)
+    await session.delete(config)
+    await session.commit()

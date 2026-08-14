@@ -16,7 +16,7 @@ Do not wrap, for example:
 - `datetime.now(timezone.utc)`
 - an assert that only forwards error-message strings to another assert
 
-This applies to every refactor, cleanup, and shared-layer extraction. Extract only logic with real rules (uuid/id dual lookup plus user-or-global visibility).
+This applies to every refactor, cleanup, and shared-layer extraction. Extract only logic with real rules (uuid/id dual lookup plus user-or-global visibility). Do not add get/list/count/delete wrappers around those helpers. Module `utils.py` must not `commit`; callers own the transaction.
 
 ## Query filter models
 
@@ -24,6 +24,6 @@ HTTP list/filter Pydantic models belong in that module's `queries.py`. Do not pu
 
 ## Config HTTP CRUD
 
-User-scoped config HTTP CRUD is hand-written FastAPI handlers in [`agent_configs/routers.py`](src/fivccliche/modules/agent_configs/routers.py), same as `users`, `agent_chats`, and `agent_memories`. Extra routes (for example tools `index` / `probe`) live on the same routers.
+User-scoped config HTTP CRUD is hand-written FastAPI handlers in [`agent_configs/routers.py`](src/fivccliche/modules/agent_configs/routers.py), same as `users`, `agent_chats`, and `agent_memories`. Extra routes (for example tools `index` / `probe`) live on the same routers. Shared SQL used by routers and playground repositories lives in that module's `utils.py`. Do not import SQL from `routers.py`. Do not `commit` inside module `utils.py`.
 
 `api_key` is write-only via `Field(exclude=True)` on the schema (see [`src/fivccliche/modules/agent_configs/schemas.py`](src/fivccliche/modules/agent_configs/schemas.py)).

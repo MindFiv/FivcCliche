@@ -1,51 +1,21 @@
 """Unit tests for user service layer."""
 
 import json
-import tempfile
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import NullPool
-from sqlmodel import SQLModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
 
-from fivccliche.modules.users import methods
+from fivccliche.modules.users import utils as methods
 from fivccliche.modules.users.models import User
 from fivccliche.modules.users.services import UserAuthenticatorImpl, UserImpl
-
-
-@pytest.fixture
-async def session():
-    """Create a temporary SQLite database for testing."""
-    # Create a temporary database file
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test.db"
-        database_url = f"sqlite+aiosqlite:///{db_path}"
-
-        engine = create_async_engine(
-            database_url,
-            connect_args={"check_same_thread": False},
-            poolclass=NullPool,
-            echo=False,
-        )
-
-        # Create all tables
-        async with engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
-
-        # Create session
-        async_session = AsyncSession(engine, expire_on_commit=False)
-        try:
-            yield async_session
-        finally:
-            await async_session.close()
-            await engine.dispose()
 
 
 @pytest.fixture(autouse=True)
 async def patch_db_session_context(session: AsyncSession):
     from contextlib import asynccontextmanager
+    from unittest.mock import patch
 
     @asynccontextmanager
     async def override_ctx(*_args, **_kwargs):
@@ -192,7 +162,8 @@ class TestUserService:
                 password="password123",
             )
 
-        users = await methods.list_users_async(session)
+        result = await session.execute(select(User).order_by(col(User.created_at).asc()))
+        users = list(result.scalars().all())
         assert len(users) == 3
 
     async def test_get_all_users_pagination(self, session: AsyncSession):
@@ -205,7 +176,10 @@ class TestUserService:
                 password="password123",
             )
 
-        users = await methods.list_users_async(session, skip=0, limit=2)
+        result = await session.execute(
+            select(User).order_by(col(User.created_at).asc()).offset(0).limit(2)
+        )
+        users = list(result.scalars().all())
         assert len(users) == 2
 
     async def test_update_user(self, session: AsyncSession):
@@ -277,7 +251,9 @@ class TestUserService:
             email="test@example.com",
             password="password123",
         )
-        await methods.delete_user_async(session, user)
+        await session.commit()
+        await session.delete(user)
+        await session.commit()
 
         retrieved_user = await methods.get_user_async(session, user_uuid=user.uuid)
         assert retrieved_user is None
@@ -291,8 +267,9 @@ class TestUserService:
             password="password123",
         )
 
-        user = await methods.authenticate_user_async(session, "testuser", "password123")
+        user = await methods.get_user_async(session, username="testuser")
         assert user is not None
+        assert user.check_password("password123")
         assert user.username == "testuser"
 
     async def test_authenticate_user_wrong_password(self, session: AsyncSession):
@@ -304,12 +281,13 @@ class TestUserService:
             password="password123",
         )
 
-        user = await methods.authenticate_user_async(session, "testuser", "wrongpassword")
-        assert user is None
+        user = await methods.get_user_async(session, username="testuser")
+        assert user is not None
+        assert not user.check_password("wrongpassword")
 
     async def test_authenticate_user_not_found(self, session: AsyncSession):
         """Test authentication with non-existent user."""
-        user = await methods.authenticate_user_async(session, "nonexistent", "password123")
+        user = await methods.get_user_async(session, username="nonexistent")
         assert user is None
 
 

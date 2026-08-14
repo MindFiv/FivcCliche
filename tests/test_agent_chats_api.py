@@ -396,8 +396,8 @@ class TestChatIntegration:
 
     def test_list_messages_includes_is_memorized(self, client: TestClient, auth_token: str):
         """Test that list messages returns is_memorized on each message."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
-        from fivccliche.modules.users.methods import get_user_async
+        from fivccliche.modules.agent_chats import utils as chat_methods
+        from fivccliche.modules.users.utils import get_user_async
 
         headers = {"Authorization": f"Bearer {auth_token}"}
         session = client.async_session
@@ -416,6 +416,7 @@ class TestChatIntegration:
                 chat_uuid=chat.uuid,
                 query={"text": "Hello"},
             )
+            await session.commit()
             return str(chat.uuid)
 
         chat_uuid = loop.run_until_complete(setup())
@@ -560,7 +561,7 @@ class TestGlobalChatAuthorization:
 
     def test_superuser_can_delete_global_chat(self, client: TestClient):
         """Test that superuser can delete global chats."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.agent_chats import utils as chat_methods
 
         # Login as admin
         admin_response = client.post(
@@ -579,6 +580,7 @@ class TestGlobalChatAuthorization:
                 user_uuid=None,  # Global chat
                 agent_id="test-agent",
             )
+            await client.async_session.commit()
             return chat.uuid
 
         chat_uuid = loop.run_until_complete(setup())
@@ -591,7 +593,7 @@ class TestGlobalChatAuthorization:
         self, client: TestClient, regular_user_token: str
     ):
         """Test that regular user cannot delete global chats."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.agent_chats import utils as chat_methods
 
         headers = {"Authorization": f"Bearer {regular_user_token}"}
 
@@ -604,6 +606,7 @@ class TestGlobalChatAuthorization:
                 user_uuid=None,  # Global chat
                 agent_id="test-agent",
             )
+            await client.async_session.commit()
             return chat.uuid
 
         chat_uuid = loop.run_until_complete(setup())
@@ -621,7 +624,7 @@ class TestGlobalChatAuthorization:
         Note: Superusers get 404 because they can't see other users' chats
         (GET queries filter by user_uuid). This is the expected behavior.
         """
-        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.agent_chats import utils as chat_methods
 
         # Login as admin
         admin_response = client.post(
@@ -651,6 +654,7 @@ class TestGlobalChatAuthorization:
                 user_uuid=user_uuid,  # User-specific chat
                 agent_id="test-agent",
             )
+            await client.async_session.commit()
             return chat.uuid
 
         chat_uuid = loop.run_until_complete(setup())
@@ -661,7 +665,7 @@ class TestGlobalChatAuthorization:
 
     def test_regular_user_can_see_global_chats(self, client: TestClient, regular_user_token: str):
         """Test that regular users can see global chats in their list."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.agent_chats import utils as chat_methods
 
         headers = {"Authorization": f"Bearer {regular_user_token}"}
 
@@ -690,6 +694,7 @@ class TestGlobalChatAuthorization:
                 user_uuid=user_uuid,  # User-specific chat
                 agent_id="default",
             )
+            await client.async_session.commit()
             return global_chat.uuid, user_chat.uuid
 
         global_chat_uuid, user_chat_uuid = loop.run_until_complete(setup())
@@ -708,7 +713,7 @@ class TestGlobalChatAuthorization:
         self, client: TestClient, regular_user_token: str
     ):
         """Test that regular user cannot delete messages in global chats."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.agent_chats import utils as chat_methods
 
         headers = {"Authorization": f"Bearer {regular_user_token}"}
 
@@ -726,6 +731,7 @@ class TestGlobalChatAuthorization:
                 chat_uuid=chat.uuid,
                 query={"text": "Hello"},
             )
+            await client.async_session.commit()
             return chat.uuid, message.uuid
 
         chat_uuid, message_uuid = loop.run_until_complete(setup())
@@ -740,7 +746,7 @@ class TestGlobalChatAuthorization:
 
     def test_superuser_can_delete_message_in_global_chat(self, client: TestClient):
         """Test that superuser can delete messages in global chats."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.agent_chats import utils as chat_methods
 
         # Login as admin
         admin_response = client.post(
@@ -764,6 +770,7 @@ class TestGlobalChatAuthorization:
                 chat_uuid=chat.uuid,
                 query={"text": "Hello"},
             )
+            await client.async_session.commit()
             return chat.uuid, message.uuid
 
         chat_uuid, message_uuid = loop.run_until_complete(setup())
@@ -818,7 +825,7 @@ class TestChatDeleteAuthorization:
 
     def test_regular_user_cannot_delete_global_chat(self, client, regular_user_token):
         """Verify 403 error when regular user tries to delete global chat."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.agent_chats import utils as chat_methods
 
         session = client.async_session
         loop = client.loop
@@ -829,6 +836,7 @@ class TestChatDeleteAuthorization:
                 user_uuid=None,  # Global chat
                 agent_id="test-agent",
             )
+            await session.commit()
             return str(chat.uuid)
 
         chat_uuid = loop.run_until_complete(setup())
@@ -841,20 +849,26 @@ class TestChatDeleteAuthorization:
 
     def test_regular_user_cannot_delete_other_users_chat(self, client, regular_user_token):
         """Verify 404 when regular user tries to delete another user's chat (not visible)."""
-        import uuid
-        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.agent_chats import utils as chat_methods
+        from fivccliche.modules.users import utils as user_methods
 
         session = client.async_session
         loop = client.loop
 
         async def setup():
-            # Create chat for a different user
-            other_user_uuid = str(uuid.uuid4())
+            other = await user_methods.create_user_async(
+                session,
+                username="other-chat-owner",
+                email="other-chat-owner@example.com",
+                password="password123",
+            )
+            await session.commit()
             chat = await chat_methods.create_chat_async(
                 session=session,
-                user_uuid=other_user_uuid,
+                user_uuid=other.uuid,
                 agent_id="test-agent",
             )
+            await session.commit()
             return str(chat.uuid)
 
         chat_uuid = loop.run_until_complete(setup())
@@ -866,8 +880,8 @@ class TestChatDeleteAuthorization:
 
     def test_regular_user_can_delete_own_chat(self, client, regular_user_token):
         """Verify regular user can delete their own chat."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
-        from fivccliche.modules.users.methods import get_user_async
+        from fivccliche.modules.agent_chats import utils as chat_methods
+        from fivccliche.modules.users.utils import get_user_async
 
         session = client.async_session
         loop = client.loop
@@ -881,6 +895,7 @@ class TestChatDeleteAuthorization:
                 user_uuid=str(user.uuid),
                 agent_id="test-agent",
             )
+            await session.commit()
             return str(chat.uuid)
 
         chat_uuid = loop.run_until_complete(setup())
@@ -892,20 +907,26 @@ class TestChatDeleteAuthorization:
 
     def test_superuser_can_delete_any_user_chat(self, client, auth_token):
         """Verify superuser can delete any user's chat."""
-        import uuid
-        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.agent_chats import utils as chat_methods
+        from fivccliche.modules.users import utils as user_methods
 
         session = client.async_session
         loop = client.loop
 
         async def setup():
-            # Create chat for a random user
-            other_user_uuid = str(uuid.uuid4())
+            other = await user_methods.create_user_async(
+                session,
+                username="other-chat-owner-2",
+                email="other-chat-owner-2@example.com",
+                password="password123",
+            )
+            await session.commit()
             chat = await chat_methods.create_chat_async(
                 session=session,
-                user_uuid=other_user_uuid,
+                user_uuid=other.uuid,
                 agent_id="test-agent",
             )
+            await session.commit()
             return str(chat.uuid)
 
         chat_uuid = loop.run_until_complete(setup())
@@ -922,7 +943,7 @@ class TestMessageDeleteAuthorization:
 
     def test_regular_user_cannot_delete_message_in_global_chat(self, client, regular_user_token):
         """Verify 403 error when regular user tries to delete message in global chat."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.agent_chats import utils as chat_methods
 
         session = client.async_session
         loop = client.loop
@@ -940,6 +961,7 @@ class TestMessageDeleteAuthorization:
                 chat_uuid=str(chat.uuid),
                 query={"content": "test message"},
             )
+            await session.commit()
             return str(chat.uuid), str(message.uuid)
 
         chat_uuid, message_uuid = loop.run_until_complete(setup())
@@ -957,18 +979,23 @@ class TestMessageDeleteAuthorization:
         self, client, regular_user_token
     ):
         """Verify 404 when regular user tries to delete message in another user's chat."""
-        import uuid
-        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.agent_chats import utils as chat_methods
+        from fivccliche.modules.users import utils as user_methods
 
         session = client.async_session
         loop = client.loop
 
         async def setup():
-            # Create chat for different user
-            other_user_uuid = str(uuid.uuid4())
+            other = await user_methods.create_user_async(
+                session,
+                username="other-msg-owner",
+                email="other-msg-owner@example.com",
+                password="password123",
+            )
+            await session.commit()
             chat = await chat_methods.create_chat_async(
                 session=session,
-                user_uuid=other_user_uuid,
+                user_uuid=other.uuid,
                 agent_id="test-agent",
             )
             # Create message
@@ -977,6 +1004,7 @@ class TestMessageDeleteAuthorization:
                 chat_uuid=str(chat.uuid),
                 query={"content": "test message"},
             )
+            await session.commit()
             return str(chat.uuid), str(message.uuid)
 
         chat_uuid, message_uuid = loop.run_until_complete(setup())
@@ -991,8 +1019,8 @@ class TestMessageDeleteAuthorization:
 
     def test_regular_user_can_delete_message_in_own_chat(self, client, regular_user_token):
         """Verify regular user can delete message in their own chat."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
-        from fivccliche.modules.users.methods import get_user_async
+        from fivccliche.modules.agent_chats import utils as chat_methods
+        from fivccliche.modules.users.utils import get_user_async
 
         session = client.async_session
         loop = client.loop
@@ -1012,6 +1040,7 @@ class TestMessageDeleteAuthorization:
                 chat_uuid=str(chat.uuid),
                 query={"content": "test message"},
             )
+            await session.commit()
             return str(chat.uuid), str(message.uuid)
 
         chat_uuid, message_uuid = loop.run_until_complete(setup())
@@ -1026,7 +1055,7 @@ class TestMessageDeleteAuthorization:
 
     def test_superuser_can_delete_message_in_global_chat(self, client, auth_token):
         """Verify superuser can delete message in global chat."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.agent_chats import utils as chat_methods
 
         session = client.async_session
         loop = client.loop
@@ -1044,6 +1073,7 @@ class TestMessageDeleteAuthorization:
                 chat_uuid=str(chat.uuid),
                 query={"content": "test message"},
             )
+            await session.commit()
             return str(chat.uuid), str(message.uuid)
 
         chat_uuid, message_uuid = loop.run_until_complete(setup())
@@ -1104,7 +1134,7 @@ class TestCreateChatMessages:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
@@ -1145,7 +1175,7 @@ class TestCreateChatMessages:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(context=context),
             ),
@@ -1193,7 +1223,7 @@ class TestCreateChatMessages:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(),
             ),
@@ -1235,7 +1265,7 @@ class TestCreateChatMessages:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(),
             ),
@@ -1281,7 +1311,7 @@ class TestCreateChatMessages:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(),
             ),
@@ -1331,7 +1361,7 @@ class TestCreateChatMessages:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(),
             ),
@@ -1372,7 +1402,7 @@ class TestCreateChatMessages:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.routers.methods.get_chat_async",
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(),
             ),
@@ -1424,8 +1454,8 @@ class TestCreateChatMessages:
         self, client: TestClient, auth_token: str, regular_user_token: str
     ):
         """Test regular user cannot create message in another user's chat."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
-        from fivccliche.modules.users.methods import get_user_async
+        from fivccliche.modules.agent_chats import utils as chat_methods
+        from fivccliche.modules.users.utils import get_user_async
 
         session = client.async_session
         loop = client.loop
@@ -1439,6 +1469,7 @@ class TestCreateChatMessages:
                 user_uuid=str(test_user.uuid),
                 agent_id="test-agent",
             )
+            await session.commit()
             return str(chat.uuid)
 
         chat_uuid = loop.run_until_complete(setup())
@@ -1460,7 +1491,7 @@ class TestCreateChatMessages:
         self, client: TestClient, regular_user_token: str
     ):
         """Test regular user cannot create message in global chat."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
+        from fivccliche.modules.agent_chats import utils as chat_methods
 
         session = client.async_session
         loop = client.loop
@@ -1472,6 +1503,7 @@ class TestCreateChatMessages:
                 user_uuid=None,
                 agent_id="test-agent",
             )
+            await session.commit()
             return str(chat.uuid)
 
         chat_uuid = loop.run_until_complete(setup())
@@ -1489,8 +1521,8 @@ class TestCreateChatMessages:
 
     def test_create_message_missing_query_field(self, client: TestClient, auth_token: str):
         """Test creating message without query field."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
-        from fivccliche.modules.users.methods import get_user_async
+        from fivccliche.modules.agent_chats import utils as chat_methods
+        from fivccliche.modules.users.utils import get_user_async
 
         session = client.async_session
         loop = client.loop
@@ -1503,6 +1535,7 @@ class TestCreateChatMessages:
                 user_uuid=str(admin_user.uuid),
                 agent_id="test-agent",
             )
+            await session.commit()
             return str(chat.uuid)
 
         chat_uuid = loop.run_until_complete(setup())
@@ -1583,8 +1616,8 @@ class TestChatContextFlow:
 
     def test_chat_context_retrieved_in_service_layer(self, client: TestClient, auth_token: str):
         """Test that context can be retrieved in the service layer."""
-        from fivccliche.modules.agent_chats import methods as chat_methods
-        from fivccliche.modules.users.methods import get_user_async
+        from fivccliche.modules.agent_chats import utils as chat_methods
+        from fivccliche.modules.users.utils import get_user_async
 
         session = client.async_session
         loop = client.loop
@@ -1600,6 +1633,7 @@ class TestChatContextFlow:
                 agent_id="test-agent",
                 context=context_data,
             )
+            await session.commit()
 
             # Retrieve the chat
             retrieved_chat = await chat_methods.get_chat_async(
@@ -1615,7 +1649,7 @@ class TestChatContextFlow:
     ):
         """Test that get_chat_context can be called on the provider."""
         from fivccliche.modules.agent_chats.services import UserChatProviderImpl
-        from fivccliche.modules.users.methods import get_user_async
+        from fivccliche.modules.users.utils import get_user_async
 
         session = client.async_session
         loop = client.loop

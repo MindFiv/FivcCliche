@@ -154,7 +154,8 @@ Per tick:
    (non-blocking). On failure, skip that chat only.
 5. Build a JSON conversation array and `retain_async` once with
    `space_id=chat.user_uuid`. On success (or when there is no user turn to
-   retain), mark those messages `is_memorized=True`.
+   retain), mark that chat's completed, unmemorized messages with
+   `created_at <= created_at_to` as `is_memorized=True`.
 
 Retain payload example:
 

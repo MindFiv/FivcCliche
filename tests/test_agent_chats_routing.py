@@ -32,7 +32,7 @@ def auth_token(client: TestClient):
 def user_token(client: TestClient):
     """Generate a JWT token for a regular test user."""
     import asyncio
-    from fivccliche.modules.users import methods
+    from fivccliche.modules.users import utils as methods
 
     # Create a regular user
     async def create_user():
@@ -52,6 +52,7 @@ def user_token(client: TestClient):
                 password="testpass123",
                 is_superuser=False,
             )
+            await session.commit()
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

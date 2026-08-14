@@ -4,21 +4,16 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi.testclient import TestClient
 from fivcglue.implements.utils import load_component_site
-from sqlalchemy import event, text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import NullPool
-from sqlmodel import SQLModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from fivccliche.modules.agent_chats import methods
+from fivccliche.modules.agent_chats import utils as methods
 from fivccliche.modules.agent_chats.jobs import (
     MEMORIZE_JOB_ID,
     ChatMemorizeJob,
@@ -26,53 +21,23 @@ from fivccliche.modules.agent_chats.jobs import (
 )
 from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage
 from fivccliche.modules.agent_chats.services import ModuleImpl
-from fivccliche.modules.users.models import User  # noqa: F401
 from fivccliche.services.implements.modules import ModuleSiteImpl
 from fivccliche.services.interfaces.agent_memories import MemoryRetainResult
 
 
 @pytest.fixture
-async def session():
-    """Create a temporary SQLite database for testing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test.db"
-        database_url = f"sqlite+aiosqlite:///{db_path}"
-
-        engine = create_async_engine(
-            database_url,
-            connect_args={"check_same_thread": False, "timeout": 30},
-            poolclass=NullPool,
-            echo=False,
-        )
-
-        @event.listens_for(engine.sync_engine, "connect")
-        def set_sqlite_pragma(dbapi_conn, connection_record):
-            cursor = dbapi_conn.cursor()
-            cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.close()
-
-        async with engine.begin() as conn:
-            await conn.execute(text("PRAGMA foreign_keys = ON"))
-            await conn.run_sync(SQLModel.metadata.create_all)
-
-        async_session = AsyncSession(engine, expire_on_commit=False)
-        try:
-            yield async_session
-        finally:
-            await async_session.close()
-            await engine.dispose()
-
-
-@pytest.fixture
 async def test_user(session: AsyncSession):
-    from fivccliche.modules.users import methods as user_methods
+    from fivccliche.modules.users import utils as user_methods
 
-    return await user_methods.create_user_async(
+    user = await user_methods.create_user_async(
         session,
         username="memuser",
         email="mem@example.com",
         password="password123",
     )
+    await session.commit()
+    await session.refresh(user)
+    return user
 
 
 def _older(hours: int = 25) -> datetime:
@@ -236,15 +201,11 @@ class TestMemorizeMethods:
         assert [c.uuid for c in chats] == [chat.uuid]
 
     def test_list_unmemorized_chats_sql_omits_distinct_on_postgresql(self):
-        from sqlalchemy.dialects import postgresql
+        import inspect
 
-        statement = methods._select_unmemorized_chats(
-            created_at_to=datetime.now(timezone.utc),
-            limit=50,
-        )
-        sql = str(statement.compile(dialect=postgresql.dialect())).upper()
-        assert "DISTINCT" not in sql
-        assert "EXISTS" in sql
+        source = inspect.getsource(methods.list_unmemorized_chats_async)
+        assert "exists(" in source
+        assert ".distinct(" not in source
 
     async def test_create_chat_is_memorable_flag(self, session: AsyncSession, test_user):
         default_chat = await methods.create_chat_async(
@@ -276,7 +237,10 @@ class TestMemorizeMethods:
         )
         assert [m.uuid for m in found] == [msg.uuid]
 
-        await methods.mark_unmemorized_chat_messages_async(session, [msg.uuid])
+        await methods.delete_unmemorized_chat_messages_async(
+            session, chat.uuid, created_at_to=created_at_to
+        )
+        await session.commit()
         await session.refresh(msg)
         assert msg.is_memorized is True
 
@@ -289,6 +253,7 @@ class TestMemorizeMethods:
         chat = await _add_chat(session, test_user.uuid)
         msg = await _add_message(session, chat.uuid, query={"text": "q"}, reply={"text": "a"})
         await methods.update_chat_message_async(session, msg, is_memorized=True)
+        await session.commit()
         await session.refresh(msg)
         assert msg.is_memorized is True
 

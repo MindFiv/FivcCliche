@@ -1,21 +1,18 @@
 """Unit tests for config service layer."""
 
-import tempfile
-from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
 from pydantic_strict_partial import create_partial_model
-from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivcplayground.embeddings.types import EmbeddingConfig
 from fivcplayground.models.types import ModelConfig
 from fivcplayground.agents.types import AgentConfig
 from fivcplayground.tools.types import ToolConfig
 
-from fivccliche.modules.agent_configs import methods
+from fivccliche.modules.agent_configs import models, utils as methods
 from fivccliche.modules.agent_configs.services import (
     UserEmbeddingRepositoryImpl,
     UserLLMRepositoryImpl,
@@ -24,7 +21,7 @@ from fivccliche.modules.agent_configs.services import (
 )
 
 # Import models to ensure they're registered with SQLModel
-from fivccliche.modules.users.models import User  # noqa: F401
+from fivccliche.modules.users.models import User
 from fivccliche.modules.agent_configs.models import (
     UserEmbedding,
     UserLLM,
@@ -40,213 +37,67 @@ PartialUserToolSchema = create_partial_model(schemas.UserToolSchema)
 PartialUserSkillSchema = create_partial_model(schemas.UserSkillSchema)
 PartialUserQuestionSchema = create_partial_model(schemas.UserQuestionSchema)
 
+_UNIQUE_VIOLATION = r"(?i)unique|duplicate"
+
 
 @pytest.fixture
-async def session():
-    """Create a temporary SQLite database for testing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test.db"
-        database_url = f"sqlite+aiosqlite:///{db_path}"
+async def ensure_users(session: AsyncSession):
+    """Create common user rows referenced by config FK tests."""
+    for uuid, username, email in (
+        ("user123", "user123", "user123@example.com"),
+        ("user456", "user456", "user456@example.com"),
+        ("user1", "user1", "user1@example.com"),
+        ("user2", "user2", "user2@example.com"),
+    ):
+        session.add(User(uuid=uuid, username=username, email=email, hashed_password="x"))
+    await session.commit()
 
-        engine = create_async_engine(
-            database_url,
-            connect_args={"check_same_thread": False},
-            poolclass=NullPool,
-            echo=False,
-        )
 
-        # Create only the tables we need for testing using raw SQL
-        async with engine.begin() as conn:
-            # Disable foreign key constraints for SQLite during table creation
-            await conn.execute(text("PRAGMA foreign_keys=OFF"))
+@pytest.fixture(autouse=True)
+async def _seed_users(ensure_users):
+    return
 
-            # Create user table
-            await conn.execute(
-                text(
-                    """
-                CREATE TABLE "user" (
-                    uuid VARCHAR NOT NULL,
-                    username VARCHAR NOT NULL,
-                    email VARCHAR NOT NULL,
-                    hashed_password VARCHAR NOT NULL,
-                    is_active BOOLEAN NOT NULL DEFAULT 1,
-                    created_at DATETIME NOT NULL,
-                    updated_at DATETIME NOT NULL,
-                    PRIMARY KEY (uuid),
-                    UNIQUE (username),
-                    UNIQUE (email)
-                )
-            """
-                )
-            )
 
-            # Create user_embedding table
-            await conn.execute(
-                text(
-                    """
-                CREATE TABLE user_embedding (
-                    uuid VARCHAR NOT NULL,
-                    id VARCHAR NOT NULL,
-                    description VARCHAR,
-                    provider VARCHAR NOT NULL DEFAULT 'openai',
-                    model VARCHAR NOT NULL,
-                    api_key VARCHAR NOT NULL,
-                    base_url VARCHAR,
-                    dimension INTEGER NOT NULL DEFAULT 1024,
-                    user_uuid VARCHAR,
-                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_user_uuid VARCHAR,
-                    PRIMARY KEY (uuid),
-                    UNIQUE (id, user_uuid),
-                    FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
-                )
-            """
-                )
-            )
+async def _create_question_async(
+    session: AsyncSession,
+    user_uuid: str | None,
+    config_create: schemas.UserQuestionSchema,
+    updated_user_uuid: str | None = None,
+) -> UserQuestion:
+    config = UserQuestion(
+        id=config_create.id,
+        user_uuid=user_uuid,
+        question=config_create.question,
+        answer=config_create.answer,
+        is_active=config_create.is_active if hasattr(config_create, "is_active") else False,
+        updated_at=datetime.now(timezone.utc),
+        updated_user_uuid=updated_user_uuid,
+    )
+    session.add(config)
+    await session.commit()
+    await session.refresh(config)
+    return config
 
-            # Create user_llm table
-            await conn.execute(
-                text(
-                    """
-                CREATE TABLE user_llm (
-                    uuid VARCHAR NOT NULL,
-                    id VARCHAR NOT NULL,
-                    description VARCHAR,
-                    provider VARCHAR NOT NULL DEFAULT 'openai',
-                    model VARCHAR NOT NULL,
-                    api_key VARCHAR NOT NULL,
-                    base_url VARCHAR,
-                    temperature FLOAT NOT NULL DEFAULT 0.5,
-                    max_tokens INTEGER NOT NULL DEFAULT 4096,
-                    enable_thinking BOOLEAN,
-                    user_uuid VARCHAR,
-                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_user_uuid VARCHAR,
-                    PRIMARY KEY (uuid),
-                    UNIQUE (id, user_uuid),
-                    FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
-                )
-            """
-                )
-            )
 
-            # Create agent_models table (required for user_agent foreign key)
-            await conn.execute(
-                text(
-                    """
-                CREATE TABLE agent_models (
-                    id VARCHAR NOT NULL,
-                    PRIMARY KEY (id)
-                )
-            """
-                )
-            )
-
-            # Create user_agent table
-            await conn.execute(
-                text(
-                    """
-                CREATE TABLE user_agent (
-                    uuid VARCHAR NOT NULL,
-                    id VARCHAR NOT NULL,
-                    description VARCHAR,
-                    model_id VARCHAR NOT NULL,
-                    tools_ids JSON,
-                    skill_ids JSON,
-                    system_prompt VARCHAR,
-                    response_format JSON,
-                    user_uuid VARCHAR,
-                    is_frozen BOOLEAN NOT NULL DEFAULT 0,
-                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_user_uuid VARCHAR,
-                    PRIMARY KEY (uuid),
-                    UNIQUE (id, user_uuid),
-                    FOREIGN KEY(user_uuid) REFERENCES "user" (uuid),
-                    FOREIGN KEY(model_id) REFERENCES agent_models (id)
-                )
-            """
-                )
-            )
-
-            # Create user_tool table
-            await conn.execute(
-                text(
-                    """
-                CREATE TABLE user_tool (
-                    uuid VARCHAR NOT NULL,
-                    id VARCHAR NOT NULL,
-                    description VARCHAR,
-                    transport VARCHAR NOT NULL,
-                    command VARCHAR,
-                    args JSON,
-                    env JSON,
-                    url VARCHAR,
-                    functions JSON,
-                    is_active BOOLEAN NOT NULL DEFAULT 1,
-                    user_uuid VARCHAR,
-                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_user_uuid VARCHAR,
-                    PRIMARY KEY (uuid),
-                    UNIQUE (id, user_uuid),
-                    FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
-                )
-            """
-                )
-            )
-
-            # Create user_skill table
-            await conn.execute(
-                text(
-                    """
-                CREATE TABLE user_skill (
-                    uuid VARCHAR NOT NULL,
-                    id VARCHAR NOT NULL,
-                    description VARCHAR NOT NULL,
-                    instructions VARCHAR,
-                    tool_ids JSON,
-                    resources JSON,
-                    is_active BOOLEAN NOT NULL DEFAULT 1,
-                    user_uuid VARCHAR,
-                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_user_uuid VARCHAR,
-                    PRIMARY KEY (uuid),
-                    UNIQUE (id, user_uuid),
-                    FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
-                )
-            """
-                )
-            )
-
-            # Create user_question table
-            await conn.execute(
-                text(
-                    """
-                CREATE TABLE user_question (
-                    uuid VARCHAR NOT NULL,
-                    id VARCHAR NOT NULL,
-                    question VARCHAR NOT NULL,
-                    answer VARCHAR,
-                    is_active BOOLEAN NOT NULL DEFAULT 0,
-                    user_uuid VARCHAR,
-                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_user_uuid VARCHAR,
-                    PRIMARY KEY (uuid),
-                    UNIQUE (id, user_uuid),
-                    FOREIGN KEY(user_uuid) REFERENCES "user" (uuid)
-                )
-            """
-                )
-            )
-
-            await conn.execute(text("PRAGMA foreign_keys=ON"))
-
-        # Create session
-        async_session = AsyncSession(engine, expire_on_commit=False)
-        try:
-            yield async_session
-        finally:
-            await async_session.close()
-            await engine.dispose()
+async def _update_question_async(
+    session: AsyncSession,
+    config: UserQuestion,
+    config_update: schemas.UserQuestionSchema,
+    updated_user_uuid: str | None = None,
+) -> UserQuestion:
+    fields_set: set[str] = getattr(config_update, "model_fields_set", set())
+    if "question" in fields_set and config_update.question is not None:
+        config.question = config_update.question
+    if "answer" in fields_set:
+        config.answer = config_update.answer
+    if "is_active" in fields_set and config_update.is_active is not None:
+        config.is_active = config_update.is_active
+    config.updated_at = datetime.now(timezone.utc)
+    config.updated_user_uuid = updated_user_uuid
+    session.add(config)
+    await session.commit()
+    await session.refresh(config)
+    return config
 
 
 @pytest.fixture(autouse=True)
@@ -295,8 +146,8 @@ class TestEmbeddingConfigService:
             api_key="test-key",
         )
         created = await methods.create_embedding_config_async(session, "user123", config_create)
-        retrieved = await methods.get_embedding_config_async(
-            session, "user123", config_uuid=created.uuid
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserEmbedding, "user123", config_uuid=created.uuid
         )
 
         assert retrieved is not None
@@ -313,7 +164,9 @@ class TestEmbeddingConfigService:
         )
         created = await methods.create_embedding_config_async(session, "user123", config_create)
         # User456 should not be able to access user123's config
-        retrieved = await methods.get_embedding_config_async(session, created.uuid, "user456")
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserEmbedding, created.uuid, config_uuid="user456"
+        )
 
         assert retrieved is None
 
@@ -335,11 +188,11 @@ class TestEmbeddingConfigService:
         await session.commit()
 
         # Any user should be able to access the global config
-        retrieved_user1 = await methods.get_embedding_config_async(
-            session, "user123", config_uuid=config_uuid
+        retrieved_user1 = await methods.get_user_scoped_async(
+            session, models.UserEmbedding, "user123", config_uuid=config_uuid
         )
-        retrieved_user2 = await methods.get_embedding_config_async(
-            session, "user456", config_uuid=config_uuid
+        retrieved_user2 = await methods.get_user_scoped_async(
+            session, models.UserEmbedding, "user456", config_uuid=config_uuid
         )
 
         assert retrieved_user1 is not None, "User1 should be able to access global config"
@@ -358,7 +211,9 @@ class TestEmbeddingConfigService:
             )
             await methods.create_embedding_config_async(session, "user123", config_create)
 
-        configs = await methods.list_embedding_configs_async(session, "user123")
+        configs = await methods.list_user_scoped_async(
+            session, models.UserEmbedding, "user123", skip=0, limit=100
+        )
         assert len(configs) == 3
         assert [config.id for config in configs] == [
             "embedding-alpha",
@@ -377,7 +232,9 @@ class TestEmbeddingConfigService:
             )
             await methods.create_embedding_config_async(session, "user123", config_create)
 
-        configs = await methods.list_embedding_configs_async(session, "user123", skip=1, limit=1)
+        configs = await methods.list_user_scoped_async(
+            session, models.UserEmbedding, "user123", skip=1, limit=1
+        )
 
         assert [config.id for config in configs] == ["embedding-page-bravo"]
 
@@ -392,7 +249,9 @@ class TestEmbeddingConfigService:
             )
             await methods.create_embedding_config_async(session, "user123", config_create)
 
-        configs = await methods.list_embedding_configs_async(session, "user123", skip=0, limit=2)
+        configs = await methods.list_user_scoped_async(
+            session, models.UserEmbedding, "user123", skip=0, limit=2
+        )
         assert len(configs) == 2
 
     async def test_update_embedding_config(self, session: AsyncSession):
@@ -449,9 +308,13 @@ class TestEmbeddingConfigService:
             api_key="test-key",
         )
         config = await methods.create_embedding_config_async(session, "user123", config_create)
-        await methods.delete_embedding_config_async(session, config)
+        await session.commit()
+        await session.delete(config)
+        await session.commit()
 
-        retrieved = await methods.get_embedding_config_async(session, config.uuid, "user123")
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserEmbedding, config.uuid, config_uuid="user123"
+        )
         assert retrieved is None
 
     async def test_count_embedding_configs(self, session: AsyncSession):
@@ -465,7 +328,7 @@ class TestEmbeddingConfigService:
             )
             await methods.create_embedding_config_async(session, "user123", config_create)
 
-        count = await methods.count_embedding_configs_async(session, "user123")
+        count = await methods.count_user_scoped_async(session, models.UserEmbedding, "user123")
         assert count == 3
 
     async def test_list_embedding_configs_includes_global(self, session: AsyncSession):
@@ -495,7 +358,9 @@ class TestEmbeddingConfigService:
         await session.commit()
 
         # List should include both user-specific and global configs
-        configs = await methods.list_embedding_configs_async(session, "user123")
+        configs = await methods.list_user_scoped_async(
+            session, models.UserEmbedding, "user123", skip=0, limit=100
+        )
         assert len(configs) == 3  # 2 user-specific + 1 global
 
         # Verify we have both types
@@ -531,7 +396,7 @@ class TestEmbeddingConfigService:
         await session.commit()
 
         # Count should include both user-specific and global configs
-        count = await methods.count_embedding_configs_async(session, "user456")
+        count = await methods.count_user_scoped_async(session, models.UserEmbedding, "user456")
         assert count == 3  # 2 user-specific + 1 global
 
 
@@ -567,7 +432,9 @@ class TestLLMConfigService:
             api_key="test-key",
         )
         created = await methods.create_llm_config_async(session, "user123", config_create)
-        retrieved = await methods.get_llm_config_async(session, "user123", config_uuid=created.uuid)
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserLLM, "user123", config_uuid=created.uuid
+        )
 
         assert retrieved is not None
         assert retrieved.id == created.id
@@ -583,7 +450,9 @@ class TestLLMConfigService:
             )
             await methods.create_llm_config_async(session, "user123", config_create)
 
-        configs = await methods.list_llm_configs_async(session, "user123")
+        configs = await methods.list_user_scoped_async(
+            session, models.UserLLM, "user123", skip=0, limit=100
+        )
         assert len(configs) == 3
         assert [config.id for config in configs] == [
             "llm-alpha",
@@ -648,9 +517,13 @@ class TestLLMConfigService:
             api_key="test-key",
         )
         config = await methods.create_llm_config_async(session, "user123", config_create)
-        await methods.delete_llm_config_async(session, config)
+        await session.commit()
+        await session.delete(config)
+        await session.commit()
 
-        retrieved = await methods.get_llm_config_async(session, config.uuid, "user123")
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserLLM, config.uuid, config_uuid="user123"
+        )
         assert retrieved is None
 
     async def test_count_llm_configs(self, session: AsyncSession):
@@ -664,7 +537,7 @@ class TestLLMConfigService:
             )
             await methods.create_llm_config_async(session, "user123", config_create)
 
-        count = await methods.count_llm_configs_async(session, "user123")
+        count = await methods.count_user_scoped_async(session, models.UserLLM, "user123")
         assert count == 3
 
     async def test_get_llm_config_global_accessible(self, session: AsyncSession):
@@ -685,11 +558,11 @@ class TestLLMConfigService:
         await session.commit()
 
         # Any user should be able to access the global config
-        retrieved_user1 = await methods.get_llm_config_async(
-            session, "user123", config_uuid=config_uuid
+        retrieved_user1 = await methods.get_user_scoped_async(
+            session, models.UserLLM, "user123", config_uuid=config_uuid
         )
-        retrieved_user2 = await methods.get_llm_config_async(
-            session, "user456", config_uuid=config_uuid
+        retrieved_user2 = await methods.get_user_scoped_async(
+            session, models.UserLLM, "user456", config_uuid=config_uuid
         )
 
         assert retrieved_user1 is not None
@@ -727,7 +600,9 @@ class TestLLMConfigService:
         await session.commit()
 
         # List should include both user-specific and global configs
-        configs = await methods.list_llm_configs_async(session, "user123")
+        configs = await methods.list_user_scoped_async(
+            session, models.UserLLM, "user123", skip=0, limit=100
+        )
         assert len(configs) == 3  # 2 user-specific + 1 global
 
         # Verify we have both types
@@ -763,7 +638,7 @@ class TestLLMConfigService:
         await session.commit()
 
         # Count should include both user-specific and global configs
-        count = await methods.count_llm_configs_async(session, "user456")
+        count = await methods.count_user_scoped_async(session, models.UserLLM, "user456")
         assert count == 3  # 2 user-specific + 1 global
 
 
@@ -796,8 +671,8 @@ class TestAgentConfigService:
             model_id="model123",
         )
         created = await methods.create_agent_config_async(session, "user123", config_create)
-        retrieved = await methods.get_agent_config_async(
-            session, "user123", config_uuid=created.uuid
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserAgent, "user123", config_uuid=created.uuid
         )
 
         assert retrieved is not None
@@ -812,7 +687,9 @@ class TestAgentConfigService:
             )
             await methods.create_agent_config_async(session, "user123", config_create)
 
-        configs = await methods.list_agent_configs_async(session, "user123")
+        configs = await methods.list_user_scoped_async(
+            session, models.UserAgent, "user123", skip=0, limit=100
+        )
         assert len(configs) == 3
         assert [config.id for config in configs] == [
             "agent-alpha",
@@ -879,9 +756,13 @@ class TestAgentConfigService:
             model_id="model123",
         )
         config = await methods.create_agent_config_async(session, "user123", config_create)
-        await methods.delete_agent_config_async(session, config)
+        await session.commit()
+        await session.delete(config)
+        await session.commit()
 
-        retrieved = await methods.get_agent_config_async(session, config.uuid, "user123")
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserAgent, config.uuid, config_uuid="user123"
+        )
         assert retrieved is None
 
     async def test_count_agent_configs(self, session: AsyncSession):
@@ -893,7 +774,7 @@ class TestAgentConfigService:
             )
             await methods.create_agent_config_async(session, "user123", config_create)
 
-        count = await methods.count_agent_configs_async(session, "user123")
+        count = await methods.count_user_scoped_async(session, models.UserAgent, "user123")
         assert count == 3
 
     async def test_get_agent_config_global_accessible(self, session: AsyncSession):
@@ -913,11 +794,11 @@ class TestAgentConfigService:
         await session.commit()
 
         # Any user should be able to access the global config
-        retrieved_user1 = await methods.get_agent_config_async(
-            session, "user123", config_uuid=config_uuid
+        retrieved_user1 = await methods.get_user_scoped_async(
+            session, models.UserAgent, "user123", config_uuid=config_uuid
         )
-        retrieved_user2 = await methods.get_agent_config_async(
-            session, "user456", config_uuid=config_uuid
+        retrieved_user2 = await methods.get_user_scoped_async(
+            session, models.UserAgent, "user456", config_uuid=config_uuid
         )
 
         assert retrieved_user1 is not None
@@ -952,7 +833,9 @@ class TestAgentConfigService:
         await session.commit()
 
         # List should include both user-specific and global configs
-        configs = await methods.list_agent_configs_async(session, "user123")
+        configs = await methods.list_user_scoped_async(
+            session, models.UserAgent, "user123", skip=0, limit=100
+        )
         assert len(configs) == 3  # 2 user-specific + 1 global
 
         # Verify we have both types
@@ -985,7 +868,7 @@ class TestAgentConfigService:
         await session.commit()
 
         # Count should include both user-specific and global configs
-        count = await methods.count_agent_configs_async(session, "user456")
+        count = await methods.count_user_scoped_async(session, models.UserAgent, "user456")
         assert count == 3  # 2 user-specific + 1 global
 
 
@@ -1007,8 +890,8 @@ class TestEmbeddingRepositoryImpl:
         await repo.update_embedding_config_async(config)
 
         # Verify it was created
-        retrieved = await methods.get_embedding_config_async(
-            session, "user123", config_id="repo-embedding-1"
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserEmbedding, "user123", config_id="repo-embedding-1"
         )
         assert retrieved is not None
         assert retrieved.dimension == 1536
@@ -1038,8 +921,8 @@ class TestEmbeddingRepositoryImpl:
         await repo.update_embedding_config_async(config_update)
 
         # Verify it was updated
-        retrieved = await methods.get_embedding_config_async(
-            session, "user123", config_id="repo-embedding-2"
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserEmbedding, "user123", config_id="repo-embedding-2"
         )
         assert retrieved.dimension == 3072
 
@@ -1103,8 +986,8 @@ class TestEmbeddingRepositoryImpl:
         await repo.delete_embedding_config_async("repo-embedding-delete")
 
         # Verify it was deleted
-        retrieved = await methods.get_embedding_config_async(
-            session, "repo-embedding-delete", "user123"
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserEmbedding, "repo-embedding-delete", config_uuid="user123"
         )
         assert retrieved is None
 
@@ -1129,7 +1012,9 @@ class TestLLMRepositoryImpl:
         await repo.update_model_config_async(config)
 
         # Verify it was created
-        retrieved = await methods.get_llm_config_async(session, "user123", config_id="repo-llm-1")
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserLLM, "user123", config_id="repo-llm-1"
+        )
         assert retrieved is not None
         assert retrieved.temperature == 0.7
         assert retrieved.enable_thinking is True
@@ -1161,7 +1046,9 @@ class TestLLMRepositoryImpl:
         await repo.update_model_config_async(config_update)
 
         # Verify it was updated
-        retrieved = await methods.get_llm_config_async(session, "user123", config_id="repo-llm-2")
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserLLM, "user123", config_id="repo-llm-2"
+        )
         assert retrieved.temperature == 0.9
         assert retrieved.enable_thinking is False
 
@@ -1227,7 +1114,9 @@ class TestLLMRepositoryImpl:
         await repo.delete_model_config_async("repo-llm-delete")
 
         # Verify it was deleted
-        retrieved = await methods.get_llm_config_async(session, "repo-llm-delete", "user123")
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserLLM, "repo-llm-delete", config_uuid="user123"
+        )
         assert retrieved is None
 
 
@@ -1249,8 +1138,8 @@ class TestAgentRepositoryImpl:
         await repo.update_agent_config_async(config)
 
         # Verify it was created
-        retrieved = await methods.get_agent_config_async(
-            session, "user123", config_id="repo-agent-1"
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserAgent, "user123", config_id="repo-agent-1"
         )
         assert retrieved is not None
         assert retrieved.system_prompt == "You are helpful"
@@ -1280,8 +1169,8 @@ class TestAgentRepositoryImpl:
         await repo.update_agent_config_async(config_update)
 
         # Verify it was updated
-        retrieved = await methods.get_agent_config_async(
-            session, "user123", config_id="repo-agent-2"
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserAgent, "user123", config_id="repo-agent-2"
         )
         assert retrieved.system_prompt == "New prompt"
 
@@ -1339,7 +1228,9 @@ class TestAgentRepositoryImpl:
         await repo.delete_agent_config_async("repo-agent-delete")
 
         # Verify it was deleted
-        retrieved = await methods.get_agent_config_async(session, "repo-agent-delete", "user123")
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserAgent, "repo-agent-delete", config_uuid="user123"
+        )
         assert retrieved is None
 
 
@@ -1380,8 +1271,8 @@ class TestToolConfigMethods:
         )
         created = await methods.create_tool_config_async(session, "user123", config_create)
 
-        retrieved = await methods.get_tool_config_async(
-            session, "user123", config_uuid=created.uuid
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserTool, "user123", config_uuid=created.uuid
         )
 
         assert retrieved is not None
@@ -1398,8 +1289,8 @@ class TestToolConfigMethods:
         )
         await methods.create_tool_config_async(session, "user123", config_create)
 
-        retrieved = await methods.get_tool_config_async(
-            session, "user123", config_id="test-tool-id"
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserTool, "user123", config_id="test-tool-id"
         )
 
         assert retrieved is not None
@@ -1409,7 +1300,9 @@ class TestToolConfigMethods:
 
     async def test_get_tool_config_not_found(self, session: AsyncSession):
         """Test getting a non-existent tool config."""
-        result = await methods.get_tool_config_async(session, "user123", config_id="nonexistent")
+        result = await methods.get_user_scoped_async(
+            session, models.UserTool, "user123", config_id="nonexistent"
+        )
 
         assert result is None
 
@@ -1423,7 +1316,9 @@ class TestToolConfigMethods:
             )
             await methods.create_tool_config_async(session, "user123", config)
 
-        configs = await methods.list_tool_configs_async(session, "user123")
+        configs = await methods.list_user_scoped_async(
+            session, models.UserTool, "user123", skip=0, limit=100
+        )
 
         assert len(configs) == 3
         assert all(c.user_uuid == "user123" for c in configs)
@@ -1443,11 +1338,15 @@ class TestToolConfigMethods:
             )
             await methods.create_tool_config_async(session, "user123", config)
 
-        configs = await methods.list_tool_configs_async(session, "user123", skip=0, limit=2)
+        configs = await methods.list_user_scoped_async(
+            session, models.UserTool, "user123", skip=0, limit=2
+        )
 
         assert len(configs) == 2
 
-        configs = await methods.list_tool_configs_async(session, "user123", skip=2, limit=2)
+        configs = await methods.list_user_scoped_async(
+            session, models.UserTool, "user123", skip=2, limit=2
+        )
 
         assert len(configs) == 2
 
@@ -1461,7 +1360,7 @@ class TestToolConfigMethods:
             )
             await methods.create_tool_config_async(session, "user123", config)
 
-        count = await methods.count_tool_configs_async(session, "user123")
+        count = await methods.count_user_scoped_async(session, models.UserTool, "user123")
 
         assert count == 3
 
@@ -1563,9 +1462,13 @@ class TestToolConfigMethods:
         )
         created = await methods.create_tool_config_async(session, "user123", config_create)
 
-        await methods.delete_tool_config_async(session, created)
+        await session.commit()
+        await session.delete(created)
+        await session.commit()
 
-        retrieved = await methods.get_tool_config_async(session, "user123", config_id="tool-delete")
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserTool, "user123", config_id="tool-delete"
+        )
         assert retrieved is None
 
     async def test_tool_config_user_scoped_uniqueness(self, session: AsyncSession):
@@ -1576,6 +1479,7 @@ class TestToolConfigMethods:
             transport="stdio",
         )
         await methods.create_tool_config_async(session, "user1", config1)
+        await session.commit()
 
         # Same ID for different user should work
         config2 = ToolConfig(
@@ -1584,6 +1488,7 @@ class TestToolConfigMethods:
             transport="sse",
         )
         created = await methods.create_tool_config_async(session, "user2", config2)
+        await session.commit()
         assert created.user_uuid == "user2"
 
         # Same ID for same user should fail
@@ -1592,8 +1497,9 @@ class TestToolConfigMethods:
             description="Shared ID 3",
             transport="streamable_http",
         )
+        await methods.create_tool_config_async(session, "user1", config3)
         with pytest.raises(Exception):  # SQLAlchemy integrity error. # noqa
-            await methods.create_tool_config_async(session, "user1", config3)
+            await session.commit()
 
 
 class TestToolConfigRepository:
@@ -1611,7 +1517,9 @@ class TestToolConfigRepository:
         await repo.update_tool_config_async(config)
 
         # Verify it was created
-        retrieved = await methods.get_tool_config_async(session, "user123", config_id="repo-tool")
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserTool, "user123", config_id="repo-tool"
+        )
         assert retrieved is not None
         assert retrieved.id == "repo-tool"
 
@@ -1673,8 +1581,8 @@ class TestToolConfigRepository:
         await repo.delete_tool_config_async("repo-tool-delete")
 
         # Verify it was deleted
-        retrieved = await methods.get_tool_config_async(
-            session, "user123", config_id="repo-tool-delete"
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserTool, "user123", config_id="repo-tool-delete"
         )
         assert retrieved is None
 
@@ -1693,8 +1601,8 @@ class TestToolConfigRepository:
         await repo.update_tool_config_async(config)
 
         # Verify it was created
-        retrieved = await methods.get_tool_config_async(
-            session, "user123", config_id="repo-tool-update-1"
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserTool, "user123", config_id="repo-tool-update-1"
         )
         assert retrieved is not None
         assert retrieved.id == "repo-tool-update-1"
@@ -1726,8 +1634,8 @@ class TestToolConfigRepository:
         await repo.update_tool_config_async(config_update)
 
         # Verify it was updated
-        retrieved = await methods.get_tool_config_async(
-            session, "user123", config_id="repo-tool-update-2"
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserTool, "user123", config_id="repo-tool-update-2"
         )
         assert retrieved.description == "Updated description"
         assert retrieved.transport == "sse"
@@ -1761,7 +1669,9 @@ class TestSkillConfigMethods:
             )
             await methods.create_skill_config_async(session, "user123", config_create)
 
-        configs = await methods.list_skill_configs_async(session, "user123")
+        configs = await methods.list_user_scoped_async(
+            session, models.UserSkill, "user123", skip=0, limit=100
+        )
 
         assert [config.id for config in configs] == [
             "skill-alpha",
@@ -1805,7 +1715,7 @@ class TestQuestionConfigMethods:
             is_active=True,
         )
 
-        config = await methods.create_question_async(
+        config = await _create_question_async(
             session, "user123", config_create, updated_user_uuid="user123"
         )
 
@@ -1824,7 +1734,7 @@ class TestQuestionConfigMethods:
             answer="The answer is available.",
         )
 
-        config = await methods.create_question_async(session, "user123", config_create)
+        config = await _create_question_async(session, "user123", config_create)
 
         assert config.answer == "The answer is available."
 
@@ -1835,7 +1745,7 @@ class TestQuestionConfigMethods:
             question="Should this start inactive?",
         )
 
-        config = await methods.create_question_async(session, "user123", config_create)
+        config = await _create_question_async(session, "user123", config_create)
 
         assert config.is_active is False
 
@@ -1845,9 +1755,11 @@ class TestQuestionConfigMethods:
             id="question-uuid",
             question="Can this be fetched by UUID?",
         )
-        created = await methods.create_question_async(session, "user123", config_create)
+        created = await _create_question_async(session, "user123", config_create)
 
-        retrieved = await methods.get_question_async(session, "user123", config_uuid=created.uuid)
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserQuestion, "user123", config_uuid=created.uuid
+        )
 
         assert retrieved is not None
         assert retrieved.id == "question-uuid"
@@ -1859,9 +1771,11 @@ class TestQuestionConfigMethods:
             id="question-id",
             question="Can this be fetched by ID?",
         )
-        await methods.create_question_async(session, "user123", config_create)
+        await _create_question_async(session, "user123", config_create)
 
-        retrieved = await methods.get_question_async(session, "user123", config_id="question-id")
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserQuestion, "user123", config_id="question-id"
+        )
 
         assert retrieved is not None
         assert retrieved.id == "question-id"
@@ -1869,7 +1783,9 @@ class TestQuestionConfigMethods:
 
     async def test_get_question_not_found(self, session: AsyncSession):
         """Test getting a non-existent question config."""
-        result = await methods.get_question_async(session, "user123", config_id="missing")
+        result = await methods.get_user_scoped_async(
+            session, models.UserQuestion, "user123", config_id="missing"
+        )
 
         assert result is None
 
@@ -1880,9 +1796,11 @@ class TestQuestionConfigMethods:
                 id=config_id,
                 question=f"Question {config_id}?",
             )
-            await methods.create_question_async(session, "user123", config_create)
+            await _create_question_async(session, "user123", config_create)
 
-        configs = await methods.list_questions_async(session, "user123")
+        configs = await methods.list_user_scoped_async(
+            session, models.UserQuestion, "user123", skip=0, limit=100, extra_conditions=None
+        )
 
         assert len(configs) == 3
         assert all(config.user_uuid == "user123" for config in configs)
@@ -1899,19 +1817,23 @@ class TestQuestionConfigMethods:
                 id=f"question-page-{i}",
                 question=f"Paged question {i}?",
             )
-            await methods.create_question_async(session, "user123", config_create)
+            await _create_question_async(session, "user123", config_create)
 
-        configs = await methods.list_questions_async(session, "user123", skip=0, limit=2)
+        configs = await methods.list_user_scoped_async(
+            session, models.UserQuestion, "user123", skip=0, limit=2, extra_conditions=None
+        )
 
         assert len(configs) == 2
 
-        configs = await methods.list_questions_async(session, "user123", skip=2, limit=2)
+        configs = await methods.list_user_scoped_async(
+            session, models.UserQuestion, "user123", skip=2, limit=2, extra_conditions=None
+        )
 
         assert len(configs) == 2
 
     async def test_list_questions_filters_by_is_active(self, session: AsyncSession):
         """Test listing question configs filtered by active state."""
-        await methods.create_question_async(
+        await _create_question_async(
             session,
             "user123",
             schemas.UserQuestionSchema(
@@ -1920,7 +1842,7 @@ class TestQuestionConfigMethods:
                 is_active=True,
             ),
         )
-        await methods.create_question_async(
+        await _create_question_async(
             session,
             "user123",
             schemas.UserQuestionSchema(
@@ -1929,7 +1851,7 @@ class TestQuestionConfigMethods:
                 is_active=True,
             ),
         )
-        await methods.create_question_async(
+        await _create_question_async(
             session,
             "user123",
             schemas.UserQuestionSchema(
@@ -1939,8 +1861,22 @@ class TestQuestionConfigMethods:
             ),
         )
 
-        active_configs = await methods.list_questions_async(session, "user123", is_active=True)
-        inactive_configs = await methods.list_questions_async(session, "user123", is_active=False)
+        active_configs = await methods.list_user_scoped_async(
+            session,
+            models.UserQuestion,
+            "user123",
+            skip=0,
+            limit=100,
+            extra_conditions=[models.UserQuestion.is_active.is_(True)],
+        )
+        inactive_configs = await methods.list_user_scoped_async(
+            session,
+            models.UserQuestion,
+            "user123",
+            skip=0,
+            limit=100,
+            extra_conditions=[models.UserQuestion.is_active.is_(False)],
+        )
 
         assert {config.id for config in active_configs} == {
             "question-active-1",
@@ -1955,15 +1891,17 @@ class TestQuestionConfigMethods:
                 id=f"question-count-{i}",
                 question=f"Count question {i}?",
             )
-            await methods.create_question_async(session, "user123", config_create)
+            await _create_question_async(session, "user123", config_create)
 
-        count = await methods.count_questions_async(session, "user123")
+        count = await methods.count_user_scoped_async(
+            session, models.UserQuestion, "user123", extra_conditions=None
+        )
 
         assert count == 3
 
     async def test_count_questions_filters_by_is_active(self, session: AsyncSession):
         """Test counting question configs filtered by active state."""
-        await methods.create_question_async(
+        await _create_question_async(
             session,
             "user123",
             schemas.UserQuestionSchema(
@@ -1972,7 +1910,7 @@ class TestQuestionConfigMethods:
                 is_active=True,
             ),
         )
-        await methods.create_question_async(
+        await _create_question_async(
             session,
             "user123",
             schemas.UserQuestionSchema(
@@ -1982,8 +1920,18 @@ class TestQuestionConfigMethods:
             ),
         )
 
-        active_count = await methods.count_questions_async(session, "user123", is_active=True)
-        inactive_count = await methods.count_questions_async(session, "user123", is_active=False)
+        active_count = await methods.count_user_scoped_async(
+            session,
+            models.UserQuestion,
+            "user123",
+            extra_conditions=[models.UserQuestion.is_active.is_(True)],
+        )
+        inactive_count = await methods.count_user_scoped_async(
+            session,
+            models.UserQuestion,
+            "user123",
+            extra_conditions=[models.UserQuestion.is_active.is_(False)],
+        )
 
         assert active_count == 1
         assert inactive_count == 1
@@ -1994,7 +1942,7 @@ class TestQuestionConfigMethods:
             id="question-update",
             question="Original question?",
         )
-        created = await methods.create_question_async(session, "user123", config_create)
+        created = await _create_question_async(session, "user123", config_create)
 
         config_update = schemas.UserQuestionSchema(
             id="question-update",
@@ -2002,7 +1950,7 @@ class TestQuestionConfigMethods:
             answer="Updated answer.",
             is_active=True,
         )
-        updated = await methods.update_question_async(
+        updated = await _update_question_async(
             session, created, config_update, updated_user_uuid="user456"
         )
 
@@ -2019,13 +1967,13 @@ class TestQuestionConfigMethods:
             answer="Original answer.",
             is_active=True,
         )
-        created = await methods.create_question_async(session, "user123", config_create)
+        created = await _create_question_async(session, "user123", config_create)
 
         config_update = schemas.UserQuestionSchema(
             id="question-preserve-answer",
             question="Updated question?",
         )
-        updated = await methods.update_question_async(session, created, config_update)
+        updated = await _update_question_async(session, created, config_update)
 
         assert updated.question == "Updated question?"
         assert updated.answer == "Original answer."
@@ -2039,13 +1987,13 @@ class TestQuestionConfigMethods:
             answer="Original answer.",
             is_active=True,
         )
-        created = await methods.create_question_async(session, "user123", config_create)
+        created = await _create_question_async(session, "user123", config_create)
 
         config_update = PartialUserQuestionSchema(
             id="question-clear-answer",
             answer=None,
         )
-        updated = await methods.update_question_async(session, created, config_update)
+        updated = await _update_question_async(session, created, config_update)
 
         assert updated.answer is None
 
@@ -2055,12 +2003,13 @@ class TestQuestionConfigMethods:
             id="question-delete",
             question="Delete this question?",
         )
-        created = await methods.create_question_async(session, "user123", config_create)
+        created = await _create_question_async(session, "user123", config_create)
 
-        await methods.delete_question_async(session, created)
+        await session.delete(created)
+        await session.commit()
 
-        retrieved = await methods.get_question_async(
-            session, "user123", config_id="question-delete"
+        retrieved = await methods.get_user_scoped_async(
+            session, models.UserQuestion, "user123", config_id="question-delete"
         )
         assert retrieved is None
 
@@ -2070,13 +2019,13 @@ class TestQuestionConfigMethods:
             id="global-question",
             question="Should every user see this?",
         )
-        created = await methods.create_question_async(session, None, config_create)
+        created = await _create_question_async(session, None, config_create)
 
-        retrieved_user1 = await methods.get_question_async(
-            session, "user123", config_uuid=created.uuid
+        retrieved_user1 = await methods.get_user_scoped_async(
+            session, models.UserQuestion, "user123", config_uuid=created.uuid
         )
-        retrieved_user2 = await methods.get_question_async(
-            session, "user456", config_uuid=created.uuid
+        retrieved_user2 = await methods.get_user_scoped_async(
+            session, models.UserQuestion, "user456", config_uuid=created.uuid
         )
 
         assert retrieved_user1 is not None
@@ -2086,51 +2035,55 @@ class TestQuestionConfigMethods:
 
     async def test_list_questions_includes_global(self, session: AsyncSession):
         """Test listing question configs includes global records."""
-        await methods.create_question_async(
+        await _create_question_async(
             session,
             "user123",
             schemas.UserQuestionSchema(id="user-question", question="User question?"),
         )
-        await methods.create_question_async(
+        await _create_question_async(
             session,
             None,
             schemas.UserQuestionSchema(id="global-list-question", question="Global question?"),
         )
 
-        configs = await methods.list_questions_async(session, "user123")
+        configs = await methods.list_user_scoped_async(
+            session, models.UserQuestion, "user123", skip=0, limit=100, extra_conditions=None
+        )
         ids = {config.id for config in configs}
 
         assert ids == {"user-question", "global-list-question"}
 
     async def test_count_questions_includes_global(self, session: AsyncSession):
         """Test counting question configs includes global records."""
-        await methods.create_question_async(
+        await _create_question_async(
             session,
             "user456",
             schemas.UserQuestionSchema(id="user456-question", question="Other user's question?"),
         )
-        await methods.create_question_async(
+        await _create_question_async(
             session,
             None,
             schemas.UserQuestionSchema(id="global-count-question", question="Global question?"),
         )
 
-        count = await methods.count_questions_async(session, "user456")
+        count = await methods.count_user_scoped_async(
+            session, models.UserQuestion, "user456", extra_conditions=None
+        )
 
         assert count == 2
 
     async def test_question_user_scoped_uniqueness(self, session: AsyncSession):
         """Test that question IDs are unique within user scope."""
         config1 = schemas.UserQuestionSchema(id="shared-question", question="First question?")
-        await methods.create_question_async(session, "user1", config1)
+        await _create_question_async(session, "user1", config1)
 
         config2 = schemas.UserQuestionSchema(id="shared-question", question="Second question?")
-        created = await methods.create_question_async(session, "user2", config2)
+        created = await _create_question_async(session, "user2", config2)
         assert created.user_uuid == "user2"
 
         config3 = schemas.UserQuestionSchema(id="shared-question", question="Duplicate?")
         with pytest.raises(Exception):  # SQLAlchemy integrity error. # noqa
-            await methods.create_question_async(session, "user1", config3)
+            await _create_question_async(session, "user1", config3)
 
     async def test_user_question_model_has_required_fields(self, session: AsyncSession):
         """Test that UserQuestion model has all required field definitions."""
@@ -2189,7 +2142,7 @@ class TestQuestionConfigMethods:
         )
         session.add(config2)
 
-        with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
+        with pytest.raises(IntegrityError, match=_UNIQUE_VIOLATION):
             await session.commit()
 
     async def test_user_question_to_schema_conversion(self, session: AsyncSession):
@@ -2224,7 +2177,7 @@ class TestQuestionConfigMethods:
             id="audit-question",
             question="Who changed this?",
         )
-        created = await methods.create_question_async(
+        created = await _create_question_async(
             session, "user123", config_create, updated_user_uuid="user123"
         )
 
@@ -2236,7 +2189,7 @@ class TestQuestionConfigMethods:
             question="Who changed this now?",
             is_active=True,
         )
-        updated = await methods.update_question_async(
+        updated = await _update_question_async(
             session, created, config_update, updated_user_uuid="user456"
         )
 
@@ -2321,7 +2274,7 @@ class TestModelsRegressionUserEmbedding:
         )
         session.add(config2)
 
-        with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
+        with pytest.raises(IntegrityError, match=_UNIQUE_VIOLATION):
             await session.commit()
 
     async def test_user_embedding_same_id_different_users_succeeds(self, session: AsyncSession):
@@ -2534,7 +2487,7 @@ class TestModelsRegressionUserLLM:
         )
         session.add(config2)
 
-        with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
+        with pytest.raises(IntegrityError, match=_UNIQUE_VIOLATION):
             await session.commit()
 
     async def test_user_llm_same_id_different_users_succeeds(self, session: AsyncSession):
@@ -2712,7 +2665,7 @@ class TestModelsRegressionUserTool:
         )
         session.add(config2)
 
-        with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
+        with pytest.raises(IntegrityError, match=_UNIQUE_VIOLATION):
             await session.commit()
 
     async def test_user_tool_json_fields_serialization(self, session: AsyncSession):
@@ -2912,7 +2865,7 @@ class TestModelsRegressionUserAgent:
         )
         session.add(config2)
 
-        with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
+        with pytest.raises(IntegrityError, match=_UNIQUE_VIOLATION):
             await session.commit()
 
     async def test_user_agent_json_fields_serialization(self, session: AsyncSession):

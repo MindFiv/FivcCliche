@@ -1,4 +1,4 @@
-"""Chat service module with functions for chat operations."""
+"""Shared SQL for chats and messages."""
 
 from datetime import datetime
 from typing import cast
@@ -23,7 +23,6 @@ async def create_chat_async(
     description: str | None = None,
     context: dict | None = None,
     is_memorable: bool = False,
-    **kwargs,
 ) -> models.UserChat:
     """Create a new chat session asynchronously.
 
@@ -35,7 +34,6 @@ async def create_chat_async(
         description: Optional chat description
         context: Optional chat context (arbitrary JSON data)
         is_memorable: Whether the chat is eligible for memory retention
-        **kwargs: Additional arguments (ignored)
 
     Returns:
         Created UserChat instance
@@ -47,16 +45,15 @@ async def create_chat_async(
         raise ValueError("agent_id is required to create a chat")
 
     chat = models.UserChat(
-        uuid=chat_uuid,  # Will use auto-generated UUID if None
         user_uuid=user_uuid,
         agent_id=agent_id,
         description=description,
         context=context,
         is_memorable=is_memorable,
     )
+    if chat_uuid:
+        chat.uuid = chat_uuid
     session.add(chat)
-    await session.commit()
-    await session.refresh(chat)
     return chat
 
 
@@ -65,7 +62,6 @@ async def get_chat_async(
     chat_uuid: str,
     user_uuid: str,
     agent_id: str | None = None,
-    **kwargs,  # ignore additional arguments
 ) -> models.UserChat | None:
     """Get a chat session by UUID for a specific user."""
     statement = select(models.UserChat).where(
@@ -89,7 +85,6 @@ async def list_chats_async(
     limit: int = 100,
     agent_id: str | None = None,
     context: dict[str, str] | None = None,
-    **kwargs,
 ) -> list[models.UserChat]:
     """List all chat sessions for a user with pagination."""
     statement = (
@@ -119,7 +114,6 @@ async def count_chats_async(
     user_uuid: str,
     agent_id: str | None = None,
     context: dict[str, str] | None = None,
-    **kwargs,
 ) -> int:
     """Count the number of chat sessions for a user."""
     statement = select(func.count(col(models.UserChat.uuid))).where(
@@ -137,18 +131,11 @@ async def count_chats_async(
     return result.scalar() or 0
 
 
-async def delete_chat_async(session: AsyncSession, chat: models.UserChat, **kwargs) -> None:
-    """Delete a chat session."""
-    await session.delete(chat)
-    await session.commit()
-
-
 async def list_chat_messages_async(
     session: AsyncSession,
     chat_uuid: str,
     skip: int = 0,
     limit: int = 100,
-    **kwargs,  # ignore additional arguments
 ) -> list[models.UserChatMessage]:
     """List all chat messages for a session with pagination."""
     statement = (
@@ -162,24 +149,10 @@ async def list_chat_messages_async(
     return list(result.scalars().all())
 
 
-async def count_chat_messages_async(
-    session: AsyncSession,
-    chat_uuid: str,
-    **kwargs,  # ignore additional arguments
-) -> int:
-    """Count the number of chat messages for a session."""
-    statement = select(func.count(col(models.UserChatMessage.uuid))).where(
-        models.UserChatMessage.chat_uuid == chat_uuid
-    )
-    result = await session.execute(statement)
-    return result.scalar() or 0
-
-
 async def get_chat_message_async(
     session: AsyncSession,
     message_uuid: str,
     chat_uuid: str,
-    **kwargs,  # ignore additional arguments
 ) -> models.UserChatMessage | None:
     """Get a chat message by UUID."""
     statement = select(models.UserChatMessage).where(
@@ -199,25 +172,23 @@ async def create_chat_message_async(
     reply: dict | None = None,
     tool_calls: dict | None = None,
     completed_at: datetime | None = None,
-    **kwargs,  # ignore additional arguments
 ) -> models.UserChatMessage:
     """Create a new chat message."""
     if not chat_uuid:
         raise ValueError("Chat UUID is required to create a message")
 
     message = models.UserChatMessage(
-        uuid=message_uuid,  # Will use auto-generated UUID if None
         chat_uuid=chat_uuid,
         query=query,
         reply=reply,
         tool_calls=tool_calls,
         completed_at=completed_at,
     )
+    if message_uuid:
+        message.uuid = message_uuid
     if status:
         message.status = status
     session.add(message)
-    await session.commit()
-    await session.refresh(message)
     return message
 
 
@@ -230,7 +201,6 @@ async def update_chat_message_async(
     tool_calls: dict | None | UnsetType = UNSET,
     completed_at: datetime | None | UnsetType = UNSET,
     is_memorized: bool | UnsetType = UNSET,
-    **kwargs,  # ignore additional arguments
 ) -> models.UserChatMessage:
     """Update a chat message."""
     if status is not None:
@@ -246,28 +216,22 @@ async def update_chat_message_async(
     if is_memorized is not UNSET:
         message.is_memorized = cast("bool", is_memorized)
     session.add(message)
-    await session.commit()
-    await session.refresh(message)
     return message
 
 
-async def delete_chat_message_async(
+async def list_unmemorized_chats_async(
     session: AsyncSession,
-    message: models.UserChatMessage,
-    **kwargs,  # ignore additional arguments
-) -> None:
-    """Delete a chat message."""
-    await session.delete(message)
-    await session.commit()
+    *,
+    created_at_to: datetime,
+    limit: int = 50,
+) -> list[models.UserChat]:
+    """List chats that have aged, completed, unmemorized messages.
 
-
-def _select_unmemorized_chats(*, created_at_to: datetime, limit: int = 50):
-    """Select chats that have aged, completed, unmemorized messages.
-
-    Uses EXISTS rather than JOIN+DISTINCT so PostgreSQL does not compare the
-    ``json`` ``context`` column (which has no equality operator).
+    Only chats with a non-null ``user_uuid`` are returned. Ordering is by chat
+    ``created_at`` ascending. Uses EXISTS rather than JOIN+DISTINCT so PostgreSQL
+    does not compare the ``json`` ``context`` column (which has no equality operator).
     """
-    return (
+    statement = (
         select(models.UserChat)
         .where(
             col(models.UserChat.user_uuid).is_not(None),
@@ -284,23 +248,7 @@ def _select_unmemorized_chats(*, created_at_to: datetime, limit: int = 50):
         .order_by(col(models.UserChat.created_at).asc())
         .limit(limit)
     )
-
-
-async def list_unmemorized_chats_async(
-    session: AsyncSession,
-    *,
-    created_at_to: datetime,
-    limit: int = 50,
-    **kwargs,
-) -> list[models.UserChat]:
-    """List chats that have aged, completed, unmemorized messages.
-
-    Only chats with a non-null ``user_uuid`` are returned. Ordering is by chat
-    ``created_at`` ascending.
-    """
-    result = await session.execute(
-        _select_unmemorized_chats(created_at_to=created_at_to, limit=limit)
-    )
+    result = await session.execute(statement)
     return list(result.scalars().all())
 
 
@@ -309,7 +257,6 @@ async def list_unmemorized_chat_messages_async(
     chat_uuid: str,
     *,
     created_at_to: datetime,
-    **kwargs,
 ) -> list[models.UserChatMessage]:
     """List aged, completed, unmemorized messages for one chat (oldest first)."""
     statement = (
@@ -326,17 +273,21 @@ async def list_unmemorized_chat_messages_async(
     return list(result.scalars().all())
 
 
-async def mark_unmemorized_chat_messages_async(
+async def delete_unmemorized_chat_messages_async(
     session: AsyncSession,
-    message_uuids: list[str],
-    **kwargs,
+    chat_uuid: str,
+    *,
+    created_at_to: datetime,
 ) -> None:
-    """Mark the given messages as memorized in a short transaction."""
-    if not message_uuids:
-        return
+    """Mark aged, completed, unmemorized messages for one chat as memorized."""
     await session.execute(
         update(models.UserChatMessage)
-        .where(col(models.UserChatMessage.uuid).in_(message_uuids))
+        .where(
+            col(models.UserChatMessage.chat_uuid) == chat_uuid,
+            col(models.UserChatMessage.is_memorized).is_(False),
+            models.UserChatMessage.status == schemas.AgentRunStatus.COMPLETED,
+            col(models.UserChatMessage.created_at) <= created_at_to,
+        )
         .values(is_memorized=True)
+        .execution_options(synchronize_session=False)
     )
-    await session.commit()
