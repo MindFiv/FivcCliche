@@ -19,7 +19,7 @@ from fivccliche.utils.deps import (
     get_mutex_context_async,
     get_mutex_site_async,
 )
-from fivccliche.utils.parsers import to_int
+from fivccliche.utils.types import to_int
 
 logger = logging.getLogger(__name__)
 

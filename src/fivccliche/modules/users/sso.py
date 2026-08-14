@@ -14,7 +14,7 @@ from fivccliche.utils.deps import (
     get_config_async,
     configs,
 )
-from fivccliche.utils.parsers import to_bool
+from fivccliche.utils.types import to_bool
 
 router = APIRouter(prefix="/sso", tags=["sso"])
 

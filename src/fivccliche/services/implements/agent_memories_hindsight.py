@@ -26,7 +26,7 @@ from fivccliche.services.interfaces.agent_memories import (
     MemoryRecallResult,
     MemoryRetainResult,
 )
-from fivccliche.utils.parsers import to_float
+from fivccliche.utils.types import to_float
 
 logger = logging.getLogger(__name__)
 

@@ -1,4 +1,4 @@
-from fivccliche.utils.parsers import (
+from fivccliche.utils.types import (
     to_bool,
     to_float,
     to_int,

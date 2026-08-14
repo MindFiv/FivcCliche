@@ -11,7 +11,7 @@ from fivcglue.interfaces.configs import IConfig
 from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator, UserCredential
 from fivccliche.services.interfaces.modules import IModule, IModuleJob
 from fivccliche.utils.deps import get_db_session_context_async
-from fivccliche.utils.parsers import to_float, to_string
+from fivccliche.utils.types import to_float, to_string
 
 from .models import User
 from .utils import create_user_async, get_user_async

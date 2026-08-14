@@ -7,7 +7,7 @@ from typing import cast
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from fivccliche.utils import UNSET, UnsetType
+from fivccliche.utils.types import UNSET, UnsetType
 
 from . import models
 

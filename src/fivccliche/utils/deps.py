@@ -15,7 +15,7 @@ from fivccliche.services.interfaces.agent_memories import IUserMemoryProvider
 from fivccliche.services.interfaces.db import IDatabase
 from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator
 from fivccliche.services.implements import service_site
-from fivccliche.utils import UNSET, UnsetType
+from fivccliche.utils.types import UNSET, UnsetType
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 default_security = HTTPBearer()

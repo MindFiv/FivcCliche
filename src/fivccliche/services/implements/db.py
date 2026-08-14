@@ -13,7 +13,7 @@ from fivcglue import IComponentSite, query_component
 from fivcglue.interfaces.configs import IConfig
 
 from fivccliche.services.interfaces.db import IDatabase
-from fivccliche.utils.parsers import to_optional_int
+from fivccliche.utils.types import to_optional_int
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,15 @@
 from typing import Any
 
+
+class UnsetType:
+    """Sentinel type for omitted optional update fields."""
+
+    def __repr__(self) -> str:
+        return "UNSET"
+
+
+UNSET = UnsetType()
+
 _TRUE_STRINGS = {"true", "1", "yes", "on"}
 _FALSE_STRINGS = {"false", "0", "no", "off"}
 

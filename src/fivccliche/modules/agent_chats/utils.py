@@ -7,7 +7,7 @@ from sqlalchemy import exists, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from fivccliche.utils import UNSET, UnsetType
+from fivccliche.utils.types import UNSET, UnsetType
 from fivccliche.utils.queries import apply_dotted_json_filters
 
 from . import models, schemas
