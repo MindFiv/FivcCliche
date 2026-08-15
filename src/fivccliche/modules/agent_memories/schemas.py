@@ -21,3 +21,17 @@ class MemoryRecallResponseSchema(BaseModel):
     """Response body for semantic memory recall."""
 
     results: list[MemoryContentSchema] = Field(default_factory=list)
+
+
+class MemoryRetainRequestSchema(BaseModel):
+    """Request body for retaining memory content."""
+
+    content: str = Field(..., min_length=1, description="Memory content to retain")
+
+
+class MemoryRetainResponseSchema(BaseModel):
+    """Response body for retaining memory content."""
+
+    success: bool = True
+    count: int = 0
+    ids: list[str] | None = None

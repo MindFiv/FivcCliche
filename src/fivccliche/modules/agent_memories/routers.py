@@ -1,10 +1,11 @@
-"""HTTP routes for viewing the authenticated user's agent memories."""
+"""HTTP routes for the authenticated user's agent memories."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from fivccliche.services.interfaces.agent_memories import IUserMemoryProvider
 from fivccliche.utils.deps import (
     IUser,
+    get_admin_user_async,
     get_authenticated_user_async,
     get_memory_provider_async,
 )
@@ -64,4 +65,21 @@ async def recall_memories_async(
         results=[
             schemas.MemoryContentSchema.model_validate(item.model_dump()) for item in result.items
         ],
+    )
+
+
+@router_memories.post(
+    "/retain/",
+    summary="Retain memory content for the authenticated superuser.",
+    response_model=schemas.MemoryRetainResponseSchema,
+)
+async def retain_memories_async(
+    body: schemas.MemoryRetainRequestSchema,
+    user: IUser = Depends(get_admin_user_async),
+    memory_provider: IUserMemoryProvider = Depends(get_required_memory_provider_async),
+) -> schemas.MemoryRetainResponseSchema:
+    memory = memory_provider.get_memory(space_id=user.uuid)
+    result = await memory.retain_async(body.content)
+    return schemas.MemoryRetainResponseSchema(
+        success=result.success, count=result.count, ids=result.ids
     )

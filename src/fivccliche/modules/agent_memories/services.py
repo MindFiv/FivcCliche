@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class ModuleImpl(IModule):
-    """Agent memories module: read-only HTTP API over IUserMemoryProvider."""
+    """Agent memories module: HTTP API over IUserMemoryProvider."""
 
     def __init__(self, _: IComponentSite, **kwargs):
         logger.info("agent_memories module initialized")
@@ -24,7 +24,7 @@ class ModuleImpl(IModule):
 
     @property
     def description(self):
-        return "Agent Memories viewing module."
+        return "Agent Memories HTTP module."
 
     def list_jobs(self) -> list[IModuleJob]:
         return []

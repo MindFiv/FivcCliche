@@ -9,7 +9,8 @@ via optional `hindsight-client` (not a core package dependency).
 
 - Interface + optional Hindsight provider (DI + `get_memory_provider_async`)
 - Scheduled **chat-level** memorize job in `agent_chats` (see below)
-- Read-only HTTP API in `agent_memories` (`GET /memories/`, `GET /memories/recall/`)
+- HTTP API in `agent_memories` (`GET /memories/`, `GET /memories/recall/`,
+  superuser-only `POST /memories/retain/`)
 - `UserChatMessage.is_memorized` is written by the job after a successful retain
   (or when there is nothing to retain); it is not exposed on the public API yet
 
@@ -53,10 +54,14 @@ Mounted under `/api` (same as other modules). Requires a Bearer JWT.
 |--------|------|----------|
 | `GET` | `/memories/` | Paginated list (`skip` / `limit`) → `{ total, results }` |
 | `GET` | `/memories/recall/?query=` | Semantic recall → `{ results }` |
+| `POST` | `/memories/retain/` | Superuser-only retain → `{ success, count, ids }` (`raw` is not exposed) |
 
-`space_id` is always the authenticated user's `uuid`.
+`space_id` is always the authenticated user's `uuid`. Retain uses
+`get_admin_user_async`: unauthenticated requests return **401**; a non-superuser
+JWT returns **403** with `detail="Not a super user"`. Backend `success=False`
+is still HTTP **200** with that flag in the body.
 
-If `IUserMemoryProvider` is not registered, both endpoints return
+If `IUserMemoryProvider` is not registered, these endpoints return
 **503** with `detail="Memory provider is not mounted"`.
 
 The HTTP module depends only on `IUserMemory` / `IUserMemoryProvider`; it does
@@ -198,6 +203,6 @@ async def example(
 ## Testing
 
 - `tests/test_agent_memories_hindsight.py` — Hindsight provider (mocked SDK), including `list_async`
-- `tests/test_agent_memories_api.py` — HTTP auth, 503 when unmounted, list/recall success
+- `tests/test_agent_memories_api.py` — HTTP auth, 503 when unmounted, list/recall/retain success, retain 403 for non-superuser
 - `tests/test_agent_chats_memorize.py` — conversation JSON, age filter, mutex
   skip, job marking, mount registration
