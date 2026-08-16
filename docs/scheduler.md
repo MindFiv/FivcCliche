@@ -156,9 +156,8 @@ within the test window.
 
 ## Real module example
 
-`agent_chats` constructs `ChatMemorizeJob(component_site)` in `ModuleImpl`
-`__init__` and exposes it via `list_jobs`. `ModuleSiteImpl` registers
-`agent-chats-memorize` from `job.config` (interval from
-`CHAT_MEMORIZE.INTERVAL_MINUTES`, default 5). See
-[agent-memories.md](agent-memories.md) for chat-level retain semantics and
-per-chat Redis mutex details.
+`agent_chats` currently returns an empty `list_jobs()`, so no memorize job is
+registered on the scheduler. `ChatMemorizeJob` still lives in
+`agent_chats.jobs` and can be re-attached by constructing it in
+`ModuleImpl.__init__`. See [agent-memories.md](agent-memories.md) for
+chat-level retain semantics and per-chat Redis mutex details.

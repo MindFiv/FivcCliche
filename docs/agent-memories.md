@@ -8,7 +8,10 @@ via optional `hindsight-client` (not a core package dependency).
 ## Status
 
 - Interface + optional Hindsight provider (DI + `get_memory_provider_async`)
-- Scheduled **chat-level** memorize job in `agent_chats` (see below)
+- Chat-level memorize job is implemented in `agent_chats.jobs` but **not
+  registered** on the scheduler (`agent_chats` `list_jobs()` is empty)
+- Function tools in `agent_memories.tools` (`MemoryRetain` / `MemoryRecall` /
+  `MemoryList`) for later `transport=function` wiring
 - HTTP API in `agent_memories` (`GET /memories/`, `GET /memories/recall/`,
   superuser-only `POST /memories/retain/`)
 - `UserChatMessage.is_memorized` is written by the job after a successful retain
@@ -138,14 +141,34 @@ in the default `services.yml`:
 A Redis-backed `IMutexSite` must also be available (`get_mutex_site_async`);
 otherwise the memorize job skips entirely.
 
+## Agent memory tools
+
+Callable classes in `src/fivccliche/modules/agent_memories/tools.py`. They are
+not mounted on `IUserChatContext` yet. To attach them later, create a tool
+config with `transport=function` and `functions` pointing at the dotted paths:
+
+- `fivccliche.modules.agent_memories.tools.MemoryRetain`
+- `fivccliche.modules.agent_memories.tools.MemoryRecall`
+- `fivccliche.modules.agent_memories.tools.MemoryList`
+
+Each class takes `**context` (expects `user_uuid`) and returns normalized JSON
+(`raw` is omitted). `space_id` is the context `user_uuid`. Missing `user_uuid`
+or an unmounted provider raises `ValueError`.
+
+| Class | `__call__` | Result JSON |
+|-------|------------|-------------|
+| `MemoryRetain` | `content` | `{ success, count, ids }` |
+| `MemoryRecall` | `query` | `{ items }` |
+| `MemoryList` | `skip=0`, `limit=20` | `{ total, items }` |
+
 ## Chat memorize job
 
-Implemented by `agent_chats.jobs.ChatMemorizeJob` (`IModuleJob`).
-`ModuleImpl` constructs `ChatMemorizeJob(component_site)` in `__init__` and
-exposes it via `list_jobs` / `get_job`. `ModuleSiteImpl.create_application`
-registers APScheduler job `agent-chats-memorize` from `job.config`
-(`max_instances=1`, `coalesce=True`). Use `fivccliche jobs run agent_chats
-agent-chats-memorize` to run it immediately.
+Implemented by `agent_chats.jobs.ChatMemorizeJob` (`IModuleJob`). The class
+and `CHAT_MEMORIZE` settings remain, but `agent_chats.ModuleImpl` currently
+returns an empty `list_jobs()`, so `ModuleSiteImpl` does not register
+`agent-chats-memorize` and `fivccliche jobs run agent_chats
+agent-chats-memorize` cannot find it. Re-enable by constructing
+`ChatMemorizeJob(component_site)` in `ModuleImpl.__init__` again.
 
 Per tick:
 
@@ -204,5 +227,7 @@ async def example(
 
 - `tests/test_agent_memories_hindsight.py` — Hindsight provider (mocked SDK), including `list_async`
 - `tests/test_agent_memories_api.py` — HTTP auth, 503 when unmounted, list/recall/retain success, retain 403 for non-superuser
+- `tests/test_agent_memories_tools.py` — retain/recall/list tools, missing
+  user/provider, JSON without `raw`
 - `tests/test_agent_chats_memorize.py` — conversation JSON, age filter, mutex
-  skip, job marking, mount registration
+  skip, job marking, job not registered on the scheduler

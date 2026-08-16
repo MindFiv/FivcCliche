@@ -511,7 +511,7 @@ class TestMemorizeJob:
         assert job.config["minutes"] == 15
 
 
-def test_agent_chats_list_jobs_registers_memorize_job():
+def test_agent_chats_list_jobs_does_not_register_memorize_job():
     components_path = os.path.join(
         os.path.dirname(__file__),
         "..",
@@ -525,18 +525,13 @@ def test_agent_chats_list_jobs_registers_memorize_job():
     module = ModuleImpl(component_site)
 
     jobs = module.list_jobs()
-    assert len(jobs) == 1
-    assert jobs[0].name == MEMORIZE_JOB_ID
-    assert module.get_job(MEMORIZE_JOB_ID) is jobs[0]
+    assert jobs == []
+    assert module.get_job(MEMORIZE_JOB_ID) is None
     assert module.get_job("missing") is None
 
     module_site.register_module(module)
     app = module_site.create_application()
 
     scheduler: AsyncIOScheduler = app.state.scheduler
-    # Stretch interval so the job cannot fire during the short TestClient window.
-    scheduler.reschedule_job(MEMORIZE_JOB_ID, trigger="interval", minutes=60)
     with TestClient(app):
-        job = scheduler.get_job(MEMORIZE_JOB_ID)
-        assert job is not None
-        assert job.id == MEMORIZE_JOB_ID
+        assert scheduler.get_job(MEMORIZE_JOB_ID) is None

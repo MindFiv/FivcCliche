@@ -15,7 +15,6 @@ from fivccliche.utils.deps import get_db_session_context_async
 
 from . import routers, utils
 from .filters import ChatFilterSet
-from .jobs import ChatMemorizeJob
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +231,7 @@ class ModuleImpl(IModule):
 
     def __init__(self, component_site: IComponentSite, **kwargs):
         self._component_site = component_site
-        self._jobs: list[IModuleJob] = [ChatMemorizeJob(component_site)]
+        self._jobs: list[IModuleJob] = []
         logger.info("agent chats module initialized")
 
     @property
