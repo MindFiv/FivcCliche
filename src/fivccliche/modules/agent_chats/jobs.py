@@ -9,11 +9,14 @@ from datetime import datetime, timedelta, timezone
 from fivcglue import IComponentSite, query_component
 from fivcglue.interfaces import configs
 from fivcglue.interfaces.mutexes import IMutexSite
+from fivcplayground.agents import AgentConfig
+from pydantic import BaseModel, Field
 
 from fivccliche.modules.agent_chats import models, utils
 from fivccliche.services.interfaces.agent_memories import IUserMemoryProvider
 from fivccliche.services.interfaces.modules import IModuleJob
 from fivccliche.utils.deps import (
+    get_config_provider_async,
     get_db_session_context_async,
     get_memory_provider_async,
     get_mutex_context_async,
@@ -29,6 +32,46 @@ _DEFAULT_MAX_BATCHES_PER_RUN = 20
 _DEFAULT_MIN_AGE_HOURS = 24
 _MUTEX_EXPIRE = timedelta(minutes=30)
 MEMORIZE_JOB_ID = "agent-chats-memorize"
+_MEMORIZE_MODEL_ID = "memorize"
+_MEMORIZE_EXTRACT_PROMPT = """\
+You decide whether a chat transcript should be stored as long-term user memory,
+and extract the information to store.
+
+Extract memories only from user turns: durable facts the user stated about
+themselves, such as:
+- identity, preferences, constraints, decisions
+- ongoing tasks, projects, or relationships the user described
+- other facts they would reasonably want recalled later
+
+Do not store assistant explanations, diagnoses, tutorials, advice, opinions,
+or code analysis as memories. Assistant turns are context only; never rewrite
+an assistant conclusion as "the user ...".
+
+Do not retain greetings, thanks, small talk, slash-command noise, or generic
+public-knowledge Q&A with no user-stated facts about themselves.
+
+When worth retaining, extract short standalone facts (third person or
+"the user ...") whose source is the user content. Do not copy the transcript
+verbatim. Do not invent facts that are not in the user turns.
+
+When the user only asked a public-knowledge question, or nothing user-stated
+is worth retaining, set should_retain to false and memories to [].
+
+The input is a JSON array of {role, content} turns.
+"""
+
+
+class _MemorizeExtraction(BaseModel):
+    should_retain: bool = Field(
+        description=("True if user turns contain durable facts the user stated about themselves.")
+    )
+    memories: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Short standalone facts from user turns only. Empty when nothing user-stated "
+            "is worth retaining. Never include assistant explanations or advice."
+        ),
+    )
 
 
 def _get_memorize_settings(component_site: IComponentSite) -> dict[str, int]:
@@ -63,7 +106,7 @@ def _get_memorize_settings(component_site: IComponentSite) -> dict[str, int]:
 
 
 def _get_memorize_content(messages: list[models.UserChatMessage]) -> str:
-    """Build JSON retain payload; empty when there is no user turn."""
+    """Build JSON conversation payload for the memorize judge; empty when there is no user turn."""
     turns: list[dict[str, str]] = []
     has_user = False
     for message in messages:
@@ -81,6 +124,46 @@ def _get_memorize_content(messages: list[models.UserChatMessage]) -> str:
     if not has_user:
         return ""
     return json.dumps(turns, ensure_ascii=False)
+
+
+async def _extract_memorable_content_async(content: str, *, user_uuid: str) -> str | None:
+    """Ask the memorize LLM whether to retain, and extract the text to store.
+
+    If the user has no visible ``id=memorize`` LLM, return ``content`` unchanged
+    so the caller retains the raw transcript (legacy behavior).
+    """
+    config_provider = await get_config_provider_async()
+    model_repo = config_provider.get_model_repository(user_uuid=user_uuid)
+    if await model_repo.get_model_config_async(_MEMORIZE_MODEL_ID) is None:
+        logger.info(
+            "No %s LLM for user %s; retaining raw transcript",
+            _MEMORIZE_MODEL_ID,
+            user_uuid,
+        )
+        return content
+
+    judge_config = AgentConfig(
+        id="chat-memorize-judge",
+        model_id=_MEMORIZE_MODEL_ID,
+        system_prompt=_MEMORIZE_EXTRACT_PROMPT,
+    )
+    agent = await config_provider.get_agent_backend().create_agent_async(
+        config_provider.get_model_backend(),
+        model_repo,
+        judge_config,
+    )
+    result = await agent.run_async(
+        query=content,
+        response_model=_MemorizeExtraction,
+    )
+    if not isinstance(result, _MemorizeExtraction):
+        raise RuntimeError("memorize judge did not return should_retain")
+    if not result.should_retain:
+        return None
+    memories = [item.strip() for item in result.memories if item.strip()]
+    if not memories:
+        return None
+    return "\n".join(memories)
 
 
 async def _memorize_async(
@@ -115,14 +198,23 @@ async def _memorize_async(
 
             content = _get_memorize_content(messages)
             if content:
-                memory = memory_provider.get_memory(space_id=chat.user_uuid)
-                result = await memory.retain_async(content)
-                if not result.success:
-                    logger.warning(
-                        "retain_async failed for chat %s; leaving unmemorized",
+                extracted = await _extract_memorable_content_async(
+                    content, user_uuid=chat.user_uuid
+                )
+                if extracted:
+                    memory = memory_provider.get_memory(space_id=chat.user_uuid)
+                    result = await memory.retain_async(extracted)
+                    if not result.success:
+                        logger.warning(
+                            "retain_async failed for chat %s; leaving unmemorized",
+                            chat.uuid,
+                        )
+                        return
+                else:
+                    logger.info(
+                        "Skip retain for chat %s; nothing worth remembering",
                         chat.uuid,
                     )
-                    return
 
             async with get_db_session_context_async() as session:
                 await utils.delete_unmemorized_chat_messages_async(

@@ -15,7 +15,8 @@ via optional `hindsight-client` (not a core package dependency).
 - HTTP API in `agent_memories` (`GET /memories/`, `GET /memories/recall/`,
   superuser-only `POST /memories/retain/`)
 - `UserChatMessage.is_memorized` is written by the job after a successful retain
-  (or when there is nothing to retain); it is not exposed on the public API yet
+  (or when there is nothing to retain, including when the memorize LLM extracts
+  nothing); it is not exposed on the public API yet
 
 ## Interfaces
 
@@ -180,28 +181,50 @@ Per tick:
    parallelism comes from multiple service replicas + per-chat Redis mutex.
 4. For each chat, acquire mutex `agent-chats:memorize:{chat_uuid}`
    (non-blocking). On failure, skip that chat only.
-5. Build a JSON conversation array and `retain_async` once with
-   `space_id=chat.user_uuid`. On success (or when there is no user turn to
-   retain), mark that chat's completed, unmemorized messages with
+5. Build a JSON conversation array of `{role, content}` turns. If it has no
+   user turn (empty, or assistant-only after slash filtering), do not call
+   retain; still mark messages memorized so they are not scanned again.
+6. Otherwise look up the user's visible LLM config with `id=memorize` (owned
+   or global). If it exists, use it to decide whether the transcript is worth
+   storing and to extract short standalone memories from **user** turns only;
+   `retain_async` then stores that extracted text (`space_id=chat.user_uuid`).
+   If the config is missing, `retain_async` stores the raw conversation JSON
+   (legacy behavior).
+7. If extraction runs and the LLM says nothing is worth retaining, or returns
+   an empty memory list, skip retain and still mark messages memorized.
+8. If the `memorize` LLM exists but the call fails, or structured output
+   cannot be parsed, leave messages unmemorized so the next tick can retry.
+9. On successful retain, mark that chat's completed, unmemorized messages with
    `created_at <= created_at_to` as `is_memorized=True`.
 
-Retain payload example:
+A user-visible LLM config with `id=memorize` is optional (typically a global
+row created by a superuser). Without it, chats are retained as raw transcripts.
+
+Conversation JSON sent to the judge when `id=memorize` exists (extracted
+text is stored, not this JSON). Without that LLM, this JSON is retained
+as-is:
 
 ```json
 [
-  {"role": "user", "content": "帮我看看这段代码为什么报错"},
-  {"role": "assistant", "content": "你的第 12 行变量未定义，应该是..."}
+  {"role": "user", "content": "我叫 Charlie，Python 打包用 uv"},
+  {"role": "assistant", "content": "好的，已记下"}
 ]
 ```
 
-Rules when building turns:
+Example retain payload after extraction (user-stated facts only, not the
+assistant reply):
+
+```text
+The user is named Charlie
+The user prefers uv for Python packaging
+```
+
+Rules when building turns for the judge:
 
 - Skip the **user** turn when `query.text` (stripped) starts with `/`
   (slash commands).
 - Still include the **assistant** turn when `reply.text` is non-empty.
-- If the resulting array has no `role=user` turn (empty, or assistant-only
-  after slash filtering), do not call retain; still mark messages memorized
-  so they are not scanned again.
+- If the resulting array has no `role=user` turn, skip the LLM call.
 
 ## Manual injection example
 
@@ -229,5 +252,6 @@ async def example(
 - `tests/test_agent_memories_api.py` — HTTP auth, 503 when unmounted, list/recall/retain success, retain 403 for non-superuser
 - `tests/test_agent_memories_tools.py` — retain/recall/list tools, missing
   user/provider, JSON without `raw`
-- `tests/test_agent_chats_memorize.py` — conversation JSON, age filter, mutex
-  skip, job marking, job not registered on the scheduler
+- `tests/test_agent_chats_memorize.py` — conversation JSON, LLM extract/skip/
+  retry, age filter, mutex skip, job marking, job not registered on the
+  scheduler
