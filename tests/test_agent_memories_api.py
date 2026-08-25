@@ -131,7 +131,9 @@ class TestMemoriesApiSuccess:
         assert len(data["results"]) == 1
         assert data["results"][0]["id"] == "m1"
         assert data["results"][0]["content"] == "Alice loves AI"
+        assert data["results"][0]["score"] == 0.9
         assert data["results"][0]["categories"] == ["world"]
+        assert data["results"][0]["created_at"] == "2026-08-01T10:00:00Z"
         memory.list_async.assert_awaited_once_with(skip=0, limit=10)
         provider.get_memory.assert_called_once()
         assert provider.get_memory.call_args.kwargs["space_id"]
@@ -145,6 +147,8 @@ class TestMemoriesApiSuccess:
                         id="r1",
                         content="Alice loves AI",
                         score=0.95,
+                        categories=["world"],
+                        created_at=datetime(2026, 8, 1, 10, 0, tzinfo=timezone.utc),
                     )
                 ],
             )
@@ -165,6 +169,9 @@ class TestMemoriesApiSuccess:
         assert len(data["results"]) == 1
         assert data["results"][0]["id"] == "r1"
         assert data["results"][0]["content"] == "Alice loves AI"
+        assert data["results"][0]["score"] == 0.95
+        assert data["results"][0]["categories"] == ["world"]
+        assert data["results"][0]["created_at"] == "2026-08-01T10:00:00Z"
         memory.recall_async.assert_awaited_once_with("what does Alice like?")
 
     def test_retain_memories_returns_result(self, client: TestClient, auth_token: str):

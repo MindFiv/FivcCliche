@@ -91,15 +91,24 @@ class UserMemoryHindsightImpl(IUserMemory):
 
     @classmethod
     def _map_item(cls, r: Any) -> MemoryContent:
-        item_type = cls._attr(r, "type")
+        item_type = cls._attr(r, "type") or cls._attr(r, "fact_type")
         content = cls._attr(r, "text") or cls._attr(r, "content") or ""
-        created_at = cls._attr(r, "timestamp")
-        if created_at is None:
-            created_at = cls._attr(r, "created_at")
+        score = cls._attr(r, "score")
+        if score is None:
+            scores = cls._attr(r, "scores")
+            if scores is not None:
+                score = cls._attr(scores, "final")
+        created_at = (
+            cls._attr(r, "mentioned_at")
+            or cls._attr(r, "occurred_start")
+            or cls._attr(r, "date")
+            or cls._attr(r, "timestamp")
+            or cls._attr(r, "created_at")
+        )
         return MemoryContent(
             id=cls._attr(r, "id"),
             content=content,
-            score=cls._attr(r, "score"),
+            score=score,
             categories=[item_type] if item_type else None,
             metadata=cls._attr(r, "metadata"),
             created_at=created_at,

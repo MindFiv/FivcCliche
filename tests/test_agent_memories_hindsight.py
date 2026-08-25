@@ -6,6 +6,7 @@ correct delegation to the SDK and correct mapping onto the implementation
 agnostic neutral models (MemoryRetainResult / MemoryRecallResult / MemoryContent).
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,18 +28,16 @@ from fivccliche.services.interfaces.agent_memories import (
 
 def _make_recall_result_item(text: str, item_type: str | None = None, score: float = 0.9):
     """Build a Hindsight-native recall-result-like object for assertions."""
-    item = MagicMock()
-    item.text = text
-    item.type = item_type
-    item.score = score
-    item.id = f"id-{text}"
-    item.metadata = {"k": "v"}
-    item.timestamp = "2026-08-01T10:00:00Z"
+    item = SimpleNamespace(
+        id=f"id-{text}",
+        text=text,
+        type=item_type,
+        metadata={"k": "v"},
+        mentioned_at="2026-08-01T10:00:00Z",
+        scores=SimpleNamespace(final=score),
+    )
 
-    resp = MagicMock()
-    resp.results = [item]
-    resp.success = True
-    return resp, item
+    return SimpleNamespace(results=[item]), item
 
 
 class TestUserMemoryHindsightImpl:
@@ -139,10 +138,10 @@ class TestUserMemoryHindsightImpl:
             {
                 "id": "m1",
                 "text": "Alice loves AI",
-                "type": "world",
-                "score": 0.8,
+                "fact_type": "world",
                 "metadata": {"k": "v"},
-                "timestamp": "2026-08-01T10:00:00Z",
+                "date": "2026-07-01T00:00:00Z",
+                "mentioned_at": "2026-08-01T10:00:00Z",
             }
         ]
         native.total = 5
@@ -167,7 +166,7 @@ class TestUserMemoryHindsightImpl:
         assert item.id == "m1"
         assert item.content == "Alice loves AI"
         assert item.categories == ["world"]
-        assert item.score == 0.8
+        assert item.score is None
         assert item.metadata == {"k": "v"}
         assert item.created_at is not None
         assert item.created_at.isoformat() == "2026-08-01T10:00:00+00:00"
@@ -175,15 +174,21 @@ class TestUserMemoryHindsightImpl:
     @pytest.mark.asyncio
     async def test_list_maps_object_items_and_content_fallback(self):
         hindsight = MagicMock()
-        item = MagicMock()
-        item.id = "m2"
-        item.text = None
-        item.content = "from content field"
-        item.type = None
-        item.score = None
-        item.metadata = None
-        item.timestamp = None
-        item.created_at = "2026-07-01T00:00:00Z"
+        item = SimpleNamespace(
+            id="m2",
+            text=None,
+            content="from content field",
+            type=None,
+            fact_type=None,
+            score=None,
+            scores=None,
+            metadata=None,
+            mentioned_at=None,
+            occurred_start=None,
+            date=None,
+            timestamp=None,
+            created_at="2026-07-01T00:00:00Z",
+        )
         native = MagicMock()
         native.items = [item]
         native.total = 1
