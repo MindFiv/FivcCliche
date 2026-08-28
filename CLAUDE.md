@@ -6,7 +6,7 @@ Layering, ownership, and HTTP CRUD: [docs/architecture.md](docs/architecture.md)
 
 ## Project Overview
 
-FivcCliche is a multi-user FastAPI backend framework for AI agents. It uses SQLModel (SQLAlchemy + Pydantic) for async database operations, `fivcglue` for dependency injection/component composition, and `fivcplayground` for AI agent capabilities. Python ≥3.10 required.
+FivcCliche is a multi-user FastAPI backend framework for AI agents. It uses SQLModel (SQLAlchemy + Pydantic) for async database operations, `fivcglue` for dependency injection/component composition, and `fivcplayground` for AI agent capabilities. Python ≥3.11 required.
 
 ## Common Commands
 
@@ -87,9 +87,9 @@ Default: embedded PostgreSQL via [pg0](https://github.com/vectorize-io/pg0) (`Pg
 
 ## Code Style
 
-- Black: line-length 100, target Python 3.10-3.12
-- Ruff: rules `E, F, W, I, N, UP, B, A, C4, PIE, PT, RUF`; ignores `E501, I001, B008`
-- MyPy: Python 3.10, `warn_return_any = true`
+- Black: line-length 100, target Python 3.11-3.12
+- Ruff: rules `E, F, W, I, N, UP, B, A, C4, PIE, PT, RUF`; ignores `E501, I001, B008, UP017`
+- MyPy: Python 3.11, `warn_return_any = true`
 - Full async/await throughout; use `AsyncSession` for all DB operations
 - Type annotations expected on function signatures
 

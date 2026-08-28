@@ -34,6 +34,7 @@ class ChatTask:
             Callable[[AgentRun], None] | Callable[[AgentRun], Awaitable[None]] | None
         ) = None,
         chat_mutex: IMutex | None = None,
+        chat_run_timeout: float | None = None,
         **kwargs,
     ):
         self._user = user
@@ -51,6 +52,7 @@ class ChatTask:
         self._chat_context = chat_context
         self._chat_finish_callback = chat_finish_callback
         self._chat_mutex = chat_mutex
+        self._chat_run_timeout = chat_run_timeout
         self._chat_queue: asyncio.Queue = asyncio.Queue()
         self._asyncio_task: asyncio.Task | None = None
 
@@ -63,8 +65,9 @@ class ChatTask:
             if task.cancelled():
                 return
             exc = task.exception()
-            if exc is not None:
-                logger.exception("ChatTask failed", exc_info=exc)
+            if exc is None or isinstance(exc, TimeoutError):
+                return
+            logger.exception("ChatTask failed", exc_info=exc)
 
         self._asyncio_task = asyncio.create_task(self._run_async())
         self._asyncio_task.add_done_callback(_log_unretrieved_exception)
@@ -92,7 +95,7 @@ class ChatTask:
 
                 try:
                     ev, ev_run = await asyncio.wait_for(self._chat_queue.get(), timeout=0.5)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     if self._asyncio_task is None or not self._asyncio_task.done():
                         logger.debug("Timeout waiting for chat event, task still running")
                     continue
@@ -147,7 +150,8 @@ class ChatTask:
                 self._chat_queue.task_done()
 
         except Exception as e:
-            data = {"event": "error", "info": {"message": str(e)}}
+            message = "Chat message processing timed out" if isinstance(e, TimeoutError) else str(e)
+            data = {"event": "error", "info": {"message": message}}
             data = json.dumps(data)
             logger.exception("Error in chat queue")
             yield f"data: {data}\n\n"
@@ -160,33 +164,22 @@ class ChatTask:
             "chat_uuid": self._chat_uuid,
         }
         try:
-            agent = await create_agent_async(
-                model_backend=self._user_config_provider.get_model_backend(),
-                model_config_repository=self._user_config_provider.get_model_repository(
-                    user_uuid=self._user.uuid
-                ),
-                agent_backend=self._user_config_provider.get_agent_backend(),
-                agent_config_repository=self._user_config_provider.get_agent_repository(
-                    user_uuid=self._user.uuid
-                ),
-                agent_config_id=self._chat_agent_id,
-            )
-            agent_tools = await create_tool_retriever_async(
-                tool_backend=self._user_config_provider.get_tool_backend(),
-                tools=self._resolved_chat_tools,
-                tool_config_repository=self._user_config_provider.get_tool_repository(
-                    user_uuid=self._user.uuid
-                ),
-                embedding_backend=self._user_config_provider.get_embedding_backend(),
-                embedding_config_repository=self._user_config_provider.get_embedding_repository(
-                    user_uuid=self._user.uuid
-                ),
-                space_id=self._user.uuid,
-            )
-            agent_skills = (
-                await create_skill_retriever_async(
+            async with asyncio.timeout(self._chat_run_timeout):
+                agent = await create_agent_async(
+                    model_backend=self._user_config_provider.get_model_backend(),
+                    model_config_repository=self._user_config_provider.get_model_repository(
+                        user_uuid=self._user.uuid
+                    ),
+                    agent_backend=self._user_config_provider.get_agent_backend(),
+                    agent_config_repository=self._user_config_provider.get_agent_repository(
+                        user_uuid=self._user.uuid
+                    ),
+                    agent_config_id=self._chat_agent_id,
+                )
+                agent_tools = await create_tool_retriever_async(
                     tool_backend=self._user_config_provider.get_tool_backend(),
-                    skill_config_repository=self._user_config_provider.get_skill_repository(
+                    tools=self._resolved_chat_tools,
+                    tool_config_repository=self._user_config_provider.get_tool_repository(
                         user_uuid=self._user.uuid
                     ),
                     embedding_backend=self._user_config_provider.get_embedding_backend(),
@@ -195,28 +188,43 @@ class ChatTask:
                     ),
                     space_id=self._user.uuid,
                 )
-                if self._chat_skills_enabled
-                else None
-            )
+                agent_skills = (
+                    await create_skill_retriever_async(
+                        tool_backend=self._user_config_provider.get_tool_backend(),
+                        skill_config_repository=self._user_config_provider.get_skill_repository(
+                            user_uuid=self._user.uuid
+                        ),
+                        embedding_backend=self._user_config_provider.get_embedding_backend(),
+                        embedding_config_repository=self._user_config_provider.get_embedding_repository(
+                            user_uuid=self._user.uuid
+                        ),
+                        space_id=self._user.uuid,
+                    )
+                    if self._chat_skills_enabled
+                    else None
+                )
 
-            def _event_callback(ev, run):
-                nonlocal finish_run
-                if ev == AgentRunEvent.FINISH:
-                    finish_run = run
-                self._chat_queue.put_nowait((ev, run))
+                def _event_callback(ev, run):
+                    nonlocal finish_run
+                    if ev == AgentRunEvent.FINISH:
+                        finish_run = run
+                    self._chat_queue.put_nowait((ev, run))
 
-            await agent.run_async(
-                query=self._chat_query,
-                tool_retriever=agent_tools,
-                tool_ids=self._chat_tool_ids,
-                skill_retriever=agent_skills,
-                agent_run_repository=self._user_chat_provider.get_chat_repository(
-                    user_uuid=self._user.uuid
-                ),
-                agent_run_session_id=self._chat_uuid,
-                context=context_copy,
-                event_callback=_event_callback,
-            )
+                await agent.run_async(
+                    query=self._chat_query,
+                    tool_retriever=agent_tools,
+                    tool_ids=self._chat_tool_ids,
+                    skill_retriever=agent_skills,
+                    agent_run_repository=self._user_chat_provider.get_chat_repository(
+                        user_uuid=self._user.uuid
+                    ),
+                    agent_run_session_id=self._chat_uuid,
+                    context=context_copy,
+                    event_callback=_event_callback,
+                )
+        except TimeoutError:
+            logger.warning("ChatTask timed out chat_uuid=%s", self._chat_uuid)
+            raise
         finally:
             await self._finish_async(finish_run)
 

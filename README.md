@@ -5,7 +5,7 @@ A **production-ready, multi-user backend framework** designed specifically for *
 ## ✨ Features
 
 - **AI Agent Backend** - Purpose-built for multi-user AI agent interactions and orchestration
-- **FastAPI** - Modern, fast web framework for building high-performance APIs with Python 3.10+
+- **FastAPI** - Modern, fast web framework for building high-performance APIs with Python 3.11+
 - **SQLModel** - SQL ORM combining SQLAlchemy and Pydantic for type-safe database operations
 - **Async/Await** - Full async support for handling concurrent AI agent requests at scale
 - **Type Safety** - Built-in type hints with Pydantic 2.0 validation for reliable data handling
@@ -18,7 +18,7 @@ A **production-ready, multi-user backend framework** designed specifically for *
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.10 or higher
+- Python 3.11 or higher
 - `uv` package manager ([install](https://docs.astral.sh/uv/))
 
 ### Installation

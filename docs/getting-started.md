@@ -4,7 +4,7 @@ Run the real FivcCliche app. Do not add a `main.py`, `models.py`, or `database.p
 
 ## Prerequisites
 
-- Python 3.10 or higher
+- Python 3.11 or higher
 - [`uv`](https://docs.astral.sh/uv/)
 
 ## Install

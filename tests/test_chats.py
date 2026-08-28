@@ -54,7 +54,7 @@ class TestChatTaskGetStream:
 
         async def mock_wait_for(coro, timeout):
             if chat_task._asyncio_task.done.return_value:
-                raise asyncio.TimeoutError()
+                raise TimeoutError()
             chat_task._asyncio_task.done.return_value = True
             return (AgentRunEvent.START, mock_run)
 
@@ -87,7 +87,7 @@ class TestChatTaskGetStream:
 
         async def mock_wait_for(coro, timeout):
             if chat_task._asyncio_task.done.return_value:
-                raise asyncio.TimeoutError()
+                raise TimeoutError()
             chat_task._asyncio_task.done.return_value = True
             return (AgentRunEvent.FINISH, mock_run)
 
@@ -123,7 +123,7 @@ class TestChatTaskGetStream:
 
         async def mock_wait_for(coro, timeout):
             if chat_task._asyncio_task.done.return_value:
-                raise asyncio.TimeoutError()
+                raise TimeoutError()
             chat_task._asyncio_task.done.return_value = True
             return (AgentRunEvent.STREAM, mock_run)
 
@@ -157,7 +157,7 @@ class TestChatTaskGetStream:
 
         async def mock_wait_for(coro, timeout):
             if chat_task._asyncio_task.done.return_value:
-                raise asyncio.TimeoutError()
+                raise TimeoutError()
             chat_task._asyncio_task.done.return_value = True
             return (AgentRunEvent.STREAM, mock_run)
 
@@ -189,7 +189,7 @@ class TestChatTaskGetStream:
 
         async def mock_wait_for(coro, timeout):
             if chat_task._asyncio_task.done.return_value:
-                raise asyncio.TimeoutError()
+                raise TimeoutError()
             chat_task._asyncio_task.done.return_value = True
             return (AgentRunEvent.TOOL, mock_run)
 
@@ -234,9 +234,9 @@ class TestChatTaskGetStream:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise asyncio.TimeoutError()
+                raise TimeoutError()
             chat_task._asyncio_task.done.return_value = True
-            raise asyncio.TimeoutError()
+            raise TimeoutError()
 
         chat_task._chat_queue.empty.return_value = True
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
@@ -275,7 +275,7 @@ class TestChatTaskGetStream:
             nonlocal event_index
             if event_index >= len(events):
                 chat_task._asyncio_task.done.return_value = True
-                raise asyncio.TimeoutError()
+                raise TimeoutError()
             event = events[event_index]
             event_index += 1
             return event
@@ -882,3 +882,114 @@ class TestChatTask:
 
         await chat_task.join_async()
         mutex.release_async.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
+    async def test_mutex_released_when_run_times_out(
+        self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
+    ):
+        """Run timeout cancels the agent and still releases the mutex."""
+        mutex = Mock()
+        mutex.release_async = AsyncMock()
+        finished = False
+
+        async def run_async(**kwargs):
+            nonlocal finished
+            await asyncio.sleep(1)
+            finished = True
+
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock(side_effect=run_async)
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_create_skill_retriever.return_value = AsyncMock()
+
+        started = asyncio.get_running_loop().time()
+        chat_task, _ = self._start_chat_task(
+            self._make_mock_user(),
+            self._make_mock_config_provider(),
+            self._make_mock_chat_provider(),
+            chat_uuid="chat-mutex-timeout",
+            chat_query="hello",
+            chat_skills_enabled=False,
+            chat_mutex=mutex,
+            chat_run_timeout=0.05,
+        )
+
+        await chat_task.join_async()
+        elapsed = asyncio.get_running_loop().time() - started
+
+        mutex.release_async.assert_awaited_once()
+        assert finished is False
+        assert elapsed < 0.5
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
+    async def test_stream_emits_error_on_run_timeout(
+        self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
+    ):
+        """Connected SSE clients receive an error event when the run times out."""
+
+        async def run_async(**kwargs):
+            await asyncio.sleep(1)
+
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock(side_effect=run_async)
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_create_skill_retriever.return_value = AsyncMock()
+
+        _, stream = self._start_chat_task(
+            self._make_mock_user(),
+            self._make_mock_config_provider(),
+            self._make_mock_chat_provider(),
+            chat_uuid="chat-stream-timeout",
+            chat_query="hello",
+            chat_skills_enabled=False,
+            chat_run_timeout=0.05,
+        )
+
+        chunks = [chunk async for chunk in stream]
+        payload = json.loads(chunks[-1].removeprefix("data: ").strip())
+        assert payload["event"] == "error"
+        assert "timed out" in payload["info"]["message"].lower()
+
+    @pytest.mark.asyncio
+    @patch("fivccliche.utils.chats.create_skill_retriever_async")
+    @patch("fivccliche.utils.chats.create_tool_retriever_async")
+    @patch("fivccliche.utils.chats.create_agent_async")
+    async def test_mutex_released_after_normal_completion_within_timeout(
+        self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
+    ):
+        """A generous run timeout does not fire when the agent finishes promptly."""
+        mutex = Mock()
+        mutex.release_async = AsyncMock()
+
+        async def run_async(**kwargs):
+            kwargs["event_callback"](AgentRunEvent.FINISH, self._finish_run_mock())
+
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock(side_effect=run_async)
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_create_skill_retriever.return_value = AsyncMock()
+
+        chat_task, result = self._start_chat_task(
+            self._make_mock_user(),
+            self._make_mock_config_provider(),
+            self._make_mock_chat_provider(),
+            chat_uuid="chat-mutex-timeout-ok",
+            chat_query="hello",
+            chat_skills_enabled=False,
+            chat_mutex=mutex,
+            chat_run_timeout=1.0,
+        )
+
+        chunks = [chunk async for chunk in result]
+        await chat_task.join_async()
+        mutex.release_async.assert_awaited_once()
+        assert any('"event": "finish"' in chunk for chunk in chunks)

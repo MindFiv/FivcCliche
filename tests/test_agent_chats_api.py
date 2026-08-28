@@ -1294,7 +1294,10 @@ class TestCreateChatMessages:
     @pytest.mark.asyncio
     async def test_create_message_passes_acquired_mutex_to_chat_task(self):
         """Router acquires the lock and hands the mutex to ChatTask."""
-        from fivccliche.modules.agent_chats.routers import create_chat_messages_async
+        from fivccliche.modules.agent_chats.routers import (
+            CHAT_MESSAGE_RUN_TIMEOUT,
+            create_chat_messages_async,
+        )
         from fivccliche.modules.agent_chats.schemas import UserChatMessageCreateSchema
 
         async def mock_generator():
@@ -1337,6 +1340,7 @@ class TestCreateChatMessages:
         mock_chat_task_cls.assert_called_once()
         _, kwargs = mock_chat_task_cls.call_args
         assert kwargs["chat_mutex"] is mock_mutex
+        assert kwargs["chat_run_timeout"] == CHAT_MESSAGE_RUN_TIMEOUT.total_seconds()
         # Release is owned by ChatTask, not the router.
         mock_mutex.release_async.assert_not_awaited()
         mock_session.close.assert_awaited_once()

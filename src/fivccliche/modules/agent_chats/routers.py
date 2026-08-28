@@ -167,6 +167,7 @@ async def delete_chat_async(
 
 router_messages = APIRouter(tags=["chat_messages"], prefix="/chats")
 CHAT_MESSAGE_LOCK_EXPIRE = timedelta(minutes=15)
+CHAT_MESSAGE_RUN_TIMEOUT = timedelta(minutes=5)
 
 
 @router_messages.post(
@@ -221,6 +222,7 @@ async def create_chat_messages_async(
             chat_context=chat.context,
             chat_skills_enabled=True,
             chat_mutex=chat_mutex,
+            chat_run_timeout=CHAT_MESSAGE_RUN_TIMEOUT.total_seconds(),
         )
         chat_task.start()
         background_tasks.add_task(chat_task.join_async)
