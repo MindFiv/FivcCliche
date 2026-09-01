@@ -768,7 +768,7 @@ class TestMemorizeJob:
         assert job.name == MEMORIZE_JOB_ID
         assert job.interval_minutes == 5
         assert job.batch_size == 50
-        assert job.min_age_hours == 24
+        assert job.min_age_minutes == 5
         assert job.config["trigger"] == "interval"
         assert job.config["minutes"] == 5
         assert job.config["max_instances"] == 1
@@ -779,7 +779,7 @@ class TestMemorizeJob:
             "INTERVAL_MINUTES": "15",
             "BATCH_SIZE": "0",
             "MAX_BATCHES_PER_RUN": "bad",
-            "MIN_AGE_HOURS": "48",
+            "MIN_AGE_MINUTES": "10",
         }.get(key)
         config = MagicMock()
         config.get_session.return_value = session
@@ -792,7 +792,7 @@ class TestMemorizeJob:
         assert job.interval_minutes == 15
         assert job.batch_size == 50  # invalid 0 → default
         assert job.max_batches_per_run == 20  # invalid → default
-        assert job.min_age_hours == 48
+        assert job.min_age_minutes == 10
         assert job.config["minutes"] == 15
 
 

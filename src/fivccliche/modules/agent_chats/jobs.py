@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_INTERVAL_MINUTES = 5
 _DEFAULT_BATCH_SIZE = 50
 _DEFAULT_MAX_BATCHES_PER_RUN = 20
-_DEFAULT_MIN_AGE_HOURS = 24
+_DEFAULT_MIN_AGE_MINUTES = 5
 _MUTEX_EXPIRE = timedelta(minutes=30)
 MEMORIZE_JOB_ID = "agent-chats-memorize"
 _MEMORIZE_MODEL_ID = "memorize"
@@ -89,9 +89,9 @@ def _get_memorize_settings(component_site: IComponentSite) -> dict[str, int]:
         session.get_value("MAX_BATCHES_PER_RUN") if session else None,
         _DEFAULT_MAX_BATCHES_PER_RUN,
     )
-    min_age_hours = to_int(
-        session.get_value("MIN_AGE_HOURS") if session else None,
-        _DEFAULT_MIN_AGE_HOURS,
+    min_age_minutes = to_int(
+        session.get_value("MIN_AGE_MINUTES") if session else None,
+        _DEFAULT_MIN_AGE_MINUTES,
     )
     return {
         "interval_minutes": (
@@ -101,7 +101,7 @@ def _get_memorize_settings(component_site: IComponentSite) -> dict[str, int]:
         "max_batches_per_run": (
             max_batches_per_run if max_batches_per_run > 0 else _DEFAULT_MAX_BATCHES_PER_RUN
         ),
-        "min_age_hours": min_age_hours if min_age_hours > 0 else _DEFAULT_MIN_AGE_HOURS,
+        "min_age_minutes": min_age_minutes if min_age_minutes > 0 else _DEFAULT_MIN_AGE_MINUTES,
     }
 
 
@@ -237,7 +237,7 @@ class ChatMemorizeJob(IModuleJob):
         self.interval_minutes = settings["interval_minutes"]
         self.batch_size = settings["batch_size"]
         self.max_batches_per_run = settings["max_batches_per_run"]
-        self.min_age_hours = settings["min_age_hours"]
+        self.min_age_minutes = settings["min_age_minutes"]
         self._config = {
             "trigger": "interval",
             "minutes": self.interval_minutes,
@@ -271,7 +271,7 @@ class ChatMemorizeJob(IModuleJob):
             logger.debug("Mutex site not available; skip memorize job")
             return
 
-        created_at_to = datetime.now(timezone.utc) - timedelta(hours=self.min_age_hours)
+        created_at_to = datetime.now(timezone.utc) - timedelta(minutes=self.min_age_minutes)
 
         for _ in range(self.max_batches_per_run):
             async with get_db_session_context_async() as session:

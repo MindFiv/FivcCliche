@@ -99,7 +99,7 @@ not import Hindsight.
     "INTERVAL_MINUTES": "5",
     "BATCH_SIZE": "50",
     "MAX_BATCHES_PER_RUN": "20",
-    "MIN_AGE_HOURS": "24"
+    "MIN_AGE_MINUTES": "5"
   }
 }
 ```
@@ -109,7 +109,7 @@ not import Hindsight.
 | `INTERVAL_MINUTES` | `5` | Scheduler interval |
 | `BATCH_SIZE` | `50` | Max chats per drain batch |
 | `MAX_BATCHES_PER_RUN` | `20` | Max batches while holding the job tick |
-| `MIN_AGE_HOURS` | `24` | Only messages older than this are memorized |
+| `MIN_AGE_MINUTES` | `5` | Only messages older than this are memorized |
 
 Missing / invalid values fall back to the defaults above.
 
@@ -175,7 +175,7 @@ Per tick:
 
 1. Skip if memory provider or mutex site is missing.
 2. Load chats that have completed, unmemorized messages with
-   `created_at <= now - MIN_AGE_HOURS` (and non-null `user_uuid`).
+   `created_at <= now - MIN_AGE_MINUTES` (and non-null `user_uuid`).
 3. Process up to `BATCH_SIZE` chats **sequentially** in this process, then
    drain further batches until empty or `MAX_BATCHES_PER_RUN`. Cross-node
    parallelism comes from multiple service replicas + per-chat Redis mutex.
