@@ -1654,7 +1654,7 @@ class TestChatContextFlow:
     def test_chat_provider_get_chat_context_can_be_called(
         self, client: TestClient, auth_token: str
     ):
-        """Test that get_chat_context can be called on the provider."""
+        """Test that get_chat_context returns a dict with user_uuid."""
         from fivccliche.modules.agent_chats.services import UserChatProviderImpl
         from fivccliche.modules.users.utils import get_user_async
 
@@ -1666,13 +1666,11 @@ class TestChatContextFlow:
             component_site = Mock()
             provider = UserChatProviderImpl(component_site)
 
-            # Call get_chat_context - should return None (stub implementation)
             context = provider.get_chat_context(
                 user_uuid=str(admin_user.uuid),
-                session=session,
-                custom_kwarg="test_value",
             )
-            assert context is None
+            assert isinstance(context, dict)
+            assert context["user_uuid"] == str(admin_user.uuid)
 
         loop.run_until_complete(test_provider())
 

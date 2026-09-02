@@ -144,9 +144,9 @@ otherwise the memorize job skips entirely.
 
 ## Agent memory tools
 
-Callable classes in `src/fivccliche/modules/agent_memories/tools.py`. They are
-not mounted on `IUserChatContext` yet. To attach them later, create a tool
-config with `transport=function` and `functions` pointing at the dotted paths:
+Callable classes in `src/fivccliche/modules/agent_memories/tools.py`. Attach
+them with a tool config (`transport=function`) whose `functions` point at
+the dotted paths. They are not exposed through chat context.
 
 - `fivccliche.modules.agent_memories.tools.MemoryRetain`
 - `fivccliche.modules.agent_memories.tools.MemoryRecall`

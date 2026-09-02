@@ -4,7 +4,6 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import pytest
-from fivcplayground.tools import Tool
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -12,7 +11,6 @@ from sqlmodel import col, select
 from fivccliche.modules.agent_chats import utils as methods
 from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage
 from fivccliche.modules.agent_chats.filters import ChatFilterSet
-from fivccliche.services.interfaces.agent_chats import IUserChatContext
 
 if TYPE_CHECKING:
     from fivccliche.modules.agent_chats.services import UserChatRepositoryImpl
@@ -1477,118 +1475,173 @@ class TestCascadeDelete:
 
 
 # ============================================================================
-# Mock Implementation for IUserChatContext
-# ============================================================================
-
-
-class MockUserChatContext(IUserChatContext):
-    """Mock chat context for testing."""
-
-    def __init__(self, tools: list[Tool] | None = None):
-        self.tools = tools or []
-        self.get_tools_called = False
-        self.get_tools_kwargs = {}
-
-    async def get_tools_async(self, **kwargs) -> list[Tool]:
-        """Return mock tools."""
-        self.get_tools_called = True
-        self.get_tools_kwargs = kwargs
-        return self.tools
-
-    async def get_is_skills_enabled_async(self, **kwargs) -> bool:
-        """Return False by default."""
-        return False
-
-
-# ============================================================================
-# UserChatContextProvider Tests
+# get_chat_context Tests
 # ============================================================================
 
 
 class TestUserChatContextProvider:
-    """Stub: get_chat_context is a seam for future chat tools and currently returns None."""
+    """get_chat_context returns a dict with user_uuid, timezone, and lazy time."""
 
-    async def test_get_chat_context_is_stub(self, session: AsyncSession, test_user):
+    async def test_get_chat_context_returns_dict(self, test_user):
         from unittest.mock import Mock
 
         from fivccliche.modules.agent_chats.services import UserChatProviderImpl
 
         provider = UserChatProviderImpl(Mock())
-        assert (
-            provider.get_chat_context(
-                user_uuid=test_user.uuid,
-                session=session,
-                custom_key="ignored",
-            )
-            is None
+        context = provider.get_chat_context(
+            user_uuid=test_user.uuid,
+            context={"name": "alpha"},
         )
+        assert isinstance(context, dict)
+        assert context["name"] == "alpha"
+        assert context["user_uuid"] == test_user.uuid
+        assert "name" in context
+        assert "user_uuid" in context
+        assert context["timezone"] == "Asia/Shanghai"
+        assert "time" in context
+        parsed = datetime.fromisoformat(str(context["time"]))
+        assert parsed.utcoffset() == timedelta(hours=8)
 
-
-# ============================================================================
-# UserChatContextInterface Tests
-# ============================================================================
-
-
-class TestUserChatContextInterface:
-    """Test cases for IUserChatContext interface using mock implementation."""
-
-    async def test_mock_chat_context_get_tools_async(self):
-        """Test that MockUserChatContext implements get_tools_async."""
-        mock_context = MockUserChatContext()
-        tools = await mock_context.get_tools_async()
-        assert isinstance(tools, list)
-        assert tools == []
-        assert mock_context.get_tools_called is True
-
-    async def test_chat_context_returns_empty_tools(self):
-        """Test that chat context can return empty tool list."""
-        mock_context = MockUserChatContext(tools=[])
-        tools = await mock_context.get_tools_async()
-        assert isinstance(tools, list)
-        assert len(tools) == 0
-
-    async def test_chat_context_returns_tool_list(self):
-        """Test that chat context can return a list of Tool objects."""
+    async def test_get_chat_context_merges_kwargs(self, test_user):
         from unittest.mock import Mock
 
-        mock_tool_1 = Mock(spec=Tool)
-        mock_tool_2 = Mock(spec=Tool)
-        mock_tools = [mock_tool_1, mock_tool_2]
+        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
 
-        mock_context = MockUserChatContext(tools=mock_tools)
-        tools = await mock_context.get_tools_async()
+        provider = UserChatProviderImpl(Mock())
+        context = provider.get_chat_context(
+            user_uuid=test_user.uuid,
+            context={"name": "alpha"},
+            chat_uuid="chat-1",
+        )
+        assert context["name"] == "alpha"
+        assert context["user_uuid"] == test_user.uuid
+        assert context["chat_uuid"] == "chat-1"
 
-        assert isinstance(tools, list)
-        assert len(tools) == 2
-        assert isinstance(tools[0], Tool)
-        assert isinstance(tools[1], Tool)
+    def test_kwargs_timezone_is_kept(self):
+        from unittest.mock import Mock
 
-    async def test_chat_context_get_tools_async_called(self):
-        """Test that get_tools_async is actually called and awaitable."""
-        mock_context = MockUserChatContext()
-        assert mock_context.get_tools_called is False
+        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
 
-        # Call the async method
-        await mock_context.get_tools_async()
+        context = UserChatProviderImpl(Mock()).get_chat_context(
+            user_uuid="user-1",
+            timezone="UTC",
+        )
+        assert context["timezone"] == "UTC"
+        parsed = datetime.fromisoformat(str(context["time"]))
+        assert parsed.utcoffset() == timedelta(0)
 
-        assert mock_context.get_tools_called is True
+    def test_kwargs_time_is_overwritten(self):
+        from unittest.mock import Mock
 
-    async def test_chat_context_get_tools_async_with_kwargs(self):
-        """Test that get_tools_async can receive kwargs."""
-        mock_context = MockUserChatContext()
+        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
 
-        await mock_context.get_tools_async(key1="value1", key2=123)
+        context = UserChatProviderImpl(Mock()).get_chat_context(
+            user_uuid="user-1",
+            time="frozen",
+        )
+        parsed = datetime.fromisoformat(str(context["time"]))
+        assert parsed.tzinfo is not None
+        assert str(context["time"]) != "frozen"
 
-        assert mock_context.get_tools_called is True
-        assert mock_context.get_tools_kwargs == {"key1": "value1", "key2": 123}
+    async def test_get_chat_context_overrides_caller_user_uuid(self, test_user):
+        from unittest.mock import Mock
 
-    async def test_chat_context_interface_compliance(self):
-        """Test that MockUserChatContext complies with IUserChatContext interface."""
-        mock_context = MockUserChatContext()
+        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
 
-        # Check that it has the required method
-        assert hasattr(mock_context, "get_tools_async")
-        assert callable(mock_context.get_tools_async)
+        provider = UserChatProviderImpl(Mock())
+        context = provider.get_chat_context(
+            user_uuid=test_user.uuid,
+            context={"user_uuid": "caller-supplied"},
+        )
+        assert context["user_uuid"] == test_user.uuid
 
-        # Check that it's an instance of IUserChatContext
-        assert isinstance(mock_context, IUserChatContext)
+    def test_getitem_returns_value(self):
+        from unittest.mock import Mock
+
+        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
+
+        context = UserChatProviderImpl(Mock()).get_chat_context(
+            user_uuid="user-1",
+            context={"name": "alpha", "count": 3},
+        )
+        assert context["name"] == "alpha"
+        assert context["count"] == 3
+
+    def test_getitem_missing_key_raises_key_error(self):
+        from unittest.mock import Mock
+
+        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
+
+        context = UserChatProviderImpl(Mock()).get_chat_context(
+            user_uuid="user-1",
+            context={"name": "alpha"},
+        )
+        with pytest.raises(KeyError):
+            context["missing"]
+
+    def test_contains_checks_key(self):
+        from unittest.mock import Mock
+
+        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
+
+        context = UserChatProviderImpl(Mock()).get_chat_context(
+            user_uuid="user-1",
+            context={"name": "alpha"},
+        )
+        assert "name" in context
+        assert "time" in context
+        assert "missing" not in context
+
+    def test_default_timezone_shanghai_time_has_plus_08_offset(self):
+        from unittest.mock import Mock
+
+        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
+
+        context = UserChatProviderImpl(Mock()).get_chat_context(
+            user_uuid="user-1",
+            context={"name": "alpha"},
+        )
+        assert context["timezone"] == "Asia/Shanghai"
+        parsed = datetime.fromisoformat(str(context["time"]))
+        assert parsed.tzinfo is not None
+        assert parsed.utcoffset() == timedelta(hours=8)
+
+    def test_utc_timezone_time_has_plus_00_offset(self):
+        from unittest.mock import Mock
+
+        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
+
+        context = UserChatProviderImpl(Mock()).get_chat_context(
+            user_uuid="user-1",
+            context={"timezone": "UTC"},
+        )
+        parsed = datetime.fromisoformat(str(context["time"]))
+        assert parsed.utcoffset() == timedelta(0)
+
+    def test_time_is_computed_on_each_str(self):
+        from unittest.mock import Mock, patch
+        from zoneinfo import ZoneInfo
+
+        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
+
+        tz = ZoneInfo("Asia/Shanghai")
+        first = datetime(2026, 9, 2, 15, 30, 0, tzinfo=tz)
+        second = datetime(2026, 9, 2, 15, 31, 0, tzinfo=tz)
+        context = UserChatProviderImpl(Mock()).get_chat_context(user_uuid="user-1")
+        with patch("fivccliche.modules.agent_chats.services.datetime") as mock_datetime:
+            mock_datetime.now.side_effect = [first, second]
+            assert str(context["time"]) == first.isoformat()
+            assert str(context["time"]) == second.isoformat()
+
+    def test_stored_time_key_is_ignored(self):
+        from unittest.mock import Mock
+
+        from fivccliche.modules.agent_chats.services import UserChatProviderImpl
+
+        context = UserChatProviderImpl(Mock()).get_chat_context(
+            user_uuid="user-1",
+            context={"time": "frozen"},
+        )
+        parsed = datetime.fromisoformat(str(context["time"]))
+        assert parsed.tzinfo is not None
+        assert str(context["time"]) != "frozen"

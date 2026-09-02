@@ -1,12 +1,13 @@
 import asyncio
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
 from fivcglue import IComponentSite
 from fivcplayground.agents import AgentRun, AgentRunSession
 
 from fivccliche.services.interfaces.agent_chats import (
-    IUserChatContext,
     IUserChatProvider,
     UserChatRepository,
 )
@@ -201,6 +202,17 @@ class UserChatRepositoryImpl(UserChatRepository):
                 await db_session.commit()
 
 
+class LazyChatTime:
+    """ISO time computed from context timezone when stringified."""
+
+    def __init__(self, context: dict):
+        self._context = context
+
+    def __str__(self) -> str:
+        tz = ZoneInfo(str(self._context["timezone"]))
+        return datetime.now(tz).isoformat()
+
+
 class UserChatProviderImpl(IUserChatProvider):
     """Chat provider implementation."""
 
@@ -221,9 +233,14 @@ class UserChatProviderImpl(IUserChatProvider):
         user_uuid: str,
         context: dict | None = None,
         **kwargs,
-    ) -> IUserChatContext | None:
-        """Get the chat context for providing chat-specific tools."""
-        return None
+    ) -> dict:
+        """Return a copy of context with user_uuid and kwargs merged in."""
+        user_context = {**context} if context else {}
+        user_context.update(user_uuid=user_uuid)
+        user_context.update(kwargs)
+        user_context.setdefault("timezone", "Asia/Shanghai")
+        user_context["time"] = LazyChatTime(user_context)
+        return user_context
 
 
 class ModuleImpl(IModule):

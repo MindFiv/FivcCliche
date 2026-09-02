@@ -62,7 +62,7 @@ Chat list uses [`ChatFilterSet`](../src/fivccliche/modules/agent_chats/filters.p
 Question list uses [`QuestionFilterSet`](../src/fivccliche/modules/agent_configs/filters.py): `QuestionFilterSet(user_uuid, is_superuser=...)` → `parse(is_active=...)` → passed into `list_user_scoped_async` / `count_user_scoped_async` as `filters`.
 
 - `?agent_id=` exact match on the chat agent
-- `?context.<key>=<value>` exact match on a top-level JSON key of `context` (one level only)
+- `?context.<key>=<value>` exact match on a top-level JSON key of `context` (one level only). `UserChat.context` stays a persisted dict. `UserChatProviderImpl.get_chat_context` returns a copy of that JSON plus `user_uuid`, merged `**kwargs` (for example `chat_uuid`), default `timezone` (`Asia/Shanghai`), and a lazy `time` whose `__str__` computes a timezone-aware ISO string and is not persisted. `ChatTask` calls `get_chat_context` and passes the result to the agent run.
 - Repeated paths use the last value
 - Nested keys such as `context.profile.uuid` return 422; bare `context=` is invalid if passed into `parse`
 - Question list: `?is_active=` exact match when provided

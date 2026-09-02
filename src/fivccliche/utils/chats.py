@@ -158,11 +158,11 @@ class ChatTask:
 
     async def _run_async(self) -> None:
         finish_run = None
-        context_copy = {
-            **(self._chat_context or {}),
-            "user_uuid": self._user.uuid,
-            "chat_uuid": self._chat_uuid,
-        }
+        context_copy = self._user_chat_provider.get_chat_context(
+            user_uuid=self._user.uuid,
+            context=self._chat_context,
+            chat_uuid=self._chat_uuid,
+        )
         try:
             async with asyncio.timeout(self._chat_run_timeout):
                 agent = await create_agent_async(

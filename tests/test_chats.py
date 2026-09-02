@@ -333,7 +333,11 @@ class TestChatTask:
     def _make_mock_chat_provider(self):
         provider = Mock()
         provider.get_chat_repository.return_value = Mock()
-        provider.get_chat_context.return_value = None
+
+        def _get_chat_context(user_uuid, context=None, **kwargs):
+            return {**(context or {}), "user_uuid": user_uuid, **kwargs}
+
+        provider.get_chat_context.side_effect = _get_chat_context
         return provider
 
     @staticmethod
@@ -391,7 +395,11 @@ class TestChatTask:
         await chat_task.join_async()
 
         mock_create_skill_retriever.assert_not_called()
-        chat_provider.get_chat_context.assert_not_called()
+        chat_provider.get_chat_context.assert_called_once_with(
+            user_uuid=user.uuid,
+            context=None,
+            chat_uuid="chat-uuid-1",
+        )
         _, kwargs = mock_agent.run_async.call_args
         assert kwargs["skill_retriever"] is None
         assert hasattr(result, "__aiter__")
@@ -426,7 +434,11 @@ class TestChatTask:
         await chat_task.join_async()
 
         mock_create_skill_retriever.assert_called_once()
-        chat_provider.get_chat_context.assert_not_called()
+        chat_provider.get_chat_context.assert_called_once_with(
+            user_uuid=user.uuid,
+            context=None,
+            chat_uuid="chat-uuid-2",
+        )
         _, kwargs = mock_agent.run_async.call_args
         assert kwargs["skill_retriever"] is mock_skill_retriever
         assert hasattr(result, "__aiter__")
@@ -435,10 +447,10 @@ class TestChatTask:
     @patch("fivccliche.utils.chats.create_skill_retriever_async")
     @patch("fivccliche.utils.chats.create_tool_retriever_async")
     @patch("fivccliche.utils.chats.create_agent_async")
-    async def test_create_generator_passes_chat_context_without_provider_lookup(
+    async def test_create_generator_resolves_chat_context_via_provider(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
-        """Chat context is passed to the agent without provider context resolution."""
+        """ChatTask passes the provider context dict through to the agent run."""
         mock_agent = AsyncMock()
         mock_agent.run_async = AsyncMock()
         mock_create_agent.return_value = mock_agent
@@ -461,7 +473,11 @@ class TestChatTask:
         )
         await chat_task.join_async()
 
-        chat_provider.get_chat_context.assert_not_called()
+        chat_provider.get_chat_context.assert_called_once_with(
+            user_uuid=user.uuid,
+            context=context,
+            chat_uuid="chat-uuid-context",
+        )
         _, tool_kwargs = mock_create_tool_retriever.call_args
         assert tool_kwargs["tools"] is None
         _, run_kwargs = mock_agent.run_async.call_args
@@ -495,12 +511,6 @@ class TestChatTask:
         chat_provider = self._make_mock_chat_provider()
         external_primary = self._make_mock_tool("shared-tool")
         external_secondary = self._make_mock_tool("external-only")
-        chat_context = Mock()
-        chat_context.get_tools_async = AsyncMock(
-            return_value=[self._make_mock_tool("context-only")]
-        )
-        chat_context.get_is_skills_enabled_async = AsyncMock(return_value=False)
-        chat_provider.get_chat_context.return_value = chat_context
 
         chat_task, _ = self._start_chat_task(
             user,
@@ -513,9 +523,11 @@ class TestChatTask:
         )
         await chat_task.join_async()
 
-        chat_provider.get_chat_context.assert_not_called()
-        chat_context.get_tools_async.assert_not_awaited()
-        chat_context.get_is_skills_enabled_async.assert_not_awaited()
+        chat_provider.get_chat_context.assert_called_once_with(
+            user_uuid=user.uuid,
+            context={"scope": "tools"},
+            chat_uuid="chat-uuid-tools",
+        )
         _, tool_kwargs = mock_create_tool_retriever.call_args
         resolved_tools_by_name = {tool.name: tool for tool in tool_kwargs["tools"]}
         assert resolved_tools_by_name == {
@@ -544,10 +556,6 @@ class TestChatTask:
         user = self._make_mock_user()
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
-        chat_context = Mock()
-        chat_context.get_tools_async = AsyncMock(return_value=[])
-        chat_context.get_is_skills_enabled_async = AsyncMock(return_value=False)
-        chat_provider.get_chat_context.return_value = chat_context
 
         chat_task, _ = self._start_chat_task(
             user,
@@ -560,9 +568,11 @@ class TestChatTask:
         )
         await chat_task.join_async()
 
-        chat_provider.get_chat_context.assert_not_called()
-        chat_context.get_tools_async.assert_not_awaited()
-        chat_context.get_is_skills_enabled_async.assert_not_awaited()
+        chat_provider.get_chat_context.assert_called_once_with(
+            user_uuid=user.uuid,
+            context={"skills": "disabled"},
+            chat_uuid="chat-uuid-no-skills",
+        )
         mock_create_skill_retriever.assert_called_once()
         _, run_kwargs = mock_agent.run_async.call_args
         assert run_kwargs["skill_retriever"] is mock_skill_retriever
