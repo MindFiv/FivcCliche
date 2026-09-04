@@ -136,6 +136,35 @@ async def get_chat_async(
     return chat.to_schema()
 
 
+@router_chats.patch(
+    "/{chat_uuid}/",
+    summary="Update a chat session's description.",
+    response_model=schemas.UserChatSchema,
+)
+async def update_chat_async(
+    chat_uuid: str,
+    chat_update: schemas.UserChatUpdateSchema,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> schemas.UserChatSchema:
+    """Update a chat session description."""
+    chat = await utils.get_chat_async(
+        session,
+        chat_uuid,
+        filters=ChatEditableFilterSet(user.uuid, is_superuser=user.is_superuser),
+    )
+    if not chat:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat not found",
+        )
+    chat.description = chat_update.description
+    session.add(chat)
+    await session.commit()
+    await session.refresh(chat)
+    return chat.to_schema()
+
+
 @router_chats.delete(
     "/{chat_uuid}/",
     summary="Delete a chat session by ID for the authenticated user.",

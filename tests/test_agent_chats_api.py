@@ -554,6 +554,148 @@ class TestChatEndpointValidation:
         assert response.status_code == 404
 
 
+class TestUpdateChat:
+    """Test cases for PATCH /chats/{chat_uuid}/ description updates."""
+
+    def test_owner_can_update_description(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        created = client.post("/chats/", json={"agent_id": "test-agent"}, headers=headers)
+        assert created.status_code == 201
+        chat_uuid = created.json()["uuid"]
+
+        response = client.patch(
+            f"/chats/{chat_uuid}/",
+            json={"description": "  My title  "},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["description"] == "My title"
+
+        got = client.get(f"/chats/{chat_uuid}/", headers=headers)
+        assert got.status_code == 200
+        assert got.json()["description"] == "My title"
+
+    def test_empty_description_rejected(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        created = client.post("/chats/", json={}, headers=headers)
+        chat_uuid = created.json()["uuid"]
+        response = client.patch(
+            f"/chats/{chat_uuid}/",
+            json={"description": ""},
+            headers=headers,
+        )
+        assert response.status_code == 422
+
+    def test_whitespace_description_rejected(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        created = client.post("/chats/", json={}, headers=headers)
+        chat_uuid = created.json()["uuid"]
+        response = client.patch(
+            f"/chats/{chat_uuid}/",
+            json={"description": "   "},
+            headers=headers,
+        )
+        assert response.status_code == 422
+
+    def test_missing_description_rejected(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        created = client.post("/chats/", json={}, headers=headers)
+        chat_uuid = created.json()["uuid"]
+        response = client.patch(f"/chats/{chat_uuid}/", json={}, headers=headers)
+        assert response.status_code == 422
+
+    def test_update_chat_not_found(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.patch(
+            "/chats/nonexistent/",
+            json={"description": "Title"},
+            headers=headers,
+        )
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_update_chat_unauthorized(self, client: TestClient):
+        response = client.patch("/chats/somechat/", json={"description": "Title"})
+        assert response.status_code == 401
+
+    def test_cannot_update_other_user_chat(
+        self, client: TestClient, auth_token: str, regular_user_token: str
+    ):
+        from fivccliche.modules.agent_chats import utils as chat_methods
+        from fivccliche.modules.users.utils import get_user_async
+
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            test_user = await get_user_async(session, username="testuser")
+            chat = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=str(test_user.uuid),
+                agent_id="test-agent",
+            )
+            await session.commit()
+            return str(chat.uuid)
+
+        chat_uuid = loop.run_until_complete(setup())
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.patch(
+            f"/chats/{chat_uuid}/",
+            json={"description": "Hijacked"},
+            headers=headers,
+        )
+        assert response.status_code == 404
+
+    def test_regular_user_cannot_update_global_chat(
+        self, client: TestClient, regular_user_token: str
+    ):
+        from fivccliche.modules.agent_chats import utils as chat_methods
+
+        loop = client.loop
+
+        async def setup():
+            chat = await chat_methods.create_chat_async(
+                session=client.async_session,
+                user_uuid=None,
+                agent_id="test-agent",
+            )
+            await client.async_session.commit()
+            return str(chat.uuid)
+
+        chat_uuid = loop.run_until_complete(setup())
+        headers = {"Authorization": f"Bearer {regular_user_token}"}
+        response = client.patch(
+            f"/chats/{chat_uuid}/",
+            json={"description": "Nope"},
+            headers=headers,
+        )
+        assert response.status_code == 404
+
+    def test_superuser_can_update_global_chat(self, client: TestClient, auth_token: str):
+        from fivccliche.modules.agent_chats import utils as chat_methods
+
+        loop = client.loop
+
+        async def setup():
+            chat = await chat_methods.create_chat_async(
+                session=client.async_session,
+                user_uuid=None,
+                agent_id="test-agent",
+            )
+            await client.async_session.commit()
+            return str(chat.uuid)
+
+        chat_uuid = loop.run_until_complete(setup())
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.patch(
+            f"/chats/{chat_uuid}/",
+            json={"description": "Global title"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["description"] == "Global title"
+
+
 class TestGlobalChatAuthorization:
     """Test cases for global chat authorization (superuser privileges)."""
 

@@ -6,9 +6,10 @@ __all__ = [
     "UserChatMessageCreateSchema",
     "UserChatMessageSchema",
     "UserChatSchema",
+    "UserChatUpdateSchema",
 ]
 
-from pydantic import ConfigDict, Field, BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from fivcplayground.agents.types import (
     AgentRunSession,
@@ -59,6 +60,20 @@ class UserChatCreateSchema(BaseModel):
 
     agent_id: str = Field(default="default", description="Agent ID for the chat")
     context: dict | None = Field(default=None, description="Initial chat context")
+
+
+class UserChatUpdateSchema(BaseModel):
+    """Schema for updating a chat session description."""
+
+    description: str = Field(..., min_length=1, max_length=1024, description="Chat description")
+
+    @field_validator("description")
+    @classmethod
+    def description_not_blank(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("description must not be empty")
+        return text
 
 
 class UserChatMessageCreateSchema(BaseModel):

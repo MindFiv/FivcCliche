@@ -79,3 +79,5 @@ The handler looks up the chat via Editable (404 if missing), acquires mutex `cha
 3. `BackgroundTasks` first `asyncio.gather(query_task, return_exceptions=True)` (keeps the run alive after client disconnect), then `ChatDescribeJob` when the chat still has an empty description and the query is not a slash command.
 
 `ChatQueryJob` and `ChatDescribeJob` have `config is None` and are not on `list_jobs()`.
+
+`PATCH /{chat_uuid}/` updates only a non-empty `description` (Editable lookup, 404 if not editable).
