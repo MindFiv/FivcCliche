@@ -219,7 +219,7 @@ class ChatMemorizeJob(IModuleJob):
         return _MEMORIZE_JOB_ID
 
     @property
-    def config(self) -> dict:
+    def config(self) -> dict | None:
         return self._setting.job_config()
 
     async def run_async(self) -> None:

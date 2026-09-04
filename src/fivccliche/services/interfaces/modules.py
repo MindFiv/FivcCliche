@@ -17,11 +17,11 @@ class IModuleJob(IComponent):
 
     @property
     @abstractmethod
-    def config(self) -> dict:
+    def config(self) -> dict | None:
         """Config of the job"""
 
     @abstractmethod
-    async def run_async(self):
+    async def run_async(self, *args, **kwargs):
         """Run the job"""
 
 

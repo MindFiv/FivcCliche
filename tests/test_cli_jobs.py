@@ -19,7 +19,7 @@ class _FakeJob(IModuleJob):
         return "fake-job"
 
     @property
-    def config(self) -> dict:
+    def config(self) -> dict | None:
         return {"trigger": "interval", "seconds": 3600}
 
     async def run_async(self) -> None:

@@ -33,6 +33,8 @@ def _make_lifespan(scheduler: AsyncIOScheduler):
 
 def _register_module_job(scheduler: AsyncIOScheduler, job: IModuleJob) -> None:
     """Register an IModuleJob on the shared scheduler from job.config."""
+    if job.config is None:
+        return
     cfg = dict(job.config)
     trigger = cfg.pop("trigger")
     replace_existing = cfg.pop("replace_existing", True)

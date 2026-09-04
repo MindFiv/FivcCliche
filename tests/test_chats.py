@@ -2,45 +2,64 @@
 
 import asyncio
 import json
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from fivcplayground.agents import AgentRunEvent
 
-from fivccliche.utils.chats import ChatTask
+from fivccliche.modules.agent_chats.jobs import ChatQueryJob
+from fivccliche.utils.stream import ChatStream
+
+_QUERY = "fivccliche.modules.agent_chats.jobs.query"
 
 
-class TestChatTaskGetStream:
-    """Test ChatTask.get_stream_async() SSE formatting."""
+@contextmanager
+def _patch_query_providers(config_provider, chat_provider):
+    with (
+        patch(
+            f"{_QUERY}.get_config_provider_async",
+            new_callable=AsyncMock,
+            return_value=config_provider,
+        ),
+        patch(
+            f"{_QUERY}.get_chat_provider_async",
+            new_callable=AsyncMock,
+            return_value=chat_provider,
+        ),
+    ):
+        yield
 
-    def _make_chat_task(self, chat_uuid: str | None = "test-chat-uuid"):
-        user = Mock()
-        user.uuid = "user-1"
-        chat_task = ChatTask(user, Mock(), Mock(), chat_uuid=chat_uuid)
-        chat_task._asyncio_task = MagicMock(spec=asyncio.Task)
-        chat_task._asyncio_task.done.return_value = False
-        chat_task._asyncio_task.result.return_value = None
-        chat_task._chat_queue = MagicMock()
-        chat_task._chat_queue.empty = Mock(return_value=False)
-        chat_task._chat_queue.task_done = Mock()
-        return chat_task
+
+class TestChatStreamGetStream:
+    """Test ChatStream() SSE formatting."""
+
+    def _make_chat_stream(self, chat_uuid: str | None = "test-chat-uuid"):
+        chat_stream = ChatStream(chat_uuid=chat_uuid)
+        chat_stream._asyncio_task = MagicMock(spec=asyncio.Task)
+        chat_stream._asyncio_task.done.return_value = False
+        chat_stream._asyncio_task.result.return_value = None
+        chat_stream._chat_queue = MagicMock()
+        chat_stream._chat_queue.empty = Mock(return_value=False)
+        chat_stream._chat_queue.task_done = Mock()
+        return chat_stream
 
     def test_get_stream_returns_async_generator(self):
-        """get_stream_async() returns an async generator."""
-        chat_task = self._make_chat_task()
-        stream = chat_task.get_stream_async()
+        """Calling ChatStream returns an async generator."""
+        chat_stream = self._make_chat_stream()
+        stream = chat_stream()
         assert hasattr(stream, "__aiter__")
 
     def test_get_stream_without_chat_uuid(self):
-        """get_stream works when chat_uuid is None."""
-        chat_task = self._make_chat_task(chat_uuid=None)
-        stream = chat_task.get_stream_async()
+        """Calling ChatStream works when chat_uuid is None."""
+        chat_stream = self._make_chat_stream(chat_uuid=None)
+        stream = chat_stream()
         assert hasattr(stream, "__aiter__")
 
     @pytest.mark.asyncio
     async def test_start_event_formatting(self):
         """Test START event is formatted correctly."""
-        chat_task = self._make_chat_task()
+        chat_stream = self._make_chat_stream()
         mock_run = Mock()
         mock_run.model_dump.return_value = {
             "id": "run-1",
@@ -53,15 +72,15 @@ class TestChatTaskGetStream:
         }
 
         async def mock_wait_for(coro, timeout):
-            if chat_task._asyncio_task.done.return_value:
+            if chat_stream._asyncio_task.done.return_value:
                 raise TimeoutError()
-            chat_task._asyncio_task.done.return_value = True
+            chat_stream._asyncio_task.done.return_value = True
             return (AgentRunEvent.START, mock_run)
 
-        chat_task._chat_queue.empty.return_value = True
+        chat_stream._chat_queue.empty.return_value = True
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in chat_task.get_stream_async():
+            async for chunk in chat_stream():
                 results.append(chunk)
 
         assert len(results) == 1
@@ -73,7 +92,7 @@ class TestChatTaskGetStream:
     @pytest.mark.asyncio
     async def test_finish_event_formatting(self):
         """Test FINISH event is formatted correctly."""
-        chat_task = self._make_chat_task()
+        chat_stream = self._make_chat_stream()
         mock_run = Mock()
         mock_run.model_dump.return_value = {
             "id": "run-1",
@@ -86,15 +105,15 @@ class TestChatTaskGetStream:
         }
 
         async def mock_wait_for(coro, timeout):
-            if chat_task._asyncio_task.done.return_value:
+            if chat_stream._asyncio_task.done.return_value:
                 raise TimeoutError()
-            chat_task._asyncio_task.done.return_value = True
+            chat_stream._asyncio_task.done.return_value = True
             return (AgentRunEvent.FINISH, mock_run)
 
-        chat_task._chat_queue.empty.return_value = True
+        chat_stream._chat_queue.empty.return_value = True
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in chat_task.get_stream_async():
+            async for chunk in chat_stream():
                 results.append(chunk)
 
         assert len(results) == 1
@@ -106,7 +125,7 @@ class TestChatTaskGetStream:
     @pytest.mark.asyncio
     async def test_stream_event_with_delta(self):
         """Test STREAM event with delta is formatted correctly."""
-        chat_task = self._make_chat_task()
+        chat_stream = self._make_chat_stream()
         mock_delta = Mock()
         mock_delta.model_dump.return_value = {"content": "partial text"}
         mock_run = Mock()
@@ -122,15 +141,15 @@ class TestChatTaskGetStream:
         mock_run.delta = mock_delta
 
         async def mock_wait_for(coro, timeout):
-            if chat_task._asyncio_task.done.return_value:
+            if chat_stream._asyncio_task.done.return_value:
                 raise TimeoutError()
-            chat_task._asyncio_task.done.return_value = True
+            chat_stream._asyncio_task.done.return_value = True
             return (AgentRunEvent.STREAM, mock_run)
 
-        chat_task._chat_queue.empty.return_value = True
+        chat_stream._chat_queue.empty.return_value = True
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in chat_task.get_stream_async():
+            async for chunk in chat_stream():
                 results.append(chunk)
 
         assert len(results) == 1
@@ -142,7 +161,7 @@ class TestChatTaskGetStream:
     @pytest.mark.asyncio
     async def test_stream_event_without_delta(self):
         """Test STREAM event without delta is formatted correctly."""
-        chat_task = self._make_chat_task()
+        chat_stream = self._make_chat_stream()
         mock_run = Mock()
         mock_run.model_dump.return_value = {
             "id": "run-1",
@@ -156,15 +175,15 @@ class TestChatTaskGetStream:
         mock_run.delta = None
 
         async def mock_wait_for(coro, timeout):
-            if chat_task._asyncio_task.done.return_value:
+            if chat_stream._asyncio_task.done.return_value:
                 raise TimeoutError()
-            chat_task._asyncio_task.done.return_value = True
+            chat_stream._asyncio_task.done.return_value = True
             return (AgentRunEvent.STREAM, mock_run)
 
-        chat_task._chat_queue.empty.return_value = True
+        chat_stream._chat_queue.empty.return_value = True
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in chat_task.get_stream_async():
+            async for chunk in chat_stream():
                 results.append(chunk)
 
         assert len(results) == 1
@@ -175,7 +194,7 @@ class TestChatTaskGetStream:
     @pytest.mark.asyncio
     async def test_tool_event_formatting(self):
         """Test TOOL event is formatted correctly."""
-        chat_task = self._make_chat_task()
+        chat_stream = self._make_chat_stream()
         mock_run = Mock()
         mock_run.model_dump.return_value = {
             "id": "run-1",
@@ -188,15 +207,15 @@ class TestChatTaskGetStream:
         }
 
         async def mock_wait_for(coro, timeout):
-            if chat_task._asyncio_task.done.return_value:
+            if chat_stream._asyncio_task.done.return_value:
                 raise TimeoutError()
-            chat_task._asyncio_task.done.return_value = True
+            chat_stream._asyncio_task.done.return_value = True
             return (AgentRunEvent.TOOL, mock_run)
 
-        chat_task._chat_queue.empty.return_value = True
+        chat_stream._chat_queue.empty.return_value = True
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in chat_task.get_stream_async():
+            async for chunk in chat_stream():
                 results.append(chunk)
 
         assert len(results) == 1
@@ -208,15 +227,15 @@ class TestChatTaskGetStream:
     @pytest.mark.asyncio
     async def test_error_handling(self):
         """Test error event is generated on exception."""
-        chat_task = self._make_chat_task()
+        chat_stream = self._make_chat_stream()
 
         async def mock_wait_for(coro, timeout):
             raise ValueError("Test error")
 
-        chat_task._chat_queue.empty.return_value = False
+        chat_stream._chat_queue.empty.return_value = False
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in chat_task.get_stream_async():
+            async for chunk in chat_stream():
                 results.append(chunk)
 
         assert len(results) == 1
@@ -227,7 +246,7 @@ class TestChatTaskGetStream:
     @pytest.mark.asyncio
     async def test_timeout_handling(self):
         """Test timeout behavior when queue is empty."""
-        chat_task = self._make_chat_task()
+        chat_stream = self._make_chat_stream()
         call_count = 0
 
         async def mock_wait_for(coro, timeout):
@@ -235,13 +254,13 @@ class TestChatTaskGetStream:
             call_count += 1
             if call_count == 1:
                 raise TimeoutError()
-            chat_task._asyncio_task.done.return_value = True
+            chat_stream._asyncio_task.done.return_value = True
             raise TimeoutError()
 
-        chat_task._chat_queue.empty.return_value = True
+        chat_stream._chat_queue.empty.return_value = True
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in chat_task.get_stream_async():
+            async for chunk in chat_stream():
                 results.append(chunk)
 
         assert len(results) == 0
@@ -250,7 +269,7 @@ class TestChatTaskGetStream:
     @pytest.mark.asyncio
     async def test_chat_uuid_added_to_all_events(self):
         """Test chat_uuid is added to all event types."""
-        chat_task = self._make_chat_task()
+        chat_stream = self._make_chat_stream()
         events = [
             (AgentRunEvent.START, Mock()),
             (AgentRunEvent.STREAM, Mock()),
@@ -274,7 +293,7 @@ class TestChatTaskGetStream:
         async def mock_wait_for(coro, timeout):
             nonlocal event_index
             if event_index >= len(events):
-                chat_task._asyncio_task.done.return_value = True
+                chat_stream._asyncio_task.done.return_value = True
                 raise TimeoutError()
             event = events[event_index]
             event_index += 1
@@ -283,10 +302,10 @@ class TestChatTaskGetStream:
         def mock_empty():
             return event_index >= len(events)
 
-        chat_task._chat_queue.empty.side_effect = mock_empty
+        chat_stream._chat_queue.empty.side_effect = mock_empty
         with patch("asyncio.wait_for", side_effect=mock_wait_for):
             results = []
-            async for chunk in chat_task.get_stream_async():
+            async for chunk in chat_stream():
                 results.append(chunk)
 
         assert len(results) == 4
@@ -297,20 +316,47 @@ class TestChatTaskGetStream:
     @pytest.mark.asyncio
     async def test_task_done_and_queue_empty_exits(self):
         """Test generator exits when task is done and queue is empty."""
-        chat_task = self._make_chat_task()
-        chat_task._asyncio_task.done.return_value = True
-        chat_task._chat_queue.empty.return_value = True
+        chat_stream = self._make_chat_stream()
+        chat_stream._asyncio_task.done.return_value = True
+        chat_stream._chat_queue.empty.return_value = True
 
         results = []
-        async for chunk in chat_task.get_stream_async():
+        async for chunk in chat_stream():
             results.append(chunk)
 
         assert len(results) == 0
-        chat_task._asyncio_task.result.assert_called_once()
+        chat_stream._asyncio_task.result.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_call_uses_attach_and_on_event(self):
+        """attach + on_event + __call__ complete a stream without private fields."""
+        chat_stream = ChatStream(chat_uuid="public-api")
+        mock_run = Mock()
+        mock_run.model_dump.return_value = {
+            "id": "run-1",
+            "agent_id": "agent-1",
+            "started_at": "2024-01-01T00:00:00",
+            "completed_at": None,
+            "query": "hello",
+            "reply": None,
+            "tool_calls": [],
+        }
+
+        async def produce():
+            chat_stream.on_event(AgentRunEvent.START, mock_run)
+            chat_stream.on_event(AgentRunEvent.FINISH, mock_run)
+
+        query_task = asyncio.create_task(produce())
+        chat_stream.attach(query_task)
+        chunks = [chunk async for chunk in chat_stream()]
+        await query_task
+
+        events = [json.loads(chunk.replace("data: ", "").strip())["event"] for chunk in chunks]
+        assert events == ["start", "finish"]
 
 
-class TestChatTask:
-    """Test ChatTask agent execution and get_stream integration."""
+class TestChatQueryJob:
+    """Test ChatQueryJob agent execution and ChatStream integration."""
 
     def _make_mock_user(self):
         user = Mock()
@@ -346,11 +392,26 @@ class TestChatTask:
         tool.name = name
         return tool
 
-    def _start_chat_task(self, user, user_config_provider, user_chat_provider, **kwargs):
-        """Construct ChatTask, start it, return (chat_task, stream)."""
-        chat_task = ChatTask(user, user_config_provider, user_chat_provider, **kwargs)
-        chat_task.start()
-        return chat_task, chat_task.get_stream_async()
+    def _start_query(self, user, **kwargs):
+        """Create ChatQueryJob task, attach ChatStream, return (stream, task, agen)."""
+        chat_uuid = kwargs.pop("chat_uuid")
+        query = kwargs.pop("query")
+        chat_stream = ChatStream(chat_uuid=chat_uuid)
+        query_task = asyncio.create_task(
+            ChatQueryJob(MagicMock()).run_async(
+                chat_uuid,
+                user_uuid=user.uuid,
+                query=query,
+                event_callback=chat_stream.on_event,
+                **kwargs,
+            )
+        )
+        chat_stream.attach(query_task)
+        return chat_stream, query_task, chat_stream()
+
+    @staticmethod
+    async def _join_query(query_task):
+        await asyncio.gather(query_task, return_exceptions=True)
 
     @staticmethod
     def _finish_run_mock():
@@ -366,14 +427,19 @@ class TestChatTask:
         }
         return mock_run
 
+    def test_name_and_config(self):
+        job = ChatQueryJob(MagicMock())
+        assert job.name == "agent-chats-query"
+        assert job.config is None
+
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_create_generator_skills_disabled_by_default(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
-        """create_skill_retriever_async not called when chat_skills_enabled=False."""
+        """create_skill_retriever_async not called when skills_enabled=False."""
         mock_agent = AsyncMock()
         mock_agent.run_async = AsyncMock()
         mock_create_agent.return_value = mock_agent
@@ -384,15 +450,14 @@ class TestChatTask:
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
 
-        chat_task, result = self._start_chat_task(
-            user,
-            config_provider,
-            chat_provider,
-            chat_uuid="chat-uuid-1",
-            chat_query="hello",
-            chat_skills_enabled=False,
-        )
-        await chat_task.join_async()
+        with _patch_query_providers(config_provider, chat_provider):
+            _, query_task, result = self._start_query(
+                user,
+                chat_uuid="chat-uuid-1",
+                query="hello",
+                skills_enabled=False,
+            )
+            await self._join_query(query_task)
 
         mock_create_skill_retriever.assert_not_called()
         chat_provider.get_chat_context.assert_called_once_with(
@@ -405,13 +470,13 @@ class TestChatTask:
         assert hasattr(result, "__aiter__")
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_create_generator_skills_enabled(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
-        """create_skill_retriever_async is called when chat_skills_enabled=True."""
+        """create_skill_retriever_async is called when skills_enabled=True."""
         mock_agent = AsyncMock()
         mock_agent.run_async = AsyncMock()
         mock_create_agent.return_value = mock_agent
@@ -423,15 +488,14 @@ class TestChatTask:
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
 
-        chat_task, result = self._start_chat_task(
-            user,
-            config_provider,
-            chat_provider,
-            chat_uuid="chat-uuid-2",
-            chat_query="hello",
-            chat_skills_enabled=True,
-        )
-        await chat_task.join_async()
+        with _patch_query_providers(config_provider, chat_provider):
+            _, query_task, result = self._start_query(
+                user,
+                chat_uuid="chat-uuid-2",
+                query="hello",
+                skills_enabled=True,
+            )
+            await self._join_query(query_task)
 
         mock_create_skill_retriever.assert_called_once()
         chat_provider.get_chat_context.assert_called_once_with(
@@ -444,13 +508,13 @@ class TestChatTask:
         assert hasattr(result, "__aiter__")
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_create_generator_resolves_chat_context_via_provider(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
-        """ChatTask passes the provider context dict through to the agent run."""
+        """ChatQueryJob passes the provider context dict through to the agent run."""
         mock_agent = AsyncMock()
         mock_agent.run_async = AsyncMock()
         mock_create_agent.return_value = mock_agent
@@ -463,15 +527,14 @@ class TestChatTask:
         chat_provider = self._make_mock_chat_provider()
         context = {"project": "alpha"}
 
-        chat_task, result = self._start_chat_task(
-            user,
-            config_provider,
-            chat_provider,
-            chat_uuid="chat-uuid-context",
-            chat_query="hello",
-            chat_context=context,
-        )
-        await chat_task.join_async()
+        with _patch_query_providers(config_provider, chat_provider):
+            _, query_task, result = self._start_query(
+                user,
+                chat_uuid="chat-uuid-context",
+                query="hello",
+                context=context,
+            )
+            await self._join_query(query_task)
 
         chat_provider.get_chat_context.assert_called_once_with(
             user_uuid=user.uuid,
@@ -493,9 +556,9 @@ class TestChatTask:
         config_provider.get_agent_repository.assert_called_with(user_uuid=user.uuid)
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_create_generator_uses_only_explicit_chat_tools(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -512,16 +575,15 @@ class TestChatTask:
         external_primary = self._make_mock_tool("shared-tool")
         external_secondary = self._make_mock_tool("external-only")
 
-        chat_task, _ = self._start_chat_task(
-            user,
-            config_provider,
-            chat_provider,
-            chat_uuid="chat-uuid-tools",
-            chat_query="hello",
-            chat_tools=[external_primary, external_secondary],
-            chat_context={"scope": "tools"},
-        )
-        await chat_task.join_async()
+        with _patch_query_providers(config_provider, chat_provider):
+            _, query_task, _ = self._start_query(
+                user,
+                chat_uuid="chat-uuid-tools",
+                query="hello",
+                tools=[external_primary, external_secondary],
+                context={"scope": "tools"},
+            )
+            await self._join_query(query_task)
 
         chat_provider.get_chat_context.assert_called_once_with(
             user_uuid=user.uuid,
@@ -539,9 +601,43 @@ class TestChatTask:
         mock_create_skill_retriever.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
+    async def test_duplicate_tool_names_keep_last(
+        self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
+    ):
+        """Tools with the same name collapse to the last instance."""
+        mock_agent = AsyncMock()
+        mock_agent.run_async = AsyncMock()
+        mock_create_agent.return_value = mock_agent
+        mock_create_tool_retriever.return_value = AsyncMock()
+        mock_create_skill_retriever.return_value = AsyncMock()
+
+        first = self._make_mock_tool("shared-tool")
+        last = self._make_mock_tool("shared-tool")
+
+        with _patch_query_providers(
+            self._make_mock_config_provider(), self._make_mock_chat_provider()
+        ):
+            _, query_task, _ = self._start_query(
+                self._make_mock_user(),
+                chat_uuid="chat-uuid-dedup",
+                query="hello",
+                tools=[first, last],
+                skills_enabled=False,
+            )
+            await self._join_query(query_task)
+
+        _, tool_kwargs = mock_create_tool_retriever.call_args
+        assert tool_kwargs["tools"] == [last]
+        _, run_kwargs = mock_agent.run_async.call_args
+        assert run_kwargs["tool_ids"] == ["shared-tool"]
+
+    @pytest.mark.asyncio
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_create_generator_uses_explicit_skill_setting(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -557,16 +653,15 @@ class TestChatTask:
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
 
-        chat_task, _ = self._start_chat_task(
-            user,
-            config_provider,
-            chat_provider,
-            chat_uuid="chat-uuid-no-skills",
-            chat_query="hello",
-            chat_context={"skills": "disabled"},
-            chat_skills_enabled=True,
-        )
-        await chat_task.join_async()
+        with _patch_query_providers(config_provider, chat_provider):
+            _, query_task, _ = self._start_query(
+                user,
+                chat_uuid="chat-uuid-no-skills",
+                query="hello",
+                context={"skills": "disabled"},
+                skills_enabled=True,
+            )
+            await self._join_query(query_task)
 
         chat_provider.get_chat_context.assert_called_once_with(
             user_uuid=user.uuid,
@@ -578,13 +673,13 @@ class TestChatTask:
         assert run_kwargs["skill_retriever"] is mock_skill_retriever
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_create_generator_returns_streaming_generator(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
-        """get_stream returns an async generator."""
+        """Calling ChatStream returns an async generator."""
         mock_agent = AsyncMock()
         mock_agent.run_async = AsyncMock()
         mock_create_agent.return_value = mock_agent
@@ -595,21 +690,20 @@ class TestChatTask:
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
 
-        chat_task, result = self._start_chat_task(
-            user,
-            config_provider,
-            chat_provider,
-            chat_uuid="my-chat-uuid",
-            chat_query="test query",
-        )
-        await chat_task.join_async()
+        with _patch_query_providers(config_provider, chat_provider):
+            _, query_task, result = self._start_query(
+                user,
+                chat_uuid="my-chat-uuid",
+                query="test query",
+            )
+            await self._join_query(query_task)
 
         assert hasattr(result, "__aiter__")
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_finish_callback_called_once_on_normal_completion(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -626,28 +720,30 @@ class TestChatTask:
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
 
-        chat_task, result = self._start_chat_task(
-            self._make_mock_user(),
-            self._make_mock_config_provider(),
-            self._make_mock_chat_provider(),
-            chat_uuid="chat-callback-ok",
-            chat_query="hello",
-            chat_finish_callback=callback,
-            chat_skills_enabled=False,
-        )
+        with _patch_query_providers(
+            self._make_mock_config_provider(), self._make_mock_chat_provider()
+        ):
+            _, query_task, result = self._start_query(
+                self._make_mock_user(),
+                chat_uuid="chat-callback-ok",
+                query="hello",
+                finish_callback=callback,
+                skills_enabled=False,
+            )
 
-        chunks = []
-        async for chunk in result:
-            chunks.append(chunk)
+            chunks = []
+            async for chunk in result:
+                chunks.append(chunk)
 
-        await chat_task.join_async()
+            await self._join_query(query_task)
+
         callback.assert_called_once_with(finish_run)
         assert any('"event": "finish"' in chunk for chunk in chunks)
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_finish_callback_called_after_generator_aclose(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -667,27 +763,29 @@ class TestChatTask:
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
 
-        chat_task, result = self._start_chat_task(
-            self._make_mock_user(),
-            self._make_mock_config_provider(),
-            self._make_mock_chat_provider(),
-            chat_uuid="chat-callback-disconnect",
-            chat_query="hello",
-            chat_finish_callback=callback,
-            chat_skills_enabled=False,
-        )
+        with _patch_query_providers(
+            self._make_mock_config_provider(), self._make_mock_chat_provider()
+        ):
+            _, query_task, result = self._start_query(
+                self._make_mock_user(),
+                chat_uuid="chat-callback-disconnect",
+                query="hello",
+                finish_callback=callback,
+                skills_enabled=False,
+            )
 
-        agen = result
-        await started.wait()
-        await agen.aclose()
+            agen = result
+            await started.wait()
+            await agen.aclose()
 
-        await chat_task.join_async()
+            await self._join_query(query_task)
+
         callback.assert_called_once_with(finish_run)
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_async_finish_callback_awaited(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -704,26 +802,28 @@ class TestChatTask:
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
 
-        chat_task, result = self._start_chat_task(
-            self._make_mock_user(),
-            self._make_mock_config_provider(),
-            self._make_mock_chat_provider(),
-            chat_uuid="chat-callback-async",
-            chat_query="hello",
-            chat_finish_callback=callback,
-            chat_skills_enabled=False,
-        )
+        with _patch_query_providers(
+            self._make_mock_config_provider(), self._make_mock_chat_provider()
+        ):
+            _, query_task, result = self._start_query(
+                self._make_mock_user(),
+                chat_uuid="chat-callback-async",
+                query="hello",
+                finish_callback=callback,
+                skills_enabled=False,
+            )
 
-        async for _ in result:
-            pass
+            async for _ in result:
+                pass
 
-        await chat_task.join_async()
+            await self._join_query(query_task)
+
         callback.assert_awaited_once_with(finish_run)
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_finish_callback_not_called_without_finish_event(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -739,28 +839,30 @@ class TestChatTask:
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
 
-        chat_task, result = self._start_chat_task(
-            self._make_mock_user(),
-            self._make_mock_config_provider(),
-            self._make_mock_chat_provider(),
-            chat_uuid="chat-callback-error",
-            chat_query="hello",
-            chat_finish_callback=callback,
-            chat_skills_enabled=False,
-        )
+        with _patch_query_providers(
+            self._make_mock_config_provider(), self._make_mock_chat_provider()
+        ):
+            _, query_task, result = self._start_query(
+                self._make_mock_user(),
+                chat_uuid="chat-callback-error",
+                query="hello",
+                finish_callback=callback,
+                skills_enabled=False,
+            )
 
-        chunks = []
-        async for chunk in result:
-            chunks.append(chunk)
+            chunks = []
+            async for chunk in result:
+                chunks.append(chunk)
 
-        await chat_task.join_async()
+            await self._join_query(query_task)
+
         callback.assert_not_called()
         assert any('"event": "error"' in chunk for chunk in chunks)
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_run_does_not_create_owned_session(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -779,17 +881,17 @@ class TestChatTask:
         config_provider = self._make_mock_config_provider()
         chat_provider = self._make_mock_chat_provider()
 
-        chat_task, _ = self._start_chat_task(
-            user,
-            config_provider,
-            chat_provider,
-            chat_uuid="chat-no-owned-session",
-            chat_query="hello",
-            chat_context={"project": "alpha"},
-            chat_skills_enabled=False,
-        )
+        with _patch_query_providers(config_provider, chat_provider):
+            _, query_task, _ = self._start_query(
+                user,
+                chat_uuid="chat-no-owned-session",
+                query="hello",
+                context={"project": "alpha"},
+                skills_enabled=False,
+            )
 
-        await chat_task.join_async()
+            await self._join_query(query_task)
+
         _, run_kwargs = mock_agent.run_async.call_args
         assert "session" not in run_kwargs["context"]
         assert run_kwargs["context"]["project"] == "alpha"
@@ -798,9 +900,9 @@ class TestChatTask:
         config_provider.get_model_repository.assert_called_with(user_uuid=user.uuid)
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_mutex_released_after_normal_completion(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -817,26 +919,28 @@ class TestChatTask:
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
 
-        chat_task, result = self._start_chat_task(
-            self._make_mock_user(),
-            self._make_mock_config_provider(),
-            self._make_mock_chat_provider(),
-            chat_uuid="chat-mutex-ok",
-            chat_query="hello",
-            chat_skills_enabled=False,
-            chat_mutex=mutex,
-        )
+        with _patch_query_providers(
+            self._make_mock_config_provider(), self._make_mock_chat_provider()
+        ):
+            _, query_task, result = self._start_query(
+                self._make_mock_user(),
+                chat_uuid="chat-mutex-ok",
+                query="hello",
+                skills_enabled=False,
+                chat_mutex=mutex,
+            )
 
-        async for _ in result:
-            pass
+            async for _ in result:
+                pass
 
-        await chat_task.join_async()
+            await self._join_query(query_task)
+
         mutex.release_async.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_mutex_released_after_generator_aclose(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -856,47 +960,51 @@ class TestChatTask:
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
 
-        chat_task, result = self._start_chat_task(
-            self._make_mock_user(),
-            self._make_mock_config_provider(),
-            self._make_mock_chat_provider(),
-            chat_uuid="chat-mutex-disconnect",
-            chat_query="hello",
-            chat_skills_enabled=False,
-            chat_mutex=mutex,
-        )
+        with _patch_query_providers(
+            self._make_mock_config_provider(), self._make_mock_chat_provider()
+        ):
+            _, query_task, result = self._start_query(
+                self._make_mock_user(),
+                chat_uuid="chat-mutex-disconnect",
+                query="hello",
+                skills_enabled=False,
+                chat_mutex=mutex,
+            )
 
-        agen = result
-        await started.wait()
-        await agen.aclose()
-        await chat_task.join_async()
+            agen = result
+            await started.wait()
+            await agen.aclose()
+            await self._join_query(query_task)
+
         mutex.release_async.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_mutex_released_when_agent_setup_fails(self, mock_create_agent):
-        """Mutex is released when agent setup fails inside the chat task."""
+        """Mutex is released when agent setup fails inside the query job."""
         mock_create_agent.side_effect = RuntimeError("setup failed")
         mutex = Mock()
         mutex.release_async = AsyncMock()
 
-        chat_task, _ = self._start_chat_task(
-            self._make_mock_user(),
-            self._make_mock_config_provider(),
-            self._make_mock_chat_provider(),
-            chat_uuid="chat-mutex-create-fail",
-            chat_query="hello",
-            chat_skills_enabled=False,
-            chat_mutex=mutex,
-        )
+        with _patch_query_providers(
+            self._make_mock_config_provider(), self._make_mock_chat_provider()
+        ):
+            _, query_task, _ = self._start_query(
+                self._make_mock_user(),
+                chat_uuid="chat-mutex-create-fail",
+                query="hello",
+                skills_enabled=False,
+                chat_mutex=mutex,
+            )
 
-        await chat_task.join_async()
+            await self._join_query(query_task)
+
         mutex.release_async.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_mutex_released_when_run_times_out(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -917,18 +1025,19 @@ class TestChatTask:
         mock_create_skill_retriever.return_value = AsyncMock()
 
         started = asyncio.get_running_loop().time()
-        chat_task, _ = self._start_chat_task(
-            self._make_mock_user(),
-            self._make_mock_config_provider(),
-            self._make_mock_chat_provider(),
-            chat_uuid="chat-mutex-timeout",
-            chat_query="hello",
-            chat_skills_enabled=False,
-            chat_mutex=mutex,
-            chat_run_timeout=0.05,
-        )
+        with _patch_query_providers(
+            self._make_mock_config_provider(), self._make_mock_chat_provider()
+        ):
+            _, query_task, _ = self._start_query(
+                self._make_mock_user(),
+                chat_uuid="chat-mutex-timeout",
+                query="hello",
+                skills_enabled=False,
+                chat_mutex=mutex,
+                run_timeout=0.05,
+            )
 
-        await chat_task.join_async()
+            await self._join_query(query_task)
         elapsed = asyncio.get_running_loop().time() - started
 
         mutex.release_async.assert_awaited_once()
@@ -936,9 +1045,9 @@ class TestChatTask:
         assert elapsed < 0.5
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_stream_emits_error_on_run_timeout(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -953,25 +1062,28 @@ class TestChatTask:
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
 
-        _, stream = self._start_chat_task(
-            self._make_mock_user(),
-            self._make_mock_config_provider(),
-            self._make_mock_chat_provider(),
-            chat_uuid="chat-stream-timeout",
-            chat_query="hello",
-            chat_skills_enabled=False,
-            chat_run_timeout=0.05,
-        )
+        with _patch_query_providers(
+            self._make_mock_config_provider(), self._make_mock_chat_provider()
+        ):
+            _, query_task, stream = self._start_query(
+                self._make_mock_user(),
+                chat_uuid="chat-stream-timeout",
+                query="hello",
+                skills_enabled=False,
+                run_timeout=0.05,
+            )
 
-        chunks = [chunk async for chunk in stream]
+            chunks = [chunk async for chunk in stream]
+            await self._join_query(query_task)
+
         payload = json.loads(chunks[-1].removeprefix("data: ").strip())
         assert payload["event"] == "error"
         assert "timed out" in payload["info"]["message"].lower()
 
     @pytest.mark.asyncio
-    @patch("fivccliche.utils.chats.create_skill_retriever_async")
-    @patch("fivccliche.utils.chats.create_tool_retriever_async")
-    @patch("fivccliche.utils.chats.create_agent_async")
+    @patch(f"{_QUERY}.create_skill_retriever_async")
+    @patch(f"{_QUERY}.create_tool_retriever_async")
+    @patch(f"{_QUERY}.create_agent_async")
     async def test_mutex_released_after_normal_completion_within_timeout(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
@@ -988,18 +1100,20 @@ class TestChatTask:
         mock_create_tool_retriever.return_value = AsyncMock()
         mock_create_skill_retriever.return_value = AsyncMock()
 
-        chat_task, result = self._start_chat_task(
-            self._make_mock_user(),
-            self._make_mock_config_provider(),
-            self._make_mock_chat_provider(),
-            chat_uuid="chat-mutex-timeout-ok",
-            chat_query="hello",
-            chat_skills_enabled=False,
-            chat_mutex=mutex,
-            chat_run_timeout=1.0,
-        )
+        with _patch_query_providers(
+            self._make_mock_config_provider(), self._make_mock_chat_provider()
+        ):
+            _, query_task, result = self._start_query(
+                self._make_mock_user(),
+                chat_uuid="chat-mutex-timeout-ok",
+                query="hello",
+                skills_enabled=False,
+                chat_mutex=mutex,
+                run_timeout=1.0,
+            )
 
-        chunks = [chunk async for chunk in result]
-        await chat_task.join_async()
+            chunks = [chunk async for chunk in result]
+            await self._join_query(query_task)
+
         mutex.release_async.assert_awaited_once()
         assert any('"event": "finish"' in chunk for chunk in chunks)

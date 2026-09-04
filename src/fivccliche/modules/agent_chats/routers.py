@@ -1,5 +1,7 @@
+import asyncio
 import uuid
 from datetime import timedelta
+from typing import cast
 
 from fastapi import (
     APIRouter,
@@ -11,27 +13,26 @@ from fastapi import (
     responses,
     status,
 )
+from fivcglue import IComponentSite
 from fivcglue.interfaces.mutexes import IMutexSite
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from fivccliche.services.interfaces.agent_chats import IUserChatProvider
-from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
-from fivccliche.utils.chats import ChatTask
+from fivccliche.services.implements import service_site
 from fivccliche.utils.deps import (
     IUser,
     get_authenticated_user_async,
-    get_chat_provider_async,
-    get_config_provider_async,
     get_db_session_async,
     get_mutex_site_async,
 )
 from fivccliche.utils.filters import FilterError
 from fivccliche.utils.schemas import PaginatedResponse
+from fivccliche.utils.stream import ChatStream
 
 from . import models, schemas, utils
 from .filters import ChatEditableFilterSet, ChatFilterSet
+from .jobs import ChatDescribeJob, ChatQueryJob
 
 # ============================================================================
 # Chat Session Endpoints
@@ -181,8 +182,6 @@ async def create_chat_messages_async(
     background_tasks: BackgroundTasks,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
-    config_provider: IUserConfigProvider = Depends(get_config_provider_async),
-    chat_provider: IUserChatProvider = Depends(get_chat_provider_async),
     mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
 ) -> responses.StreamingResponse:
     """Send a new message to an existing chat session."""
@@ -212,31 +211,42 @@ async def create_chat_messages_async(
         )
 
     try:
-        chat_task = ChatTask(
-            user,
-            config_provider,
-            chat_provider,
-            chat_uuid=chat_uuid,
-            chat_query=chat_message.query,
-            chat_agent_id=chat_agent_id,
-            chat_context=chat.context,
-            chat_skills_enabled=True,
-            chat_mutex=chat_mutex,
-            chat_run_timeout=CHAT_MESSAGE_RUN_TIMEOUT.total_seconds(),
+        chat_stream = ChatStream(chat_uuid=chat_uuid)
+        query_task = asyncio.create_task(
+            ChatQueryJob(cast(IComponentSite, service_site)).run_async(
+                chat_uuid,
+                user_uuid=user.uuid,
+                query=chat_message.query,
+                agent_id=chat_agent_id,
+                context=chat.context,
+                skills_enabled=True,
+                chat_mutex=chat_mutex,
+                run_timeout=CHAT_MESSAGE_RUN_TIMEOUT.total_seconds(),
+                event_callback=chat_stream.on_event,
+            )
         )
-        chat_task.start()
-        background_tasks.add_task(chat_task.join_async)
+        chat_stream.attach(query_task)
+        background_tasks.add_task(asyncio.gather, query_task, return_exceptions=True)
     except Exception:
         if chat_mutex:
             await chat_mutex.release_async()
         raise
+
+    query_text = chat_message.query.strip()
+    if not (chat.description or "").strip() and query_text and not query_text.startswith("/"):
+        background_tasks.add_task(
+            ChatDescribeJob(cast(IComponentSite, service_site)).run_async,
+            chat.uuid,
+            user_uuid=user.uuid,
+            query_text=query_text,
+        )
 
     # Release the request-scoped session before SSE so the pool connection is
     # not held for the entire stream duration.
     await session.close()
 
     return responses.StreamingResponse(
-        chat_task.get_stream_async(),
+        chat_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

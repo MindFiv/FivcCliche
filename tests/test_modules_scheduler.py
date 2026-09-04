@@ -29,7 +29,7 @@ class _DummyJob(IModuleJob):
         return "dummy-job"
 
     @property
-    def config(self) -> dict:
+    def config(self) -> dict | None:
         return {
             "trigger": "interval",
             "seconds": 3600,
@@ -40,9 +40,22 @@ class _DummyJob(IModuleJob):
         return None
 
 
+class _UnscheduledJob(IModuleJob):
+    @property
+    def name(self) -> str:
+        return "unscheduled-job"
+
+    @property
+    def config(self) -> dict | None:
+        return None
+
+    async def run_async(self) -> None:
+        return None
+
+
 class _DummyModule(IModule):
     def __init__(self) -> None:
-        self._jobs: list[IModuleJob] = [_DummyJob()]
+        self._jobs: list[IModuleJob] = [_DummyJob(), _UnscheduledJob()]
         self.mount_kwargs: dict | None = None
 
     @property
@@ -109,3 +122,19 @@ def test_module_jobs_registered_via_list_jobs():
         job = scheduler.get_job("dummy-job")
         assert job is not None
         assert job.id == "dummy-job"
+
+
+def test_module_jobs_with_none_config_are_not_registered():
+    """create_application should skip jobs whose config is None."""
+    component_site = _load_component_site()
+    module_site = ModuleSiteImpl(component_site, modules=[])
+    dummy = _DummyModule()
+    module_site.register_module(dummy)
+    app = module_site.create_application()
+    scheduler: AsyncIOScheduler = app.state.scheduler
+
+    assert dummy.get_job("unscheduled-job") is not None
+
+    with TestClient(app):
+        assert scheduler.get_job("dummy-job") is not None
+        assert scheduler.get_job("unscheduled-job") is None

@@ -14,10 +14,10 @@ from fivcglue.implements.utils import load_component_site
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.modules.agent_chats import utils as methods
-from fivccliche.modules.agent_chats.jobs import (
-    _MEMORIZE_JOB_ID,
-    ChatMemorizeJob,
+from fivccliche.modules.agent_chats.jobs import ChatMemorizeJob
+from fivccliche.modules.agent_chats.jobs.memorize import (
     _MEMORIZE_EXTRACT_PROMPT,
+    _MEMORIZE_JOB_ID,
     _ChatMemorizeParseResult,
     _ChatMemorizeParser,
 )
@@ -102,7 +102,7 @@ class TestGetMemorizeContent:
         provider = MagicMock()
         provider.get_model_repository.return_value = repo
         with patch(
-            "fivccliche.modules.agent_chats.jobs.get_config_provider_async",
+            "fivccliche.modules.agent_chats.jobs.memorize.get_config_provider_async",
             AsyncMock(return_value=provider),
         ):
             result = await _parser()._extract_memories_async([msg])
@@ -321,19 +321,19 @@ class TestExtractMemorableContent:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_db_session_context_async",
                 side_effect=lambda: _SessionCtx(),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.utils.list_unmemorized_chat_messages_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.utils.list_unmemorized_chat_messages_async",
                 AsyncMock(return_value=messages),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.utils.delete_unmemorized_chat_messages_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.utils.delete_unmemorized_chat_messages_async",
                 AsyncMock(),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_config_provider_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_config_provider_async",
                 AsyncMock(return_value=provider),
             ),
         ):
@@ -439,19 +439,19 @@ class TestMemorizeJob:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_memory_provider_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_memory_provider_async",
                 AsyncMock(return_value=provider),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_mutex_site_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_mutex_site_async",
                 AsyncMock(return_value=mutex_site),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_db_session_context_async",
                 side_effect=lambda: _SessionCtx(),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs._ChatMemorizeParser.__aenter__",
+                "fivccliche.modules.agent_chats.jobs.memorize._ChatMemorizeParser.__aenter__",
                 AsyncMock(return_value=["The user is named Charlie"]),
             ),
         ):
@@ -504,19 +504,19 @@ class TestMemorizeJob:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_memory_provider_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_memory_provider_async",
                 AsyncMock(return_value=provider),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_mutex_site_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_mutex_site_async",
                 AsyncMock(return_value=mutex_site),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_db_session_context_async",
                 side_effect=lambda: _SessionCtx(),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_config_provider_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_config_provider_async",
                 AsyncMock(return_value=config_provider),
             ),
         ):
@@ -566,19 +566,19 @@ class TestMemorizeJob:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_memory_provider_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_memory_provider_async",
                 AsyncMock(return_value=provider),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_mutex_site_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_mutex_site_async",
                 AsyncMock(return_value=mutex_site),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_db_session_context_async",
                 side_effect=lambda: _SessionCtx(),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs._ChatMemorizeParser.__aenter__",
+                "fivccliche.modules.agent_chats.jobs.memorize._ChatMemorizeParser.__aenter__",
                 AsyncMock(return_value=[]),
             ),
         ):
@@ -623,19 +623,19 @@ class TestMemorizeJob:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_memory_provider_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_memory_provider_async",
                 AsyncMock(return_value=provider),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_mutex_site_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_mutex_site_async",
                 AsyncMock(return_value=mutex_site),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_db_session_context_async",
                 side_effect=lambda: _SessionCtx(),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs._ChatMemorizeParser.__aenter__",
+                "fivccliche.modules.agent_chats.jobs.memorize._ChatMemorizeParser.__aenter__",
                 AsyncMock(side_effect=RuntimeError("no memorize model")),
             ),
         ):
@@ -678,19 +678,19 @@ class TestMemorizeJob:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_memory_provider_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_memory_provider_async",
                 AsyncMock(return_value=provider),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_mutex_site_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_mutex_site_async",
                 AsyncMock(return_value=mutex_site),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_db_session_context_async",
                 side_effect=lambda: _SessionCtx(),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs._ChatMemorizeParser.__aenter__",
+                "fivccliche.modules.agent_chats.jobs.memorize._ChatMemorizeParser.__aenter__",
                 AsyncMock(return_value=["The user is named Charlie"]),
             ),
         ):
@@ -733,15 +733,15 @@ class TestMemorizeJob:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_memory_provider_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_memory_provider_async",
                 AsyncMock(return_value=provider),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_mutex_site_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_mutex_site_async",
                 AsyncMock(return_value=mutex_site),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_db_session_context_async",
                 side_effect=lambda: _SessionCtx(),
             ),
         ):
@@ -786,15 +786,15 @@ class TestMemorizeJob:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_memory_provider_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_memory_provider_async",
                 AsyncMock(return_value=provider),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_mutex_site_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_mutex_site_async",
                 AsyncMock(return_value=mutex_site),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_db_session_context_async",
                 side_effect=lambda: _SessionCtx(),
             ),
         ):
@@ -839,15 +839,15 @@ class TestMemorizeJob:
 
         with (
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_memory_provider_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_memory_provider_async",
                 AsyncMock(return_value=provider),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_mutex_site_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_mutex_site_async",
                 AsyncMock(return_value=mutex_site),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
+                "fivccliche.modules.agent_chats.jobs.memorize.get_db_session_context_async",
                 side_effect=lambda: _SessionCtx(),
             ),
         ):
@@ -860,7 +860,7 @@ class TestMemorizeJob:
     def test_config_defaults_and_custom_interval(self):
         component_site = MagicMock()
         with patch(
-            "fivccliche.modules.agent_chats.jobs.query_component",
+            "fivccliche.modules.agent_chats.jobs.memorize.query_component",
             return_value=None,
         ):
             job = ChatMemorizeJob(component_site)
@@ -883,7 +883,7 @@ class TestMemorizeJob:
         config = MagicMock()
         config.get_session.return_value = session
         with patch(
-            "fivccliche.modules.agent_chats.jobs.query_component",
+            "fivccliche.modules.agent_chats.jobs.memorize.query_component",
             return_value=config,
         ):
             job = ChatMemorizeJob(component_site)
@@ -911,6 +911,8 @@ def test_agent_chats_list_jobs_does_not_register_memorize_job():
     jobs = module.list_jobs()
     assert jobs == []
     assert module.get_job(_MEMORIZE_JOB_ID) is None
+    assert module.get_job("agent-chats-query") is None
+    assert module.get_job("agent-chats-describe") is None
     assert module.get_job("missing") is None
 
     module_site.register_module(module)

@@ -62,10 +62,20 @@ Chat list uses [`ChatFilterSet`](../src/fivccliche/modules/agent_chats/filters.p
 Question list uses [`QuestionFilterSet`](../src/fivccliche/modules/agent_configs/filters.py): `QuestionFilterSet(user_uuid, is_superuser=...)` → `parse(is_active=...)` → passed into `list_user_scoped_async` / `count_user_scoped_async` as `filters`.
 
 - `?agent_id=` exact match on the chat agent
-- `?context.<key>=<value>` exact match on a top-level JSON key of `context` (one level only). `UserChat.context` stays a persisted dict. `UserChatProviderImpl.get_chat_context` returns a copy of that JSON plus `user_uuid`, merged `**kwargs` (for example `chat_uuid`), default `timezone` (`Asia/Shanghai`), and a lazy `time` whose `__str__` computes a timezone-aware ISO string and is not persisted. `ChatTask` calls `get_chat_context` and passes the result to the agent run.
+- `?context.<key>=<value>` exact match on a top-level JSON key of `context` (one level only). `UserChat.context` stays a persisted dict. `UserChatProviderImpl.get_chat_context` returns a copy of that JSON plus `user_uuid`, merged `**kwargs` (for example `chat_uuid`), default `timezone` (`Asia/Shanghai`), and a lazy `time` whose `__str__` computes a timezone-aware ISO string and is not persisted. `ChatQueryJob` calls `get_chat_context` and passes the result to the agent run.
 - Repeated paths use the last value
 - Nested keys such as `context.profile.uuid` return 422; bare `context=` is invalid if passed into `parse`
 - Question list: `?is_active=` exact match when provided
 - Pagination `skip` / `limit` stay on the handler, not on the FilterSet
 - Field classes implement `filter(statement)` and optionally override `parse(value)` to store query-bound state; `FilterSet.filter` always calls every field, and each field decides whether to add a WHERE or return the statement unchanged
 - `FilterReadableField` / `FilterEditableField` take `user_uuid` and `is_superuser`: Readable is always owned-or-global; Editable is owned-only for regular users and owned-or-global for superusers. GET/LIST use Readable; PATCH/DELETE (and chat message create) look up via Editable and return 404 when the row is not editable.
+
+### POST `/{chat_uuid}/messages/`
+
+The handler looks up the chat via Editable (404 if missing), acquires mutex `chats:message:{uuid}` (409 if already held), then starts the agent **before** returning SSE:
+
+1. `asyncio.create_task(ChatQueryJob.run_async(...))` — `get_chat_context`, agent/tools/skills, `event_callback=chat_stream.on_event`. Mutex is released in the job `finally`.
+2. [`ChatStream`](../src/fivccliche/utils/stream.py)`()` yields SSE chunks from that task.
+3. `BackgroundTasks` first `asyncio.gather(query_task, return_exceptions=True)` (keeps the run alive after client disconnect), then `ChatDescribeJob` when the chat still has an empty description and the query is not a slash command.
+
+`ChatQueryJob` and `ChatDescribeJob` have `config is None` and are not on `list_jobs()`.

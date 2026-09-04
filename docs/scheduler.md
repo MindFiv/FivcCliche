@@ -13,9 +13,11 @@ registration:
 2. Attaches it to `app.state.scheduler` (useful for runtime inspection and tests).
 3. Calls each module's `mount(app, prefix=...)` for HTTP routers only
    (no scheduler argument).
-4. For each module, iterates `module.list_jobs()` and registers every
-   `IModuleJob` via `scheduler.add_job` using `job.name` as the job id and
-   `job.config` as the schedule kwargs.
+4. For each module, iterates `module.list_jobs()` and registers each
+   `IModuleJob` whose `config` is not `None` via `scheduler.add_job` using
+   `job.name` as the job id and `job.config` as the schedule kwargs. Jobs
+   with `config is None` stay visible to `list_jobs` / CLI but are not
+   added to the scheduler.
 5. Wires the scheduler into the FastAPI lifespan:
    - `scheduler.start()` on application startup.
    - `scheduler.shutdown(wait=False)` on application shutdown.
@@ -31,7 +33,7 @@ class IModuleJob(IComponent):
     def name(self) -> str: ...
 
     @property
-    def config(self) -> dict: ...
+    def config(self) -> dict | None: ...
 
     async def run_async(self): ...
 ```
@@ -39,7 +41,8 @@ class IModuleJob(IComponent):
 ### `job.config` convention
 
 `config` is the keyword arguments for APScheduler `add_job`, excluding `func`
-and `id`:
+and `id`. Return `None` to expose the job (CLI `list` / `show` / `run`)
+without registering it on the scheduler:
 
 ```python
 {
@@ -68,7 +71,7 @@ class CleanupJob(IModuleJob):
         return "my-module-cleanup"
 
     @property
-    def config(self) -> dict:
+    def config(self) -> dict | None:
         return {
             "trigger": "interval",
             "seconds": 60,
@@ -146,8 +149,9 @@ scope for the framework defaults.
 1. `create_application` attaches an `AsyncIOScheduler` to `app.state.scheduler`
    and it is not running before the lifespan starts.
 2. Entering `with TestClient(app)` starts the scheduler; exiting stops it.
-3. Jobs returned from `module.list_jobs()` are registered on the scheduler and
-   retrievable via `scheduler.get_job(id)`.
+3. Jobs from `module.list_jobs()` with a non-`None` `config` are registered
+   on the scheduler and retrievable via `scheduler.get_job(id)`. Jobs whose
+   `config` is `None` are not registered.
 4. `mount` does not receive a `scheduler` argument.
 
 When writing tests that register jobs you don't want to actually fire, use a
@@ -156,8 +160,12 @@ within the test window.
 
 ## Real module example
 
-`agent_chats` currently returns an empty `list_jobs()`, so no memorize job is
-registered on the scheduler. `ChatMemorizeJob` still lives in
-`agent_chats.jobs` and can be re-attached by constructing it in
-`ModuleImpl.__init__`. See [agent-memories.md](agent-memories.md) for
-chat-level retain semantics and per-chat Redis mutex details.
+`agent_chats` currently returns an empty `list_jobs()`, so the query, describe,
+and memorize jobs are not registered on the scheduler. `ChatQueryJob` lives in
+`agent_chats.jobs.query` (`config is None`; the message handler starts it with
+`asyncio.create_task`). `ChatDescribeJob` lives in `agent_chats.jobs.describe`
+(`config is None`; invoked from the same handler via `BackgroundTasks` after
+the query task). `ChatMemorizeJob` lives in `agent_chats.jobs.memorize`;
+re-attach it by constructing it in `ModuleImpl.__init__`. See
+[agent-memories.md](agent-memories.md) for chat-level retain semantics and
+per-chat Redis mutex details.

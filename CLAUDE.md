@@ -75,7 +75,7 @@ HTTP list/get returns inactive tools/skills. Playground repositories filter `is_
 
 ### Scheduled Tasks
 
-Modules expose jobs via `IModule.list_jobs` / `get_job` (`IModuleJob`: `name`, `config`, `run_async`). `ModuleSiteImpl.create_application` creates a single `AsyncIOScheduler`, attaches it to `app.state.scheduler`, mounts routers via `module.mount(app, ...)`, then registers each job from `job.config` onto the scheduler. Lifespan starts/stops the scheduler. CLI: `fivccliche jobs list|show|run`. See [docs/scheduler.md](docs/scheduler.md).
+Modules expose jobs via `IModule.list_jobs` / `get_job` (`IModuleJob`: `name`, `config`, `run_async`). `ModuleSiteImpl.create_application` creates a single `AsyncIOScheduler`, attaches it to `app.state.scheduler`, mounts routers via `module.mount(app, ...)`, then registers each job whose `config` is not `None` onto the scheduler (`config is None` skips `add_job`). Lifespan starts/stops the scheduler. CLI: `fivccliche jobs list|show|run`. `agent_chats` query, describe, and memorize jobs are currently **not** on `list_jobs()`. See [docs/scheduler.md](docs/scheduler.md).
 
 ### Authentication Flow
 
