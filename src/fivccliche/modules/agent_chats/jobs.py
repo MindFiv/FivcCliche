@@ -31,7 +31,7 @@ _DEFAULT_BATCH_SIZE = 50
 _DEFAULT_MAX_BATCHES_PER_RUN = 20
 _DEFAULT_MIN_AGE_MINUTES = 5
 _MUTEX_EXPIRE = timedelta(minutes=30)
-MEMORIZE_JOB_ID = "agent-chats-memorize"
+_MEMORIZE_JOB_ID = "agent-chats-memorize"
 _MEMORIZE_MODEL_ID = "memorize"
 _MEMORIZE_EXTRACT_PROMPT = """\
 You decide whether a chat transcript should be stored as long-term user memory,
@@ -61,7 +61,7 @@ The input is a JSON array of {role, content} turns.
 """
 
 
-class _MemorizeExtraction(BaseModel):
+class _ChatMemorizeParseResult(BaseModel):
     should_retain: bool = Field(
         description=("True if user turns contain durable facts the user stated about themselves.")
     )
@@ -74,155 +74,129 @@ class _MemorizeExtraction(BaseModel):
     )
 
 
-def _get_memorize_settings(component_site: IComponentSite) -> dict[str, int]:
-    config = query_component(component_site, configs.IConfig)
-    session = config.get_session("CHAT_MEMORIZE") if config else None
-    interval_minutes = to_int(
-        session.get_value("INTERVAL_MINUTES") if session else None,
-        _DEFAULT_INTERVAL_MINUTES,
-    )
-    batch_size = to_int(
-        session.get_value("BATCH_SIZE") if session else None,
-        _DEFAULT_BATCH_SIZE,
-    )
-    max_batches_per_run = to_int(
-        session.get_value("MAX_BATCHES_PER_RUN") if session else None,
-        _DEFAULT_MAX_BATCHES_PER_RUN,
-    )
-    min_age_minutes = to_int(
-        session.get_value("MIN_AGE_MINUTES") if session else None,
-        _DEFAULT_MIN_AGE_MINUTES,
-    )
-    return {
-        "interval_minutes": (
-            interval_minutes if interval_minutes > 0 else _DEFAULT_INTERVAL_MINUTES
-        ),
-        "batch_size": batch_size if batch_size > 0 else _DEFAULT_BATCH_SIZE,
-        "max_batches_per_run": (
-            max_batches_per_run if max_batches_per_run > 0 else _DEFAULT_MAX_BATCHES_PER_RUN
-        ),
-        "min_age_minutes": min_age_minutes if min_age_minutes > 0 else _DEFAULT_MIN_AGE_MINUTES,
-    }
-
-
-def _get_memorize_content(messages: list[models.UserChatMessage]) -> str:
-    """Build JSON conversation payload for the memorize judge; empty when there is no user turn."""
-    turns: list[dict[str, str]] = []
-    has_user = False
-    for message in messages:
-        query_text = ""
-        if isinstance(message.query, dict) and message.query.get("text") is not None:
-            query_text = str(message.query["text"]).strip()
-        reply_text = ""
-        if isinstance(message.reply, dict) and message.reply.get("text") is not None:
-            reply_text = str(message.reply["text"]).strip()
-        if query_text and not query_text.lstrip().startswith("/"):
-            turns.append({"role": "user", "content": query_text})
-            has_user = True
-        if reply_text:
-            turns.append({"role": "assistant", "content": reply_text})
-    if not has_user:
-        return ""
-    return json.dumps(turns, ensure_ascii=False)
-
-
-async def _extract_memorable_content_async(content: str, *, user_uuid: str) -> str | None:
-    """Ask the memorize LLM whether to retain, and extract the text to store.
-
-    If the user has no visible ``id=memorize`` LLM, return ``content`` unchanged
-    so the caller retains the raw transcript (legacy behavior).
-    """
-    config_provider = await get_config_provider_async()
-    model_repo = config_provider.get_model_repository(user_uuid=user_uuid)
-    if await model_repo.get_model_config_async(_MEMORIZE_MODEL_ID) is None:
-        logger.info(
-            "No %s LLM for user %s; retaining raw transcript",
-            _MEMORIZE_MODEL_ID,
-            user_uuid,
+class _ChatMemorizeSetting:
+    def __init__(self, component_site: IComponentSite) -> None:
+        config = query_component(component_site, configs.IConfig)
+        session = config.get_session("CHAT_MEMORIZE") if config else None
+        interval_minutes = to_int(
+            session.get_value("INTERVAL_MINUTES") if session else None,
+            _DEFAULT_INTERVAL_MINUTES,
         )
-        return content
+        batch_size = to_int(
+            session.get_value("BATCH_SIZE") if session else None,
+            _DEFAULT_BATCH_SIZE,
+        )
+        max_batches_per_run = to_int(
+            session.get_value("MAX_BATCHES_PER_RUN") if session else None,
+            _DEFAULT_MAX_BATCHES_PER_RUN,
+        )
+        min_age_minutes = to_int(
+            session.get_value("MIN_AGE_MINUTES") if session else None,
+            _DEFAULT_MIN_AGE_MINUTES,
+        )
+        self.interval_minutes = (
+            interval_minutes if interval_minutes > 0 else _DEFAULT_INTERVAL_MINUTES
+        )
+        self.batch_size = batch_size if batch_size > 0 else _DEFAULT_BATCH_SIZE
+        self.max_batches_per_run = (
+            max_batches_per_run if max_batches_per_run > 0 else _DEFAULT_MAX_BATCHES_PER_RUN
+        )
+        self.min_age_minutes = min_age_minutes if min_age_minutes > 0 else _DEFAULT_MIN_AGE_MINUTES
 
-    judge_config = AgentConfig(
-        id="chat-memorize-judge",
-        model_id=_MEMORIZE_MODEL_ID,
-        system_prompt=_MEMORIZE_EXTRACT_PROMPT,
-    )
-    agent = await config_provider.get_agent_backend().create_agent_async(
-        config_provider.get_model_backend(),
-        model_repo,
-        judge_config,
-    )
-    result = await agent.run_async(
-        query=content,
-        response_model=_MemorizeExtraction,
-    )
-    if not isinstance(result, _MemorizeExtraction):
-        raise RuntimeError("memorize judge did not return should_retain")
-    if not result.should_retain:
-        return None
-    memories = [item.strip() for item in result.memories if item.strip()]
-    if not memories:
-        return None
-    return "\n".join(memories)
+    def job_config(self) -> dict:
+        return {
+            "trigger": "interval",
+            "minutes": self.interval_minutes,
+            "max_instances": 1,
+            "coalesce": True,
+            "replace_existing": True,
+        }
 
 
-async def _memorize_async(
-    chat: models.UserChat,
-    *,
-    memory_provider: IUserMemoryProvider,
-    mutex_site: IMutexSite,
-    created_at_to: datetime,
-) -> None:
-    if not chat.user_uuid:
-        return
+class _ChatMemorizeParser:
+    def __init__(self, chat: models.UserChat, *, created_at_to: datetime) -> None:
+        self._chat = chat
+        self._created_at_to = created_at_to
 
-    async with get_mutex_context_async(
-        f"agent-chats:memorize:{chat.uuid}",
-        expire=_MUTEX_EXPIRE,
-        timeout=None,
-        mutex_site=mutex_site,
-    ) as mutex:
-        if mutex is None:
-            logger.debug("Could not acquire memorize lock for chat %s", chat.uuid)
+    async def __aenter__(self) -> list[str]:
+        async with get_db_session_context_async() as session:
+            messages = await utils.list_unmemorized_chat_messages_async(
+                session,
+                self._chat.uuid,
+                created_at_to=self._created_at_to,
+            )
+        return await self._extract_memories_async(messages)
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object,
+    ) -> None:
+        if exc_type is not None:
             return
+        async with get_db_session_context_async() as session:
+            await utils.delete_unmemorized_chat_messages_async(
+                session, self._chat.uuid, created_at_to=self._created_at_to
+            )
+            await session.commit()
 
-        try:
-            async with get_db_session_context_async() as session:
-                messages = await utils.list_unmemorized_chat_messages_async(
-                    session,
-                    chat.uuid,
-                    created_at_to=created_at_to,
-                )
-            if not messages:
-                return
+    async def _extract_memories_async(self, messages: list[models.UserChatMessage]) -> list[str]:
+        turns: list[dict[str, str]] = []
+        has_user = False
+        for message in messages:
+            query_text = ""
+            if isinstance(message.query, dict) and message.query.get("text") is not None:
+                query_text = str(message.query["text"]).strip()
+            reply_text = ""
+            if isinstance(message.reply, dict) and message.reply.get("text") is not None:
+                reply_text = str(message.reply["text"]).strip()
+            if query_text and not query_text.lstrip().startswith("/"):
+                turns.append({"role": "user", "content": query_text})
+                has_user = True
+            if reply_text:
+                turns.append({"role": "assistant", "content": reply_text})
+        if not has_user:
+            return []
+        content = json.dumps(turns, ensure_ascii=False)
 
-            content = _get_memorize_content(messages)
-            if content:
-                extracted = await _extract_memorable_content_async(
-                    content, user_uuid=chat.user_uuid
-                )
-                if extracted:
-                    memory = memory_provider.get_memory(space_id=chat.user_uuid)
-                    result = await memory.retain_async(extracted)
-                    if not result.success:
-                        logger.warning(
-                            "retain_async failed for chat %s; leaving unmemorized",
-                            chat.uuid,
-                        )
-                        return
-                else:
-                    logger.info(
-                        "Skip retain for chat %s; nothing worth remembering",
-                        chat.uuid,
-                    )
+        config_provider = await get_config_provider_async()
+        model_repo = config_provider.get_model_repository(user_uuid=self._chat.user_uuid)
+        if await model_repo.get_model_config_async(_MEMORIZE_MODEL_ID) is None:
+            logger.info(
+                "No %s LLM for user %s; retaining raw transcript",
+                _MEMORIZE_MODEL_ID,
+                self._chat.user_uuid,
+            )
+            return [content]
 
-            async with get_db_session_context_async() as session:
-                await utils.delete_unmemorized_chat_messages_async(
-                    session, chat.uuid, created_at_to=created_at_to
-                )
-                await session.commit()
-        except Exception:
-            logger.exception("Failed to memorize chat %s", chat.uuid)
+        judge_config = AgentConfig(
+            id="chat-memorize-judge",
+            model_id=_MEMORIZE_MODEL_ID,
+            system_prompt=_MEMORIZE_EXTRACT_PROMPT,
+        )
+        agent = await config_provider.get_agent_backend().create_agent_async(
+            config_provider.get_model_backend(),
+            model_repo,
+            judge_config,
+        )
+        result = await agent.run_async(
+            query=content,
+            response_model=_ChatMemorizeParseResult,
+        )
+        if not isinstance(result, _ChatMemorizeParseResult):
+            raise RuntimeError("memorize judge did not return should_retain")
+        memories = (
+            [item.strip() for item in result.memories if item.strip()]
+            if result.should_retain
+            else []
+        )
+        if not memories:
+            logger.info(
+                "Skip retain for chat %s; nothing worth remembering",
+                self._chat.uuid,
+            )
+        return memories
 
 
 class ChatMemorizeJob(IModuleJob):
@@ -233,31 +207,20 @@ class ChatMemorizeJob(IModuleJob):
     """
 
     def __init__(self, component_site: IComponentSite) -> None:
-        settings = _get_memorize_settings(component_site)
-        self.interval_minutes = settings["interval_minutes"]
-        self.batch_size = settings["batch_size"]
-        self.max_batches_per_run = settings["max_batches_per_run"]
-        self.min_age_minutes = settings["min_age_minutes"]
-        self._config = {
-            "trigger": "interval",
-            "minutes": self.interval_minutes,
-            "max_instances": 1,
-            "coalesce": True,
-            "replace_existing": True,
-        }
+        self._setting = _ChatMemorizeSetting(component_site)
         logger.info(
             "Configured %s job (interval=%s minutes)",
-            MEMORIZE_JOB_ID,
-            self.interval_minutes,
+            _MEMORIZE_JOB_ID,
+            self._setting.interval_minutes,
         )
 
     @property
     def name(self) -> str:
-        return MEMORIZE_JOB_ID
+        return _MEMORIZE_JOB_ID
 
     @property
     def config(self) -> dict:
-        return dict(self._config)
+        return self._setting.job_config()
 
     async def run_async(self) -> None:
         """Drain aged unmemorized chats into agent memory (per-chat mutex)."""
@@ -271,24 +234,57 @@ class ChatMemorizeJob(IModuleJob):
             logger.debug("Mutex site not available; skip memorize job")
             return
 
-        created_at_to = datetime.now(timezone.utc) - timedelta(minutes=self.min_age_minutes)
+        created_at_to = datetime.now(timezone.utc) - timedelta(
+            minutes=self._setting.min_age_minutes
+        )
 
-        for _ in range(self.max_batches_per_run):
+        for _ in range(self._setting.max_batches_per_run):
             async with get_db_session_context_async() as session:
                 chats = await utils.list_unmemorized_chats_async(
                     session,
                     created_at_to=created_at_to,
-                    limit=self.batch_size,
+                    limit=self._setting.batch_size,
                 )
             if not chats:
                 break
 
             for chat in chats:
-                await _memorize_async(
+                await self._memorize_async(
                     chat,
                     memory_provider=memory_provider,
                     mutex_site=mutex_site,
                     created_at_to=created_at_to,
                 )
-            if len(chats) < self.batch_size:
+            if len(chats) < self._setting.batch_size:
                 break
+
+    async def _memorize_async(
+        self,
+        chat: models.UserChat,
+        *,
+        memory_provider: IUserMemoryProvider,
+        mutex_site: IMutexSite,
+        created_at_to: datetime,
+    ) -> None:
+        if not chat.user_uuid:
+            return
+
+        async with get_mutex_context_async(
+            f"agent-chats:memorize:{chat.uuid}",
+            expire=_MUTEX_EXPIRE,
+            timeout=None,
+            mutex_site=mutex_site,
+        ) as mutex:
+            if mutex is None:
+                logger.debug("Could not acquire memorize lock for chat %s", chat.uuid)
+                return
+
+            try:
+                async with _ChatMemorizeParser(chat, created_at_to=created_at_to) as memories:
+                    if memories:
+                        memory = memory_provider.get_memory(space_id=chat.user_uuid)
+                        result = await memory.retain_async("\n".join(memories))
+                        if not result.success:
+                            raise RuntimeError(f"retain_async failed for chat {chat.uuid}")
+            except Exception:
+                logger.exception("Failed to memorize chat %s", chat.uuid)

@@ -15,12 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.modules.agent_chats import utils as methods
 from fivccliche.modules.agent_chats.jobs import (
-    MEMORIZE_JOB_ID,
+    _MEMORIZE_JOB_ID,
     ChatMemorizeJob,
     _MEMORIZE_EXTRACT_PROMPT,
-    _MemorizeExtraction,
-    _extract_memorable_content_async,
-    _get_memorize_content,
+    _ChatMemorizeParseResult,
+    _ChatMemorizeParser,
 )
 from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage
 from fivccliche.modules.agent_chats.services import ModuleImpl
@@ -85,34 +84,51 @@ async def _add_message(
     return msg
 
 
+def _parser() -> _ChatMemorizeParser:
+    chat = UserChat(user_uuid="user-1", agent_id="agent")
+    return _ChatMemorizeParser(chat, created_at_to=datetime.now(timezone.utc))
+
+
 class TestGetMemorizeContent:
-    def test_builds_user_and_assistant_json(self):
+    @pytest.mark.asyncio
+    async def test_builds_user_and_assistant_json(self):
         msg = UserChatMessage(
             chat_uuid="c",
             query={"text": "帮我看看这段代码为什么报错"},
             reply={"text": "你的第 12 行变量未定义,应该是..."},
         )
-        content = _get_memorize_content([msg])
-        assert json.loads(content) == [
+        repo = MagicMock()
+        repo.get_model_config_async = AsyncMock(return_value=None)
+        provider = MagicMock()
+        provider.get_model_repository.return_value = repo
+        with patch(
+            "fivccliche.modules.agent_chats.jobs.get_config_provider_async",
+            AsyncMock(return_value=provider),
+        ):
+            result = await _parser()._extract_memories_async([msg])
+        assert len(result) == 1
+        assert json.loads(result[0]) == [
             {"role": "user", "content": "帮我看看这段代码为什么报错"},
             {"role": "assistant", "content": "你的第 12 行变量未定义,应该是..."},
         ]
 
-    def test_slash_query_without_user_returns_empty(self):
+    @pytest.mark.asyncio
+    async def test_slash_query_without_user_returns_empty(self):
         msg = UserChatMessage(
             chat_uuid="c",
             query={"text": "/help"},
             reply={"text": "这里是帮助"},
         )
-        assert _get_memorize_content([msg]) == ""
+        assert await _parser()._extract_memories_async([msg]) == []
 
-    def test_slash_query_without_reply_returns_empty(self):
+    @pytest.mark.asyncio
+    async def test_slash_query_without_reply_returns_empty(self):
         msg = UserChatMessage(
             chat_uuid="c",
             query={"text": "/status"},
             reply=None,
         )
-        assert _get_memorize_content([msg]) == ""
+        assert await _parser()._extract_memories_async([msg]) == []
 
 
 class TestMemorizeMethods:
@@ -280,19 +296,59 @@ class TestExtractMemorableContent:
         provider.get_model_repository.return_value = repo
         return provider, backend, agent
 
-    @pytest.mark.asyncio
-    async def test_joins_memories_when_should_retain(self):
-        provider, backend, agent = self._provider_with_extraction(
-            _MemorizeExtraction(should_retain=True, memories=["a", " b ", ""])
+    def _user_message(self) -> UserChatMessage:
+        return UserChatMessage(
+            chat_uuid="c",
+            query={"text": "hi"},
+            reply={"text": "hello"},
         )
-        content = '[{"role":"user","content":"hi"}]'
-        with patch(
-            "fivccliche.modules.agent_chats.jobs.get_config_provider_async",
-            AsyncMock(return_value=provider),
-        ):
-            result = await _extract_memorable_content_async(content, user_uuid="user-1")
 
-        assert result == "a\nb"
+    async def _parse(
+        self,
+        messages: list[UserChatMessage],
+        provider: MagicMock,
+    ) -> list[str]:
+        parser = _parser()
+
+        class _SessionCtx:
+            async def __aenter__(self):
+                session = MagicMock()
+                session.commit = AsyncMock()
+                return session
+
+            async def __aexit__(self, *args):
+                return None
+
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
+                side_effect=lambda: _SessionCtx(),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.jobs.utils.list_unmemorized_chat_messages_async",
+                AsyncMock(return_value=messages),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.jobs.utils.delete_unmemorized_chat_messages_async",
+                AsyncMock(),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.jobs.get_config_provider_async",
+                AsyncMock(return_value=provider),
+            ),
+        ):
+            async with parser as memories:
+                return list(memories)
+
+    @pytest.mark.asyncio
+    async def test_strips_memories_when_should_retain(self):
+        provider, backend, agent = self._provider_with_extraction(
+            _ChatMemorizeParseResult(should_retain=True, memories=["a", " b ", ""])
+        )
+        messages = [self._user_message()]
+        result = await self._parse(messages, provider)
+
+        assert result == ["a", "b"]
         provider.get_model_repository.assert_called_once_with(user_uuid="user-1")
         provider.get_model_repository.return_value.get_model_config_async.assert_awaited_once_with(
             "memorize"
@@ -301,61 +357,49 @@ class TestExtractMemorableContent:
         assert judge_config.model_id == "memorize"
         assert judge_config.id == "chat-memorize-judge"
         agent.run_async.assert_awaited_once()
-        assert agent.run_async.await_args.kwargs["query"] == content
-        assert agent.run_async.await_args.kwargs["response_model"] is _MemorizeExtraction
+        assert json.loads(agent.run_async.await_args.kwargs["query"]) == [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+        ]
+        assert agent.run_async.await_args.kwargs["response_model"] is _ChatMemorizeParseResult
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_not_worth_retaining(self):
+    async def test_returns_empty_when_not_worth_retaining(self):
         provider, _, _ = self._provider_with_extraction(
-            _MemorizeExtraction(should_retain=False, memories=["ignored"])
+            _ChatMemorizeParseResult(should_retain=False, memories=["ignored"])
         )
-        with patch(
-            "fivccliche.modules.agent_chats.jobs.get_config_provider_async",
-            AsyncMock(return_value=provider),
-        ):
-            result = await _extract_memorable_content_async("[]", user_uuid="user-1")
-        assert result is None
+        result = await self._parse([self._user_message()], provider)
+        assert result == []
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_memories_empty(self):
+    async def test_returns_empty_when_memories_empty(self):
         provider, _, _ = self._provider_with_extraction(
-            _MemorizeExtraction(should_retain=True, memories=["", "  "])
+            _ChatMemorizeParseResult(should_retain=True, memories=["", "  "])
         )
-        with patch(
-            "fivccliche.modules.agent_chats.jobs.get_config_provider_async",
-            AsyncMock(return_value=provider),
-        ):
-            result = await _extract_memorable_content_async("[]", user_uuid="user-1")
-        assert result is None
+        result = await self._parse([self._user_message()], provider)
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_raises_when_result_is_not_extraction(self):
         from fivcplayground.agents import AgentRunContent
 
         provider, _, _ = self._provider_with_extraction(AgentRunContent(text="ok"))
-        with (
-            patch(
-                "fivccliche.modules.agent_chats.jobs.get_config_provider_async",
-                AsyncMock(return_value=provider),
-            ),
-            pytest.raises(RuntimeError, match="should_retain"),
-        ):
-            await _extract_memorable_content_async("[]", user_uuid="user-1")
+        with pytest.raises(RuntimeError, match="should_retain"):
+            await self._parse([self._user_message()], provider)
 
     @pytest.mark.asyncio
     async def test_returns_raw_content_when_memorize_model_missing(self):
         provider, backend, _ = self._provider_with_extraction(
-            _MemorizeExtraction(should_retain=True, memories=["x"]),
+            _ChatMemorizeParseResult(should_retain=True, memories=["x"]),
             model_config=None,
         )
-        content = '[{"role":"user","content":"hi"}]'
-        with patch(
-            "fivccliche.modules.agent_chats.jobs.get_config_provider_async",
-            AsyncMock(return_value=provider),
-        ):
-            result = await _extract_memorable_content_async(content, user_uuid="user-1")
+        messages = [self._user_message()]
+        result = await self._parse(messages, provider)
 
-        assert result == content
+        assert json.loads(result[0]) == [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+        ]
         backend.create_agent_async.assert_not_awaited()
 
 
@@ -407,8 +451,8 @@ class TestMemorizeJob:
                 side_effect=lambda: _SessionCtx(),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs._extract_memorable_content_async",
-                AsyncMock(return_value="The user is named Charlie"),
+                "fivccliche.modules.agent_chats.jobs._ChatMemorizeParser.__aenter__",
+                AsyncMock(return_value=["The user is named Charlie"]),
             ),
         ):
             await job.run_async()
@@ -534,8 +578,8 @@ class TestMemorizeJob:
                 side_effect=lambda: _SessionCtx(),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs._extract_memorable_content_async",
-                AsyncMock(return_value=None),
+                "fivccliche.modules.agent_chats.jobs._ChatMemorizeParser.__aenter__",
+                AsyncMock(return_value=[]),
             ),
         ):
             await job.run_async()
@@ -591,13 +635,68 @@ class TestMemorizeJob:
                 side_effect=lambda: _SessionCtx(),
             ),
             patch(
-                "fivccliche.modules.agent_chats.jobs._extract_memorable_content_async",
+                "fivccliche.modules.agent_chats.jobs._ChatMemorizeParser.__aenter__",
                 AsyncMock(side_effect=RuntimeError("no memorize model")),
             ),
         ):
             await job.run_async()
 
         memory.retain_async.assert_not_awaited()
+        await session.refresh(msg)
+        assert msg.is_memorized is False
+
+    @pytest.mark.asyncio
+    async def test_job_leaves_unmemorized_when_retain_fails(self, session: AsyncSession, test_user):
+        chat = await _add_chat(session, test_user.uuid)
+        msg = await _add_message(
+            session,
+            chat.uuid,
+            query={"text": "记住我叫 Charlie"},
+            reply={"text": "好的"},
+            created_at=_older(),
+        )
+
+        memory = MagicMock()
+        memory.retain_async = AsyncMock(return_value=MemoryRetainResult(success=False, count=0))
+        provider = MagicMock()
+        provider.get_memory.return_value = memory
+
+        mutex = MagicMock()
+        mutex.acquire_async = AsyncMock(return_value=True)
+        mutex.release_async = AsyncMock(return_value=True)
+        mutex_site = MagicMock()
+        mutex_site.get_mutex.return_value = mutex
+
+        job = ChatMemorizeJob(MagicMock())
+
+        class _SessionCtx:
+            async def __aenter__(self):
+                return session
+
+            async def __aexit__(self, *args):
+                return None
+
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.jobs.get_memory_provider_async",
+                AsyncMock(return_value=provider),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.jobs.get_mutex_site_async",
+                AsyncMock(return_value=mutex_site),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.jobs.get_db_session_context_async",
+                side_effect=lambda: _SessionCtx(),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.jobs._ChatMemorizeParser.__aenter__",
+                AsyncMock(return_value=["The user is named Charlie"]),
+            ),
+        ):
+            await job.run_async()
+
+        memory.retain_async.assert_awaited_once_with("The user is named Charlie")
         await session.refresh(msg)
         assert msg.is_memorized is False
 
@@ -765,10 +864,10 @@ class TestMemorizeJob:
             return_value=None,
         ):
             job = ChatMemorizeJob(component_site)
-        assert job.name == MEMORIZE_JOB_ID
-        assert job.interval_minutes == 5
-        assert job.batch_size == 50
-        assert job.min_age_minutes == 5
+        assert job.name == _MEMORIZE_JOB_ID
+        assert job._setting.interval_minutes == 5
+        assert job._setting.batch_size == 50
+        assert job._setting.min_age_minutes == 5
         assert job.config["trigger"] == "interval"
         assert job.config["minutes"] == 5
         assert job.config["max_instances"] == 1
@@ -789,10 +888,10 @@ class TestMemorizeJob:
         ):
             job = ChatMemorizeJob(component_site)
         config.get_session.assert_called_with("CHAT_MEMORIZE")
-        assert job.interval_minutes == 15
-        assert job.batch_size == 50  # invalid 0 → default
-        assert job.max_batches_per_run == 20  # invalid → default
-        assert job.min_age_minutes == 10
+        assert job._setting.interval_minutes == 15
+        assert job._setting.batch_size == 50  # invalid 0 → default
+        assert job._setting.max_batches_per_run == 20  # invalid → default
+        assert job._setting.min_age_minutes == 10
         assert job.config["minutes"] == 15
 
 
@@ -811,7 +910,7 @@ def test_agent_chats_list_jobs_does_not_register_memorize_job():
 
     jobs = module.list_jobs()
     assert jobs == []
-    assert module.get_job(MEMORIZE_JOB_ID) is None
+    assert module.get_job(_MEMORIZE_JOB_ID) is None
     assert module.get_job("missing") is None
 
     module_site.register_module(module)
@@ -819,4 +918,4 @@ def test_agent_chats_list_jobs_does_not_register_memorize_job():
 
     scheduler: AsyncIOScheduler = app.state.scheduler
     with TestClient(app):
-        assert scheduler.get_job(MEMORIZE_JOB_ID) is None
+        assert scheduler.get_job(_MEMORIZE_JOB_ID) is None
