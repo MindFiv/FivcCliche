@@ -125,6 +125,28 @@ class TestFillChatDescription:
         backend.create_agent_async.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_truncates_llm_title_to_20_chars(self, session: AsyncSession, test_user):
+        long_title = "这是一段明显超过二十个字符限制的聊天标题内容"
+        chat = await _add_chat(session, test_user.uuid)
+        agent = MagicMock()
+        agent.run_async = AsyncMock(return_value=AgentRunContent(text=long_title))
+        backend = MagicMock()
+        backend.create_agent_async = AsyncMock(return_value=agent)
+        repo = MagicMock()
+        repo.get_model_config_async = AsyncMock(return_value=True)
+        provider = MagicMock()
+        provider.get_agent_backend.return_value = backend
+        provider.get_model_backend.return_value = MagicMock()
+        provider.get_model_repository.return_value = repo
+
+        with _session_patch(session), _mutex_patch():
+            await _run_describe(test_user, provider, chat.uuid, "帮我看看这段代码为什么报错")
+
+        await session.refresh(chat)
+        assert chat.description == long_title[:20]
+        assert len(chat.description) == 20
+
+    @pytest.mark.asyncio
     async def test_truncates_query_when_describe_model_missing(
         self, session: AsyncSession, test_user
     ):

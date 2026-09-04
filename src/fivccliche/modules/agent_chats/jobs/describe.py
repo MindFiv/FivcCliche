@@ -24,10 +24,13 @@ _DESCRIBE_MODEL_ID = "describe"
 _DESCRIBE_PROMPT = """\
 Write a short chat title from the user's first message.
 Use the same language as the message. One line only.
+At most 20 characters, counting every letter, CJK character, and emoji.
+You may add 1 or 2 emojis that match objects, mood, or topic in the message.
+Put emojis at the start or end. Skip them if nothing fits.
 Do not use quotes. Do not add facts that are not in the message.
 """
 _FALLBACK_MAX_CHARS = 80
-_DESCRIPTION_MAX_CHARS = 1024
+_TITLE_MAX_CHARS = 20
 _MUTEX_EXPIRE = timedelta(minutes=5)
 
 
@@ -124,4 +127,4 @@ class ChatDescribeJob(IModuleJob):
             ),
         )
         result = await agent.run_async(query=query_text)
-        return _title_from_result(result)[:_DESCRIPTION_MAX_CHARS]
+        return _title_from_result(result)[:_TITLE_MAX_CHARS]
