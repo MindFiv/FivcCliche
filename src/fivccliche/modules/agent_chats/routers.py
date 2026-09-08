@@ -1,6 +1,6 @@
 import asyncio
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import cast
 
 from fastapi import (
@@ -77,6 +77,18 @@ async def list_chats_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     agent_id: str | None = Query(None, description="Filter chats by agent ID"),
+    created_at_from: datetime | None = Query(
+        None, description="Inclusive lower bound on chat created_at"
+    ),
+    created_at_to: datetime | None = Query(
+        None, description="Inclusive upper bound on chat created_at"
+    ),
+    updated_at_from: datetime | None = Query(
+        None, description="Inclusive lower bound on chat updated_at"
+    ),
+    updated_at_to: datetime | None = Query(
+        None, description="Inclusive upper bound on chat updated_at"
+    ),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse[schemas.UserChatSchema]:
@@ -85,6 +97,10 @@ async def list_chats_async(
         filters = ChatFilterSet(user.uuid, is_superuser=user.is_superuser)
         filters.parse(
             agent_id=agent_id,
+            created_at_from=created_at_from,
+            created_at_to=created_at_to,
+            updated_at_from=updated_at_from,
+            updated_at_to=updated_at_to,
             **{
                 key: value
                 for key, value in request.query_params.multi_items()
@@ -159,6 +175,7 @@ async def update_chat_async(
             detail="Chat not found",
         )
     chat.description = chat_update.description
+    chat.updated_at = datetime.now(timezone.utc)
     session.add(chat)
     await session.commit()
     await session.refresh(chat)

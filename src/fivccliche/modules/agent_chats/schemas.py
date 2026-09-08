@@ -9,6 +9,8 @@ __all__ = [
     "UserChatUpdateSchema",
 ]
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from fivcplayground.agents.types import (
@@ -29,6 +31,7 @@ class UserChatSchema(AgentRunSession):
 
     uuid: str | None = Field(default=None, description="Chat UUID (globally unique)")
     context: dict | None = Field(default=None, description="Chat context")
+    updated_at: datetime | None = Field(default=None, description="Last update time")
     is_memorable: bool = Field(
         default=False, description="Whether this chat is eligible for memory retention"
     )

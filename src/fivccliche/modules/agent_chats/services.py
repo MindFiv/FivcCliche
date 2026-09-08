@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
@@ -75,6 +75,7 @@ class UserChatRepositoryImpl(UserChatRepository):
             if existing:
                 if session.description is not None:
                     existing.description = session.description
+                    existing.updated_at = datetime.now(timezone.utc)
                 if hasattr(session, "context") and session.context is not None:
                     existing.context = session.context
                 db_session.add(existing)

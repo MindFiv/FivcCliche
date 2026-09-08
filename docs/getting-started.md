@@ -23,7 +23,13 @@ python -m fivccliche.cli migrate
 python -m fivccliche.cli createsuperuser
 ```
 
-`migrate` creates missing tables; it does not alter existing ones.
+`migrate` creates missing tables; it does not alter existing ones. Existing databases
+created before `chat.updated_at` was added need:
+
+```sql
+ALTER TABLE chat ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+UPDATE chat SET updated_at = created_at;
+```
 
 ## Run the server
 

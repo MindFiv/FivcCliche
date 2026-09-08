@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -162,6 +163,22 @@ class TestFillChatDescription:
         await session.refresh(chat)
         assert chat.description == "short question"
         provider.get_agent_backend.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_describe_bumps_updated_at(self, session: AsyncSession, test_user):
+        past = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        chat = await _add_chat(session, test_user.uuid, updated_at=past)
+        repo = MagicMock()
+        repo.get_model_config_async = AsyncMock(return_value=None)
+        provider = MagicMock()
+        provider.get_model_repository.return_value = repo
+
+        with _session_patch(session), _mutex_patch():
+            await _run_describe(test_user, provider, chat.uuid, "short question")
+
+        await session.refresh(chat)
+        assert chat.description == "short question"
+        assert chat.updated_at.replace(tzinfo=timezone.utc) > past
 
     @pytest.mark.asyncio
     async def test_leaves_existing_description(self, session: AsyncSession, test_user):

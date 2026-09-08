@@ -57,11 +57,13 @@ Chats use the same Readable/Editable FilterSets for chat ownership; they are not
 
 HTTP list filters that bind query params to SQL belong in that module's `filters.py` as a `FilterSet` subclass. Do not put them in `schemas.py` or in [`utils/filters.py`](../src/fivccliche/utils/filters.py) (reusable `FilterField` / `FilterSimpleField` / `FilterJsonField` / `FilterReadableField` / `FilterEditableField` / `FilterSet`). Do not use FilterSet as a FastAPI `Depends`; declare scalar query params with `Query()` on the handler, instantiate the FilterSet, call `parse(...)` (plus any dotted JSON keys from the request), then pass it into SQL helpers that call `filter(statement)`.
 
-Chat list uses [`ChatFilterSet`](../src/fivccliche/modules/agent_chats/filters.py): `ChatFilterSet(user_uuid, is_superuser=...)` → `parse(agent_id=..., context.*=...)` → `filter(statement)` (includes Readable).
+Chat list uses [`ChatFilterSet`](../src/fivccliche/modules/agent_chats/filters.py): `ChatFilterSet(user_uuid, is_superuser=...)` → `parse(agent_id=..., created_at_from=..., created_at_to=..., updated_at_from=..., updated_at_to=..., context.*=...)` → `filter(statement)` (includes Readable).
 
 Question list uses [`QuestionFilterSet`](../src/fivccliche/modules/agent_configs/filters.py): `QuestionFilterSet(user_uuid, is_superuser=...)` → `parse(is_active=...)` → passed into `list_user_scoped_async` / `count_user_scoped_async` as `filters`.
 
 - `?agent_id=` exact match on the chat agent
+- `?created_at_from=` / `?created_at_to=` inclusive bounds (`>=` / `<=`) on `UserChat.created_at` (response field remains `started_at`)
+- `?updated_at_from=` / `?updated_at_to=` inclusive bounds (`>=` / `<=`) on `UserChat.updated_at`
 - `?context.<key>=<value>` exact match on a top-level JSON key of `context` (one level only). `UserChat.context` stays a persisted dict. `UserChatProviderImpl.get_chat_context` returns a copy of that JSON plus `user_uuid`, merged `**kwargs` (for example `chat_uuid`), default `timezone` (`Asia/Shanghai`), and a lazy `time` whose `__str__` computes a timezone-aware ISO string and is not persisted. `ChatQueryJob` calls `get_chat_context` and passes the result to the agent run.
 - Repeated paths use the last value
 - Nested keys such as `context.profile.uuid` return 422; bare `context=` is invalid if passed into `parse`
@@ -79,5 +81,7 @@ The handler looks up the chat via Editable (404 if missing), acquires mutex `cha
 3. `BackgroundTasks` first `asyncio.gather(query_task, return_exceptions=True)` (keeps the run alive after client disconnect), then `ChatDescribeJob` when the chat still has an empty description and the query is not a slash command.
 
 `ChatQueryJob` and `ChatDescribeJob` have `config is None` and are not on `list_jobs()`.
+
+`UserChat.updated_at` is set equal to `created_at` on create. It is refreshed when a new message is created (`create_chat_message_async`) and when a description is written (`PATCH /{chat_uuid}/`, `ChatDescribeJob`, and repository session description updates). Updating an existing message does not refresh it. List order stays `created_at` descending.
 
 `PATCH /{chat_uuid}/` updates only a non-empty `description` (Editable lookup, 404 if not editable).

@@ -50,6 +50,14 @@ class UserChat(SQLModel, table=True):
         ),
         description="Chat creation time.",
     )
+    updated_at: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            default=lambda: datetime.now(timezone.utc),
+            nullable=False,
+        ),
+        description="Chat last update time.",
+    )
     is_memorable: bool = Field(
         default=False,
         description="Whether this chat is eligible for memory retention.",
@@ -64,6 +72,7 @@ class UserChat(SQLModel, table=True):
             description=self.description,
             context=self.context,
             started_at=self.created_at,
+            updated_at=self.updated_at,
             is_memorable=self.is_memorable,
         )
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from fivcglue import IComponentSite
 from fivcplayground.agents import AgentConfig
@@ -101,6 +101,7 @@ class ChatDescribeJob(IModuleJob):
                     if chat is None or (chat.description or "").strip():
                         return
                     chat.description = title
+                    chat.updated_at = datetime.now(timezone.utc)
                     session.add(chat)
                     await session.commit()
         except Exception:

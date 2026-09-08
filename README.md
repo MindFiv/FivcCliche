@@ -71,7 +71,13 @@ or delete.
 
 `python -m fivccliche.cli migrate` creates missing tables but does not alter existing
 tables. Existing databases created before `user_llm.enable_thinking` was added need a
-manual nullable boolean column on `user_llm` or a table rebuild.
+manual nullable boolean column on `user_llm` or a table rebuild. Existing databases
+created before `chat.updated_at` was added need:
+
+```sql
+ALTER TABLE chat ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+UPDATE chat SET updated_at = created_at;
+```
 
 ### CLI Options
 

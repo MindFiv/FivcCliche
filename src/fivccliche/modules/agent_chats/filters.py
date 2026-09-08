@@ -26,6 +26,10 @@ class ChatFilterSet(FilterSet):
                     is_superuser=is_superuser,
                 ),
                 FilterSimpleField("agent_id", models.UserChat.agent_id, operator.eq),
+                FilterSimpleField("created_at_from", models.UserChat.created_at, operator.ge),
+                FilterSimpleField("created_at_to", models.UserChat.created_at, operator.le),
+                FilterSimpleField("updated_at_from", models.UserChat.updated_at, operator.ge),
+                FilterSimpleField("updated_at_to", models.UserChat.updated_at, operator.le),
                 FilterJsonField("context", models.UserChat.context, operator.eq),
             ]
         )

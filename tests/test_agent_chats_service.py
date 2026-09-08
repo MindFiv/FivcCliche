@@ -375,6 +375,22 @@ class TestChatMethods:
         assert chat is not None
         assert chat.context is None
 
+    async def test_create_chat_async_sets_updated_at_equal_to_created_at(
+        self, session: AsyncSession, test_user
+    ):
+        """Create sets updated_at to the same instant as created_at."""
+        chat = await methods.create_chat_async(
+            session,
+            user_uuid=test_user.uuid,
+            agent_id="test_agent",
+        )
+        await session.commit()
+        await session.refresh(chat)
+
+        assert chat.updated_at is not None
+        assert chat.created_at is not None
+        assert chat.updated_at == chat.created_at
+
     async def test_get_chat_returns_context(self, session: AsyncSession, test_user):
         """Test that get_chat returns the context field."""
         context = {"key": "value", "number": 123}
@@ -411,6 +427,121 @@ class TestChatMethods:
         )
         schema = chat.to_schema()
         assert schema.context is None
+
+    async def test_chat_to_schema_includes_updated_at(self, session: AsyncSession, test_user):
+        """to_schema exposes updated_at."""
+        chat = await methods.create_chat_async(
+            session,
+            user_uuid=test_user.uuid,
+            agent_id="test_agent",
+        )
+        schema = chat.to_schema()
+        assert schema.updated_at == chat.updated_at
+        assert schema.started_at == chat.created_at
+
+    async def test_list_chats_async_filters_by_created_at_range(
+        self, session: AsyncSession, test_user
+    ):
+        """created_at_from/to are inclusive bounds on UserChat.created_at."""
+        base = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+        early = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent",
+            created_at=base - timedelta(days=2),
+            updated_at=base - timedelta(days=2),
+        )
+        boundary = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent",
+            created_at=base,
+            updated_at=base,
+        )
+        late = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent",
+            created_at=base + timedelta(days=2),
+            updated_at=base + timedelta(days=2),
+        )
+        session.add_all([early, boundary, late])
+        await session.commit()
+
+        filters = ChatFilterSet(test_user.uuid, is_superuser=False)
+        filters.parse(created_at_from=base, created_at_to=base)
+        chats = await methods.list_chats_async(session, filters=filters)
+        assert [chat.uuid for chat in chats] == [boundary.uuid]
+
+        count_filters = ChatFilterSet(test_user.uuid, is_superuser=False)
+        count_filters.parse(created_at_from=base, created_at_to=base)
+        assert await methods.count_chats_async(session, filters=count_filters) == 1
+
+    async def test_list_chats_async_filters_by_updated_at_range(
+        self, session: AsyncSession, test_user
+    ):
+        """updated_at_from/to are inclusive bounds on UserChat.updated_at."""
+        created = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+        early = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent",
+            created_at=created,
+            updated_at=base - timedelta(days=2),
+        )
+        boundary = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent",
+            created_at=created,
+            updated_at=base,
+        )
+        late = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent",
+            created_at=created,
+            updated_at=base + timedelta(days=2),
+        )
+        session.add_all([early, boundary, late])
+        await session.commit()
+
+        filters = ChatFilterSet(test_user.uuid, is_superuser=False)
+        filters.parse(updated_at_from=base, updated_at_to=base)
+        chats = await methods.list_chats_async(session, filters=filters)
+        assert [chat.uuid for chat in chats] == [boundary.uuid]
+
+    async def test_list_chats_async_combines_created_and_updated_at_filters(
+        self, session: AsyncSession, test_user
+    ):
+        """created_at and updated_at range filters combine with AND."""
+        created_base = datetime(2026, 1, 10, tzinfo=timezone.utc)
+        updated_base = datetime(2026, 1, 20, tzinfo=timezone.utc)
+        matching = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent",
+            created_at=created_base,
+            updated_at=updated_base,
+        )
+        wrong_created = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent",
+            created_at=created_base - timedelta(days=5),
+            updated_at=updated_base,
+        )
+        wrong_updated = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent",
+            created_at=created_base,
+            updated_at=updated_base + timedelta(days=5),
+        )
+        session.add_all([matching, wrong_created, wrong_updated])
+        await session.commit()
+
+        filters = ChatFilterSet(test_user.uuid, is_superuser=False)
+        filters.parse(
+            created_at_from=created_base,
+            created_at_to=created_base,
+            updated_at_from=updated_base,
+            updated_at_to=updated_base,
+        )
+        chats = await methods.list_chats_async(session, filters=filters)
+        assert [chat.uuid for chat in chats] == [matching.uuid]
 
 
 class TestChatMessageMethods:
@@ -491,6 +622,38 @@ class TestChatMessageMethods:
         """Test getting a non-existent message."""
         retrieved = await methods.get_chat_message_async(session, "nonexistent", test_chat.uuid)
         assert retrieved is None
+
+    async def test_create_chat_message_async_bumps_chat_updated_at(
+        self, session: AsyncSession, test_chat: UserChat
+    ):
+        """Creating a message refreshes the parent chat updated_at."""
+        past = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        test_chat.updated_at = past
+        session.add(test_chat)
+        await session.commit()
+
+        await methods.create_chat_message_async(session, chat_uuid=test_chat.uuid)
+        await session.commit()
+        await session.refresh(test_chat)
+
+        assert test_chat.updated_at.replace(tzinfo=timezone.utc) > past
+
+    async def test_update_chat_message_async_does_not_bump_chat_updated_at(
+        self, session: AsyncSession, test_chat: UserChat
+    ):
+        """Updating an existing message does not refresh chat updated_at."""
+        past = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        test_chat.updated_at = past
+        message = UserChatMessage(chat_uuid=test_chat.uuid, status="pending")
+        session.add(test_chat)
+        session.add(message)
+        await session.commit()
+
+        await methods.update_chat_message_async(session, message, status="completed")
+        await session.commit()
+        await session.refresh(test_chat)
+
+        assert test_chat.updated_at.replace(tzinfo=timezone.utc) == past
 
     async def test_list_chat_messages_empty(self, session: AsyncSession, test_chat: UserChat):
         """Test listing messages when none exist."""
@@ -654,6 +817,41 @@ class TestUserChatRepositoryImpl:
         await engine.dispose()
         assert chat is not None
         assert chat.description == "Updated description"
+
+    async def test_update_agent_run_session_bumps_updated_at(
+        self,
+        repository: "UserChatRepositoryImpl",
+        session: AsyncSession,
+        database_url: str,
+        test_user,
+        test_chat: UserChat,
+    ):
+        """Updating a session description refreshes chat updated_at."""
+        from fivcplayground.agents.types import AgentRunSession
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        past = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        test_chat.updated_at = past
+        session.add(test_chat)
+        await session.commit()
+
+        await repository.update_agent_run_session_async(
+            AgentRunSession(
+                id=test_chat.uuid,
+                agent_id=test_chat.agent_id,
+                description="Updated description",
+            )
+        )
+
+        engine = create_async_engine(database_url, poolclass=NullPool)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            chat = await methods.get_chat_async(
+                db, test_chat.uuid, filters=ChatFilterSet(test_user.uuid, is_superuser=False)
+            )
+        await engine.dispose()
+        assert chat is not None
+        assert chat.updated_at.replace(tzinfo=timezone.utc) > past
 
     async def test_get_agent_run_session_found(
         self,

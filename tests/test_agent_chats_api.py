@@ -102,6 +102,7 @@ class TestChatAPI:
         assert data["agent_id"] == "default"
         assert "created_at" in data or "started_at" in data
         assert data["is_memorable"] is True
+        assert data["updated_at"] == data["started_at"]
 
     def test_create_chat_with_custom_agent(self, client: TestClient, auth_token: str):
         """Test creating chat with custom agent_id."""
@@ -256,6 +257,104 @@ class TestChatContextAPI:
         )
 
         assert response.status_code == 200
+
+
+class TestListChatDateFilters:
+    """GET /chats/ created_at / updated_at range filters."""
+
+    def test_list_chats_filters_by_created_at_range(self, client: TestClient, auth_token: str):
+        from datetime import datetime, timedelta, timezone
+
+        from fivccliche.modules.users.utils import get_user_async
+
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        session = client.async_session
+        loop = client.loop
+        base = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+
+        async def setup():
+            admin = await get_user_async(session, username="admin")
+            early = UserChat(
+                user_uuid=str(admin.uuid),
+                agent_id="default",
+                created_at=base - timedelta(days=2),
+                updated_at=base - timedelta(days=2),
+            )
+            boundary = UserChat(
+                user_uuid=str(admin.uuid),
+                agent_id="default",
+                created_at=base,
+                updated_at=base,
+            )
+            late = UserChat(
+                user_uuid=str(admin.uuid),
+                agent_id="default",
+                created_at=base + timedelta(days=2),
+                updated_at=base + timedelta(days=2),
+            )
+            session.add_all([early, boundary, late])
+            await session.commit()
+            return str(boundary.uuid)
+
+        boundary_uuid = loop.run_until_complete(setup())
+        response = client.get(
+            "/chats/?created_at_from=2026-01-15T12:00:00Z&created_at_to=2026-01-15T12:00:00Z",
+            headers=headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert [chat["uuid"] for chat in data["results"]] == [boundary_uuid]
+
+    def test_list_chats_filters_by_updated_at_range(self, client: TestClient, auth_token: str):
+        from datetime import datetime, timedelta, timezone
+
+        from fivccliche.modules.users.utils import get_user_async
+
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        session = client.async_session
+        loop = client.loop
+        created = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+
+        async def setup():
+            admin = await get_user_async(session, username="admin")
+            early = UserChat(
+                user_uuid=str(admin.uuid),
+                agent_id="default",
+                created_at=created,
+                updated_at=base - timedelta(days=2),
+            )
+            boundary = UserChat(
+                user_uuid=str(admin.uuid),
+                agent_id="default",
+                created_at=created,
+                updated_at=base,
+            )
+            late = UserChat(
+                user_uuid=str(admin.uuid),
+                agent_id="default",
+                created_at=created,
+                updated_at=base + timedelta(days=2),
+            )
+            session.add_all([early, boundary, late])
+            await session.commit()
+            return str(boundary.uuid)
+
+        boundary_uuid = loop.run_until_complete(setup())
+        response = client.get(
+            "/chats/?updated_at_from=2026-01-15T12:00:00Z&updated_at_to=2026-01-15T12:00:00Z",
+            headers=headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        assert [chat["uuid"] for chat in data["results"]] == [boundary_uuid]
+
+    def test_list_chats_rejects_invalid_created_at_from(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.get("/chats/?created_at_from=not-a-date", headers=headers)
+        assert response.status_code == 422
 
 
 class TestChatMessageAPI:
@@ -570,10 +669,46 @@ class TestUpdateChat:
         )
         assert response.status_code == 200
         assert response.json()["description"] == "My title"
+        assert response.json()["updated_at"] >= created.json()["updated_at"]
 
         got = client.get(f"/chats/{chat_uuid}/", headers=headers)
         assert got.status_code == 200
         assert got.json()["description"] == "My title"
+
+    def test_update_description_bumps_updated_at(self, client: TestClient, auth_token: str):
+        from datetime import datetime, timezone
+
+        from fivccliche.modules.agent_chats import utils as chat_methods
+        from fivccliche.modules.agent_chats.filters import ChatFilterSet
+        from fivccliche.modules.users.utils import get_user_async
+
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        created = client.post("/chats/", json={"agent_id": "test-agent"}, headers=headers)
+        chat_uuid = created.json()["uuid"]
+        past = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        session = client.async_session
+        loop = client.loop
+
+        async def backdate():
+            admin = await get_user_async(session, username="admin")
+            chat = await chat_methods.get_chat_async(
+                session,
+                chat_uuid,
+                filters=ChatFilterSet(str(admin.uuid), is_superuser=True),
+            )
+            chat.updated_at = past
+            session.add(chat)
+            await session.commit()
+
+        loop.run_until_complete(backdate())
+        response = client.patch(
+            f"/chats/{chat_uuid}/",
+            json={"description": "My title"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        updated = datetime.fromisoformat(response.json()["updated_at"].replace("Z", "+00:00"))
+        assert updated > past
 
     def test_empty_description_rejected(self, client: TestClient, auth_token: str):
         headers = {"Authorization": f"Bearer {auth_token}"}

@@ -1,6 +1,6 @@
 """Shared SQL for chats and messages."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import cast
 
 from sqlalchemy import exists, func, update
@@ -43,12 +43,15 @@ async def create_chat_async(
     if not agent_id:
         raise ValueError("agent_id is required to create a chat")
 
+    now = datetime.now(timezone.utc)
     chat = models.UserChat(
         user_uuid=user_uuid,
         agent_id=agent_id,
         description=description,
         context=context,
         is_memorable=is_memorable,
+        created_at=now,
+        updated_at=now,
     )
     if chat_uuid:
         chat.uuid = chat_uuid
@@ -164,6 +167,10 @@ async def create_chat_message_async(
     if status:
         message.status = status
     session.add(message)
+    chat = await session.get(models.UserChat, chat_uuid)
+    if chat is not None:
+        chat.updated_at = datetime.now(timezone.utc)
+        session.add(chat)
     return message
 
 
