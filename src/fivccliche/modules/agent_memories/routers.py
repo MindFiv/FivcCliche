@@ -83,3 +83,30 @@ async def retain_memories_async(
     return schemas.MemoryRetainResponseSchema(
         success=result.success, count=result.count, ids=result.ids
     )
+
+
+@router_memories.delete(
+    "/{memory_id}/",
+    summary="Delete a memory for the authenticated user.",
+    response_model=schemas.MemoryDeleteResponseSchema,
+)
+async def delete_memory_async(
+    memory_id: str,
+    user: IUser = Depends(get_authenticated_user_async),
+    memory_provider: IUserMemoryProvider = Depends(get_required_memory_provider_async),
+) -> schemas.MemoryDeleteResponseSchema:
+    memory = memory_provider.get_memory(space_id=user.uuid)
+    try:
+        result = await memory.delete_async(memory_id)
+    except Exception as exc:
+        status_code = getattr(exc, "status", None)
+        if status_code is None:
+            status_code = getattr(exc, "status_code", None)
+        if status_code == status.HTTP_404_NOT_FOUND:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found"
+            ) from exc
+        if status_code == status.HTTP_400_BAD_REQUEST:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise
+    return schemas.MemoryDeleteResponseSchema(success=result.success, id=result.id)

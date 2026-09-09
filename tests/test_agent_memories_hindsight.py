@@ -20,6 +20,7 @@ from fivccliche.services.interfaces.agent_memories import (
     IUserMemory,
     IUserMemoryProvider,
     MemoryContent,
+    MemoryDeleteResult,
     MemoryListResult,
     MemoryRecallResult,
     MemoryRetainResult,
@@ -156,6 +157,7 @@ class TestUserMemoryHindsightImpl:
             q=None,
             limit=25,
             offset=10,
+            state="valid",
         )
         assert isinstance(result, MemoryListResult)
         assert result.total == 5
@@ -214,6 +216,53 @@ class TestUserMemoryHindsightImpl:
 
         assert result.items == []
         assert result.total == 0
+
+    @pytest.mark.asyncio
+    async def test_list_forwards_explicit_state_override(self):
+        hindsight = MagicMock()
+        native = MagicMock()
+        native.items = []
+        native.total = 0
+        hindsight.memory.list_memories = AsyncMock(return_value=native)
+
+        memory = UserMemoryHindsightImpl(hindsight, bank_id="alice")
+        await memory.list_async(state="invalidated")
+
+        hindsight.memory.list_memories.assert_awaited_once_with(
+            bank_id="alice",
+            type=None,
+            q=None,
+            limit=100,
+            offset=0,
+            state="invalidated",
+        )
+
+    @pytest.mark.asyncio
+    async def test_delete_invalidates_via_update_memory(self):
+        hindsight = MagicMock()
+        native = MagicMock()
+        hindsight.memory.update_memory = AsyncMock(return_value=native)
+        request_cls = MagicMock()
+        request = MagicMock()
+        request_cls.return_value = request
+
+        memory = UserMemoryHindsightImpl(hindsight, bank_id="alice")
+        with patch(
+            "fivccliche.services.implements.agent_memories_hindsight._import_update_memory_request",
+            return_value=request_cls,
+        ):
+            result = await memory.delete_async("m1")
+
+        request_cls.assert_called_once_with(state="invalidated")
+        hindsight.memory.update_memory.assert_awaited_once_with(
+            bank_id="alice",
+            memory_id="m1",
+            update_memory_request=request,
+        )
+        assert isinstance(result, MemoryDeleteResult)
+        assert result.success is True
+        assert result.id == "m1"
+        assert result.raw is native
 
 
 _IMPORT_HINDSIGHT = "fivccliche.services.implements.agent_memories_hindsight._import_hindsight"

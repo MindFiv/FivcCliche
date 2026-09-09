@@ -357,6 +357,104 @@ class TestListChatDateFilters:
         assert response.status_code == 422
 
 
+class TestListChatsOrdering:
+    """GET /chats/ order_by and order_dir query params."""
+
+    def _seed_chats(self, client: TestClient) -> dict[str, str]:
+        from datetime import datetime, timedelta, timezone
+
+        from fivccliche.modules.users.utils import get_user_async
+
+        session = client.async_session
+        loop = client.loop
+        created = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+
+        async def setup():
+            admin = await get_user_async(session, username="admin")
+            oldest_updated = UserChat(
+                user_uuid=str(admin.uuid),
+                agent_id="zeta",
+                created_at=created + timedelta(days=2),
+                updated_at=base - timedelta(days=2),
+            )
+            newest_updated = UserChat(
+                user_uuid=str(admin.uuid),
+                agent_id="alpha",
+                created_at=created,
+                updated_at=base + timedelta(days=2),
+            )
+            middle_updated = UserChat(
+                user_uuid=str(admin.uuid),
+                agent_id="mu",
+                created_at=created + timedelta(days=1),
+                updated_at=base,
+            )
+            session.add_all([oldest_updated, newest_updated, middle_updated])
+            await session.commit()
+            return {
+                "oldest_updated": str(oldest_updated.uuid),
+                "newest_updated": str(newest_updated.uuid),
+                "middle_updated": str(middle_updated.uuid),
+            }
+
+        return loop.run_until_complete(setup())
+
+    def test_default_order_is_updated_at_desc(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        chats = self._seed_chats(client)
+        response = client.get("/chats/", headers=headers)
+        assert response.status_code == 200
+        results = response.json()["results"]
+        assert [chat["uuid"] for chat in results] == [
+            chats["newest_updated"],
+            chats["middle_updated"],
+            chats["oldest_updated"],
+        ]
+
+    def test_order_by_updated_at_asc(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        chats = self._seed_chats(client)
+        response = client.get("/chats/?order_by=updated_at&order_dir=asc", headers=headers)
+        assert response.status_code == 200
+        results = response.json()["results"]
+        assert [chat["uuid"] for chat in results] == [
+            chats["oldest_updated"],
+            chats["middle_updated"],
+            chats["newest_updated"],
+        ]
+
+    def test_order_by_created_at_desc(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        chats = self._seed_chats(client)
+        response = client.get("/chats/?order_by=created_at&order_dir=desc", headers=headers)
+        assert response.status_code == 200
+        results = response.json()["results"]
+        assert [chat["uuid"] for chat in results] == [
+            chats["oldest_updated"],
+            chats["middle_updated"],
+            chats["newest_updated"],
+        ]
+
+    def test_order_by_agent_id_asc(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        self._seed_chats(client)
+        response = client.get("/chats/?order_by=agent_id&order_dir=asc", headers=headers)
+        assert response.status_code == 200
+        results = response.json()["results"]
+        assert [chat["agent_id"] for chat in results] == ["alpha", "mu", "zeta"]
+
+    def test_invalid_order_by_returns_422(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.get("/chats/?order_by=description", headers=headers)
+        assert response.status_code == 422
+
+    def test_invalid_order_dir_returns_422(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.get("/chats/?order_dir=random", headers=headers)
+        assert response.status_code == 422
+
+
 class TestChatMessageAPI:
     """Test cases for chat message API endpoints."""
 

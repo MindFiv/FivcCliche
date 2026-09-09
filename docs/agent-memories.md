@@ -12,9 +12,9 @@ via optional `hindsight-client` (not a core package dependency).
   registered** on the scheduler (`agent_chats` `list_jobs()` is empty). A
   job listed with `config is None` is also skipped at mount.
 - Function tools in `agent_memories.tools` (`MemoryRetain` / `MemoryRecall` /
-  `MemoryList`) for later `transport=function` wiring
+  `MemoryList` / `MemoryDelete`) for later `transport=function` wiring
 - HTTP API in `agent_memories` (`GET /memories/`, `GET /memories/recall/`,
-  superuser-only `POST /memories/retain/`)
+  superuser-only `POST /memories/retain/`, `DELETE /memories/{id}/`)
 - `UserChatMessage.is_memorized` is written by the job after a successful retain
   (or when there is nothing to retain, including when the memorize LLM extracts
   nothing); it is not exposed on the public API yet
@@ -26,16 +26,25 @@ Defined in `src/fivccliche/services/interfaces/agent_memories.py`:
 | Type | Role |
 |------|------|
 | `IUserMemoryProvider` | Factory: `get_memory(space_id=...)` → `IUserMemory` |
-| `IUserMemory` | Per-space API: `retain_async` / `recall_async` / `list_async` |
+| `IUserMemory` | Per-space API: `retain_async` / `recall_async` / `list_async` / `delete_async` |
 | `MemoryContent` | Normalized recalled/listed item |
-| `MemoryRetainResult` / `MemoryRecallResult` / `MemoryListResult` | Normalized operation outcomes |
+| `MemoryRetainResult` / `MemoryRecallResult` / `MemoryListResult` / `MemoryDeleteResult` | Normalized operation outcomes |
 
 Business code should depend only on these types, never on Hindsight-native
 response objects (`raw` is an escape hatch).
 
 `list_async(*, skip=0, limit=100, **kwargs)` returns `MemoryListResult` with
 `items` and `total`. Extra `kwargs` are backend-specific (e.g. Hindsight
-`type` / `search_query`) and are not exposed by the HTTP module.
+`type` / `search_query` / `state`) and are not exposed by the HTTP module.
+`list_async` and `recall_async` return only memories that still participate
+in recall (valid / unexpired). Hindsight `list_async` defaults to
+`state="valid"` so invalidated rows stay off the user-facing list.
+
+`delete_async(memory_id)` removes a memory from that space: after success it
+must not appear in `list_async` or `recall_async`. Hindsight maps this to
+reversible invalidate (`PATCH` `state=invalidated`); mem0 would map it to
+`client.delete`. Hindsight cannot curate derived observations — that is a
+client error, not a silent no-op.
 
 ## Hindsight implementation
 
@@ -47,7 +56,10 @@ response objects (`raw` is an escape hatch).
 - Creates the `Hindsight` SDK client lazily on first `get_memory` call
 - Maps `space_id` directly to Hindsight `bank_id` (`None` → `"default"`)
 - Banks are created automatically by Hindsight on first retain/recall
-- `list_async` calls `client.memory.list_memories` (`offset=skip`)
+- `list_async` calls `client.memory.list_memories` (`offset=skip`,
+  `state="valid"` unless overridden)
+- `delete_async` calls `client.memory.update_memory` with
+  `state="invalidated"`
 
 Chat memorize job uses `space_id=chat.user_uuid`.
 
@@ -57,14 +69,18 @@ Mounted under `/api` (same as other modules). Requires a Bearer JWT.
 
 | Method | Path | Behavior |
 |--------|------|----------|
-| `GET` | `/memories/` | Paginated list (`skip` / `limit`) → `{ total, results }` |
-| `GET` | `/memories/recall/?query=` | Semantic recall → `{ results }` |
+| `GET` | `/memories/` | Paginated list of valid memories (`skip` / `limit`) → `{ total, results }` |
+| `GET` | `/memories/recall/?query=` | Semantic recall of valid memories → `{ results }` |
 | `POST` | `/memories/retain/` | Superuser-only retain → `{ success, count, ids }` (`raw` is not exposed) |
+| `DELETE` | `/memories/{id}/` | Authenticated user deletes one memory → `{ success, id }` (`raw` is not exposed) |
 
 `space_id` is always the authenticated user's `uuid`. Retain uses
 `get_admin_user_async`: unauthenticated requests return **401**; a non-superuser
 JWT returns **403** with `detail="Not a super user"`. Backend `success=False`
-is still HTTP **200** with that flag in the body.
+is still HTTP **200** with that flag in the body. Delete uses
+`get_authenticated_user_async` (same as list/recall). A backend 404 becomes
+HTTP **404** (`Memory not found`); a backend 400 (e.g. Hindsight observation)
+becomes HTTP **400** with the backend message.
 
 If `IUserMemoryProvider` is not registered, these endpoints return
 **503** with `detail="Memory provider is not mounted"`.
@@ -152,6 +168,7 @@ the dotted paths. They are not exposed through chat context.
 - `fivccliche.modules.agent_memories.tools.MemoryRetain`
 - `fivccliche.modules.agent_memories.tools.MemoryRecall`
 - `fivccliche.modules.agent_memories.tools.MemoryList`
+- `fivccliche.modules.agent_memories.tools.MemoryDelete`
 
 Each class takes `**context` (expects `user_uuid`) and returns normalized JSON
 (`raw` is omitted). `space_id` is the context `user_uuid`. Missing `user_uuid`
@@ -162,6 +179,7 @@ or an unmounted provider raises `ValueError`.
 | `MemoryRetain` | `content` | `{ success, count, ids }` |
 | `MemoryRecall` | `query` | `{ items }` |
 | `MemoryList` | `skip=0`, `limit=20` | `{ total, items }` |
+| `MemoryDelete` | `memory_id` | `{ success, id }` |
 
 ## Chat memorize job
 
@@ -247,14 +265,15 @@ async def example(
     await memory.retain_async('[{"role":"user","content":"hi"}]')
     recalled = await memory.recall_async("hi")
     listed = await memory.list_async(skip=0, limit=20)
+    await memory.delete_async("memory-id")
     return recalled.items, listed.items
 ```
 
 ## Testing
 
-- `tests/test_agent_memories_hindsight.py` — Hindsight provider (mocked SDK), including `list_async`
-- `tests/test_agent_memories_api.py` — HTTP auth, 503 when unmounted, list/recall/retain success, retain 403 for non-superuser
-- `tests/test_agent_memories_tools.py` — retain/recall/list tools, missing
+- `tests/test_agent_memories_hindsight.py` — Hindsight provider (mocked SDK), including `list_async` (default `state=valid`) and `delete_async` (invalidate)
+- `tests/test_agent_memories_api.py` — HTTP auth, 503 when unmounted, list/recall/retain/delete success, retain 403 for non-superuser, delete 400/404 mapping
+- `tests/test_agent_memories_tools.py` — retain/recall/list/delete tools, missing
   user/provider, JSON without `raw`
 - `tests/test_agent_chats_memorize.py` — conversation JSON, LLM extract/skip/
   retry, age filter, mutex skip, job marking, job not registered on the

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from fivccliche.services.interfaces.agent_memories import (
     MemoryContent,
+    MemoryDeleteResult,
     MemoryListResult,
     MemoryRecallResult,
     MemoryRetainResult,
@@ -50,6 +51,10 @@ class TestMemoriesApiAuthAndMounting:
 
     def test_retain_requires_auth(self, client: TestClient):
         response = client.post("/memories/retain/", json={"content": "hello"})
+        assert response.status_code == 401
+
+    def test_delete_requires_auth(self, client: TestClient):
+        response = client.delete("/memories/m1/")
         assert response.status_code == 401
 
     def test_list_returns_503_when_provider_unmounted(self, client: TestClient, auth_token: str):
@@ -99,6 +104,13 @@ class TestMemoriesApiAuthAndMounting:
         assert response.status_code == 403
         assert response.json()["detail"] == "Not a super user"
         memory.retain_async.assert_not_awaited()
+
+    def test_delete_returns_503_when_provider_unmounted(self, client: TestClient, auth_token: str):
+        _override_memory_provider(client.app, None)
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.delete("/memories/m1/", headers=headers)
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Memory provider is not mounted"
 
 
 class TestMemoriesApiSuccess:
@@ -200,3 +212,79 @@ class TestMemoriesApiSuccess:
         assert "raw" not in data
         memory.retain_async.assert_awaited_once_with("hello")
         provider.get_memory.assert_called_once_with(space_id=admin_uuid)
+
+    def test_delete_memory_returns_result(self, client: TestClient, auth_token: str):
+        memory = MagicMock()
+        memory.delete_async = AsyncMock(
+            return_value=MemoryDeleteResult(success=True, id="m1", raw={"ignored": True})
+        )
+        provider = MagicMock()
+        provider.get_memory.return_value = memory
+        _override_memory_provider(client.app, provider)
+
+        me = client.get("/users/self/", headers={"Authorization": f"Bearer {auth_token}"})
+        assert me.status_code == 200
+        admin_uuid = me.json()["uuid"]
+
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.delete("/memories/m1/", headers=headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["id"] == "m1"
+        assert "raw" not in data
+        memory.delete_async.assert_awaited_once_with("m1")
+        provider.get_memory.assert_called_once_with(space_id=admin_uuid)
+
+    def test_delete_memory_allows_regular_user(self, client: TestClient, auth_token: str):
+        memory = MagicMock()
+        memory.delete_async = AsyncMock(return_value=MemoryDeleteResult(success=True, id="m1"))
+        provider = MagicMock()
+        provider.get_memory.return_value = memory
+        _override_memory_provider(client.app, provider)
+
+        admin_headers = {"Authorization": f"Bearer {auth_token}"}
+        created = client.post(
+            "/users/",
+            json={"username": "bob", "email": "bob@example.com", "password": "bob12345"},
+            headers=admin_headers,
+        )
+        assert created.status_code == 201
+        login = client.post("/users/login", json={"username": "bob", "password": "bob12345"})
+        assert login.status_code == 200
+        user_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+        response = client.delete("/memories/m1/", headers=user_headers)
+        assert response.status_code == 200
+        memory.delete_async.assert_awaited_once_with("m1")
+
+    def test_delete_maps_backend_404(self, client: TestClient, auth_token: str):
+        class BackendError(Exception):
+            status = 404
+
+        memory = MagicMock()
+        memory.delete_async = AsyncMock(side_effect=BackendError("missing"))
+        provider = MagicMock()
+        provider.get_memory.return_value = memory
+        _override_memory_provider(client.app, provider)
+
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.delete("/memories/m1/", headers=headers)
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Memory not found"
+
+    def test_delete_maps_backend_400(self, client: TestClient, auth_token: str):
+        class BackendError(Exception):
+            status = 400
+
+        memory = MagicMock()
+        memory.delete_async = AsyncMock(side_effect=BackendError("observations are derived"))
+        provider = MagicMock()
+        provider.get_memory.return_value = memory
+        _override_memory_provider(client.app, provider)
+
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.delete("/memories/m1/", headers=headers)
+        assert response.status_code == 400
+        assert response.json()["detail"] == "observations are derived"

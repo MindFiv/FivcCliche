@@ -3,8 +3,8 @@
 Implementation-agnostic memory contracts so the project can swap backends
 (Hindsight, mem0, ...) without touching business code. Business code should
 only depend on the neutral return models (``MemoryContent`` /
-``MemoryRetainResult`` / ``MemoryRecallResult`` / ``MemoryListResult``) and
-never on a backend's native response types.
+``MemoryRetainResult`` / ``MemoryRecallResult`` / ``MemoryListResult`` /
+``MemoryDeleteResult``) and never on a backend's native response types.
 """
 
 from abc import abstractmethod
@@ -62,6 +62,16 @@ class MemoryListResult(BaseModel):
     raw: Any | None = None
 
 
+class MemoryDeleteResult(BaseModel):
+    """Outcome of deleting a memory from this space."""
+
+    success: bool = True
+    id: str | None = None
+    # Backend-native payload; escape hatch for advanced use. Business code
+    # should prefer the normalized fields above and avoid relying on this.
+    raw: Any | None = None
+
+
 class IUserMemory(IComponent):
     """IUserMemory is an interface for a single user memory space."""
 
@@ -71,7 +81,11 @@ class IUserMemory(IComponent):
 
     @abstractmethod
     async def recall_async(self, query: str) -> MemoryRecallResult:
-        """Recall memories by semantic similarity to ``query``."""
+        """Recall memories by semantic similarity to ``query``.
+
+        Returns only memories that still participate in recall (valid /
+        unexpired).
+        """
 
     @abstractmethod
     async def list_async(
@@ -81,7 +95,23 @@ class IUserMemory(IComponent):
         limit: int = 100,
         **kwargs: Any,
     ) -> MemoryListResult:
-        """List memories with pagination (``skip`` / ``limit``)."""
+        """List memories with pagination (``skip`` / ``limit``).
+
+        Returns only memories that still participate in recall (valid /
+        unexpired). Extra ``kwargs`` are backend-specific (e.g. Hindsight
+        ``type`` / ``search_query`` / ``state``) and are not exposed by the
+        HTTP module.
+        """
+
+    @abstractmethod
+    async def delete_async(self, memory_id: str) -> MemoryDeleteResult:
+        """Remove a memory from this space.
+
+        After success, the memory must not appear in ``list_async`` or
+        ``recall_async``. Backends may hard-delete (mem0) or archive
+        (Hindsight invalidate). Hindsight cannot curate derived observations;
+        callers should treat that as a client error.
+        """
 
 
 class IUserMemoryProvider(IComponent):

@@ -2,6 +2,8 @@ __all__ = [
     "AgentRunContent",
     "AgentRunStatus",
     "AgentRunToolCall",
+    "ChatOrderBy",
+    "ChatOrderDir",
     "UserChatCreateSchema",
     "UserChatMessageCreateSchema",
     "UserChatMessageSchema",
@@ -10,9 +12,9 @@ __all__ = [
 ]
 
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
 from fivcplayground.agents.types import (
     AgentRunSession,
     AgentRun,
@@ -20,6 +22,17 @@ from fivcplayground.agents.types import (
     AgentRunToolCall,
     AgentRunContent,
 )
+
+
+class ChatOrderBy(str, Enum):
+    updated_at = "updated_at"
+    created_at = "created_at"
+    agent_id = "agent_id"
+
+
+class ChatOrderDir(str, Enum):
+    asc = "asc"
+    desc = "desc"
 
 
 class UserChatSchema(AgentRunSession):

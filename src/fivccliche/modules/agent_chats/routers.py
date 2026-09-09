@@ -89,6 +89,8 @@ async def list_chats_async(
     updated_at_to: datetime | None = Query(
         None, description="Inclusive upper bound on chat updated_at"
     ),
+    order_by: schemas.ChatOrderBy = Query(schemas.ChatOrderBy.updated_at),
+    order_dir: schemas.ChatOrderDir = Query(schemas.ChatOrderDir.desc),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse[schemas.UserChatSchema]:
@@ -117,6 +119,8 @@ async def list_chats_async(
         filters=filters,
         skip=skip,
         limit=limit,
+        order_by=order_by,
+        order_dir=order_dir,
     )
     total = await utils.count_chats_async(
         session,

@@ -69,3 +69,26 @@ class MemoryList:
         mem = mem_provider.get_memory(space_id=self.user_uuid)
         result = await mem.list_async(skip=skip, limit=limit)
         return result.model_dump_json(exclude={"raw"})
+
+
+class MemoryDelete:
+    """Delete a memory for the current user.
+
+    Args:
+        memory_id: Identifier of the memory to remove from recall and list.
+    """
+
+    def __init__(self, **context):
+        self.user_uuid = context.get("user_uuid")
+
+    async def __call__(self, memory_id: str) -> str:
+        if not self.user_uuid:
+            raise ValueError("No user_uuid specified")
+
+        mem_provider = await get_memory_provider_async()
+        if mem_provider is None:
+            raise ValueError("No memory provider specified")
+
+        mem = mem_provider.get_memory(space_id=self.user_uuid)
+        result = await mem.delete_async(memory_id)
+        return result.model_dump_json(exclude={"raw"})

@@ -4,7 +4,7 @@ Reads connection settings from the ``hindsight`` config session in
 ``.env.json`` (keys ``BASE_URL`` / ``API_KEY`` / ``TIMEOUT``) and wraps the
 ``hindsight_client.Hindsight`` SDK, mapping its native responses onto the
 implementation-agnostic ``MemoryContent`` / ``MemoryRetainResult`` /
-``MemoryRecallResult`` models.
+``MemoryRecallResult`` / ``MemoryListResult`` / ``MemoryDeleteResult`` models.
 
 Requires the optional ``hindsight-client`` package. Install it separately
 before mounting this provider.
@@ -22,6 +22,7 @@ from fivccliche.services.interfaces.agent_memories import (
     IUserMemory,
     IUserMemoryProvider,
     MemoryContent,
+    MemoryDeleteResult,
     MemoryListResult,
     MemoryRecallResult,
     MemoryRetainResult,
@@ -44,6 +45,17 @@ def _import_hindsight() -> type:
             "Install it with: pip install hindsight-client"
         ) from exc
     return Hindsight
+
+
+def _import_update_memory_request() -> type:
+    try:
+        from hindsight_client_api.models.update_memory_request import UpdateMemoryRequest
+    except ImportError as exc:
+        raise ImportError(
+            "hindsight-client is required to use UserMemoryProviderImpl. "
+            "Install it with: pip install hindsight-client"
+        ) from exc
+    return UpdateMemoryRequest
 
 
 class UserMemoryHindsightImpl(IUserMemory):
@@ -77,11 +89,21 @@ class UserMemoryHindsightImpl(IUserMemory):
             q=kwargs.get("search_query") or kwargs.get("q"),
             limit=limit,
             offset=skip,
+            state=kwargs.get("state", "valid"),
         )
         raw_items = getattr(resp, "items", None) or []
         items = [self._map_item(r) for r in raw_items]
         total = int(getattr(resp, "total", 0) or 0)
         return MemoryListResult(items=items, total=total, raw=resp)
+
+    async def delete_async(self, memory_id: str) -> MemoryDeleteResult:
+        request_cls = _import_update_memory_request()
+        resp = await self._hindsight.memory.update_memory(
+            bank_id=self._bank_id,
+            memory_id=memory_id,
+            update_memory_request=request_cls(state="invalidated"),
+        )
+        return MemoryDeleteResult(success=True, id=memory_id, raw=resp)
 
     @staticmethod
     def _attr(r: Any, name: str, default: Any = None) -> Any:

@@ -82,14 +82,13 @@ async def list_chats_async(
     filters: ChatFilterSet,
     skip: int = 0,
     limit: int = 100,
+    order_by: schemas.ChatOrderBy = schemas.ChatOrderBy.updated_at,
+    order_dir: schemas.ChatOrderDir = schemas.ChatOrderDir.desc,
 ) -> list[models.UserChat]:
     """List chat sessions with pagination (visibility via ``filters``)."""
-    statement = (
-        select(models.UserChat)
-        .order_by(col(models.UserChat.created_at).desc())
-        .offset(skip)
-        .limit(limit)
-    )
+    order_col = col(getattr(models.UserChat, order_by.value))
+    order_expr = order_col.desc() if order_dir == schemas.ChatOrderDir.desc else order_col.asc()
+    statement = select(models.UserChat).order_by(order_expr).offset(skip).limit(limit)
     statement = filters.filter(statement)
 
     result = await session.execute(statement)

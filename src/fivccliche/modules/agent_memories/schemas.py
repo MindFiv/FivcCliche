@@ -35,3 +35,10 @@ class MemoryRetainResponseSchema(BaseModel):
     success: bool = True
     count: int = 0
     ids: list[str] | None = None
+
+
+class MemoryDeleteResponseSchema(BaseModel):
+    """Response body for deleting a memory."""
+
+    success: bool = True
+    id: str | None = None

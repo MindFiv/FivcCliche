@@ -5,9 +5,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from fivccliche.modules.agent_memories.tools import MemoryList, MemoryRecall, MemoryRetain
+from fivccliche.modules.agent_memories.tools import (
+    MemoryDelete,
+    MemoryList,
+    MemoryRecall,
+    MemoryRetain,
+)
 from fivccliche.services.interfaces.agent_memories import (
     MemoryContent,
+    MemoryDeleteResult,
     MemoryListResult,
     MemoryRecallResult,
     MemoryRetainResult,
@@ -151,3 +157,38 @@ class TestMemoryList:
         get_provider.return_value.get_memory.assert_called_once_with(space_id=USER_UUID)
         memory.list_async.assert_awaited_once_with(skip=2, limit=5)
         assert result == MemoryListResult(items=[CONTENT], total=1).model_dump_json(exclude={"raw"})
+
+
+class TestMemoryDelete:
+    @pytest.mark.asyncio
+    async def test_raises_without_user_uuid(self):
+        tool = MemoryDelete()
+        with pytest.raises(ValueError, match="No user_uuid specified"):
+            await tool("m1")
+
+    @pytest.mark.asyncio
+    async def test_raises_when_provider_missing(self):
+        tool = MemoryDelete(user_uuid=USER_UUID)
+        with patch(
+            "fivccliche.modules.agent_memories.tools.get_memory_provider_async",
+            new=AsyncMock(return_value=None),
+        ):
+            with pytest.raises(ValueError, match="No memory provider specified"):
+                await tool("m1")
+
+    @pytest.mark.asyncio
+    async def test_deletes_for_context_user_and_returns_json(self):
+        memory = MagicMock()
+        memory.delete_async = AsyncMock(
+            return_value=MemoryDeleteResult(success=True, id="m1", raw={"ignored": True})
+        )
+        tool = MemoryDelete(user_uuid=USER_UUID)
+        with patch(
+            "fivccliche.modules.agent_memories.tools.get_memory_provider_async",
+            new=AsyncMock(return_value=_provider_with_memory(memory)),
+        ) as get_provider:
+            result = await tool("m1")
+
+        get_provider.return_value.get_memory.assert_called_once_with(space_id=USER_UUID)
+        memory.delete_async.assert_awaited_once_with("m1")
+        assert result == MemoryDeleteResult(success=True, id="m1").model_dump_json(exclude={"raw"})

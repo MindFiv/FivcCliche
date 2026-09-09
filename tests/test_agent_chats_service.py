@@ -106,27 +106,30 @@ class TestChatMethods:
         assert len(chats) == 1
         assert chats[0].uuid == test_chat.uuid
 
-    async def test_list_chats_async_ordered_by_created_at_desc(
+    async def test_list_chats_async_defaults_to_updated_at_desc(
         self, session: AsyncSession, test_user
     ):
-        """Test that chats are listed from newest to oldest."""
+        """Default list order is newest updated_at first, not created_at."""
         base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        oldest_chat = UserChat(
+        oldest_updated = UserChat(
             user_uuid=test_user.uuid,
-            agent_id="agent_oldest",
+            agent_id="agent_oldest_updated",
+            created_at=base_time + timedelta(minutes=10),
+            updated_at=base_time,
+        )
+        newest_updated = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_newest_updated",
             created_at=base_time,
+            updated_at=base_time + timedelta(minutes=10),
         )
-        newest_chat = UserChat(
+        middle_updated = UserChat(
             user_uuid=test_user.uuid,
-            agent_id="agent_newest",
-            created_at=base_time + timedelta(minutes=2),
+            agent_id="agent_middle_updated",
+            created_at=base_time + timedelta(minutes=5),
+            updated_at=base_time + timedelta(minutes=5),
         )
-        middle_chat = UserChat(
-            user_uuid=test_user.uuid,
-            agent_id="agent_middle",
-            created_at=base_time + timedelta(minutes=1),
-        )
-        session.add_all([oldest_chat, newest_chat, middle_chat])
+        session.add_all([oldest_updated, newest_updated, middle_updated])
         await session.commit()
 
         chats = await methods.list_chats_async(
@@ -134,10 +137,96 @@ class TestChatMethods:
         )
 
         assert [chat.uuid for chat in chats] == [
-            newest_chat.uuid,
-            middle_chat.uuid,
-            oldest_chat.uuid,
+            newest_updated.uuid,
+            middle_updated.uuid,
+            oldest_updated.uuid,
         ]
+
+    async def test_list_chats_async_order_by_created_at_desc(
+        self, session: AsyncSession, test_user
+    ):
+        from fivccliche.modules.agent_chats import schemas as chat_schemas
+
+        base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        oldest_created = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_oldest_created",
+            created_at=base_time,
+            updated_at=base_time + timedelta(minutes=10),
+        )
+        newest_created = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_newest_created",
+            created_at=base_time + timedelta(minutes=10),
+            updated_at=base_time,
+        )
+        session.add_all([oldest_created, newest_created])
+        await session.commit()
+
+        chats = await methods.list_chats_async(
+            session,
+            filters=ChatFilterSet(test_user.uuid, is_superuser=False),
+            order_by=chat_schemas.ChatOrderBy.created_at,
+            order_dir=chat_schemas.ChatOrderDir.desc,
+        )
+
+        assert [chat.uuid for chat in chats] == [newest_created.uuid, oldest_created.uuid]
+
+    async def test_list_chats_async_order_by_updated_at_asc(self, session: AsyncSession, test_user):
+        from fivccliche.modules.agent_chats import schemas as chat_schemas
+
+        base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        older = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_older",
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        newer = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent_newer",
+            created_at=base_time,
+            updated_at=base_time + timedelta(minutes=5),
+        )
+        session.add_all([older, newer])
+        await session.commit()
+
+        chats = await methods.list_chats_async(
+            session,
+            filters=ChatFilterSet(test_user.uuid, is_superuser=False),
+            order_by=chat_schemas.ChatOrderBy.updated_at,
+            order_dir=chat_schemas.ChatOrderDir.asc,
+        )
+
+        assert [chat.uuid for chat in chats] == [older.uuid, newer.uuid]
+
+    async def test_list_chats_async_order_by_agent_id_asc(self, session: AsyncSession, test_user):
+        from fivccliche.modules.agent_chats import schemas as chat_schemas
+
+        base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        zeta = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="zeta",
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        alpha = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="alpha",
+            created_at=base_time,
+            updated_at=base_time,
+        )
+        session.add_all([zeta, alpha])
+        await session.commit()
+
+        chats = await methods.list_chats_async(
+            session,
+            filters=ChatFilterSet(test_user.uuid, is_superuser=False),
+            order_by=chat_schemas.ChatOrderBy.agent_id,
+            order_dir=chat_schemas.ChatOrderDir.asc,
+        )
+
+        assert [chat.agent_id for chat in chats] == ["alpha", "zeta"]
 
     async def test_list_chats_async_empty(self, session: AsyncSession, test_user):
         """Test listing chats when none exist."""
