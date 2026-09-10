@@ -93,6 +93,12 @@ class UserMemoryHindsightImpl(IUserMemory):
         )
         raw_items = getattr(resp, "items", None) or []
         items = [self._map_item(r) for r in raw_items]
+        if kwargs.get("type") is None:
+            items = [
+                item
+                for item in items
+                if not item.categories or "observation" not in item.categories
+            ]
         total = int(getattr(resp, "total", 0) or 0)
         return MemoryListResult(items=items, total=total, raw=resp)
 

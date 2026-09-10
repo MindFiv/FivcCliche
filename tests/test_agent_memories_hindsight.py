@@ -238,6 +238,55 @@ class TestUserMemoryHindsightImpl:
         )
 
     @pytest.mark.asyncio
+    async def test_list_drops_observations_by_default(self):
+        hindsight = MagicMock()
+        native = MagicMock()
+        native.items = [
+            {"id": "w1", "text": "world fact", "fact_type": "world"},
+            {"id": "o1", "text": "derived", "fact_type": "observation"},
+            {"id": "e1", "text": "experience fact", "type": "experience"},
+        ]
+        native.total = 3
+        hindsight.memory.list_memories = AsyncMock(return_value=native)
+
+        memory = UserMemoryHindsightImpl(hindsight, bank_id="alice")
+        result = await memory.list_async()
+
+        hindsight.memory.list_memories.assert_awaited_once_with(
+            bank_id="alice",
+            type=None,
+            q=None,
+            limit=100,
+            offset=0,
+            state="valid",
+        )
+        assert [item.id for item in result.items] == ["w1", "e1"]
+        assert result.total == 3
+
+    @pytest.mark.asyncio
+    async def test_list_forwards_explicit_type_and_keeps_observations(self):
+        hindsight = MagicMock()
+        native = MagicMock()
+        native.items = [
+            {"id": "o1", "text": "derived", "fact_type": "observation"},
+        ]
+        native.total = 1
+        hindsight.memory.list_memories = AsyncMock(return_value=native)
+
+        memory = UserMemoryHindsightImpl(hindsight, bank_id="alice")
+        result = await memory.list_async(type="observation")
+
+        hindsight.memory.list_memories.assert_awaited_once_with(
+            bank_id="alice",
+            type="observation",
+            q=None,
+            limit=100,
+            offset=0,
+            state="valid",
+        )
+        assert [item.id for item in result.items] == ["o1"]
+
+    @pytest.mark.asyncio
     async def test_delete_invalidates_via_update_memory(self):
         hindsight = MagicMock()
         native = MagicMock()

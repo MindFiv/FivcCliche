@@ -38,7 +38,9 @@ response objects (`raw` is an escape hatch).
 `type` / `search_query` / `state`) and are not exposed by the HTTP module.
 `list_async` and `recall_async` return only memories that still participate
 in recall (valid / unexpired). Hindsight `list_async` defaults to
-`state="valid"` so invalidated rows stay off the user-facing list.
+`state="valid"` and drops derived `observation` rows (those cannot be
+invalidated). `recall_async` may still return observations. Pass Hindsight
+`type=` to override the list type filter (not exposed by HTTP).
 
 `delete_async(memory_id)` removes a memory from that space: after success it
 must not appear in `list_async` or `recall_async`. Hindsight maps this to
@@ -57,7 +59,8 @@ client error, not a silent no-op.
 - Maps `space_id` directly to Hindsight `bank_id` (`None` → `"default"`)
 - Banks are created automatically by Hindsight on first retain/recall
 - `list_async` calls `client.memory.list_memories` (`offset=skip`,
-  `state="valid"` unless overridden)
+  `state="valid"` unless overridden) and drops `observation` items unless
+  `type=` is set
 - `delete_async` calls `client.memory.update_memory` with
   `state="invalidated"`
 
@@ -271,7 +274,7 @@ async def example(
 
 ## Testing
 
-- `tests/test_agent_memories_hindsight.py` — Hindsight provider (mocked SDK), including `list_async` (default `state=valid`) and `delete_async` (invalidate)
+- `tests/test_agent_memories_hindsight.py` — Hindsight provider (mocked SDK), including `list_async` (default `state=valid`, no observations) and `delete_async` (invalidate)
 - `tests/test_agent_memories_api.py` — HTTP auth, 503 when unmounted, list/recall/retain/delete success, retain 403 for non-superuser, delete 400/404 mapping
 - `tests/test_agent_memories_tools.py` — retain/recall/list/delete tools, missing
   user/provider, JSON without `raw`
