@@ -150,6 +150,23 @@ class TestMemoriesApiSuccess:
         provider.get_memory.assert_called_once()
         assert provider.get_memory.call_args.kwargs["space_id"]
 
+    def test_list_memories_forwards_type_query(self, client: TestClient, auth_token: str):
+        memory = MagicMock()
+        memory.list_async = AsyncMock(return_value=MemoryListResult(total=0, items=[]))
+        provider = MagicMock()
+        provider.get_memory.return_value = memory
+        _override_memory_provider(client.app, provider)
+
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.get(
+            "/memories/",
+            params={"skip": 0, "limit": 10, "type": "experience"},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        memory.list_async.assert_awaited_once_with(skip=0, limit=10, type="experience")
+
     def test_recall_memories_returns_results(self, client: TestClient, auth_token: str):
         memory = MagicMock()
         memory.recall_async = AsyncMock(

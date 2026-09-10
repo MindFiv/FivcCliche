@@ -53,12 +53,18 @@ class MemoryList:
     Args:
         skip: Number of memories to skip.
         limit: Maximum number of memories to return.
+        type: Optional backend category string to filter the list.
     """
 
     def __init__(self, **context):
         self.user_uuid = context.get("user_uuid")
 
-    async def __call__(self, skip: int = 0, limit: int = 20) -> str:
+    async def __call__(
+        self,
+        skip: int = 0,
+        limit: int = 20,
+        type: str | None = None,  # noqa: A002
+    ) -> str:
         if not self.user_uuid:
             raise ValueError("No user_uuid specified")
 
@@ -67,7 +73,10 @@ class MemoryList:
             raise ValueError("No memory provider specified")
 
         mem = mem_provider.get_memory(space_id=self.user_uuid)
-        result = await mem.list_async(skip=skip, limit=limit)
+        if type is None:
+            result = await mem.list_async(skip=skip, limit=limit)
+        else:
+            result = await mem.list_async(skip=skip, limit=limit, type=type)
         return result.model_dump_json(exclude={"raw"})
 
 

@@ -41,6 +41,13 @@ def _make_recall_result_item(text: str, item_type: str | None = None, score: flo
     return SimpleNamespace(results=[item]), item
 
 
+def _list_resp(items, total=None):
+    native = MagicMock()
+    native.items = items
+    native.total = len(items) if total is None else total
+    return native
+
+
 class TestUserMemoryHindsightImpl:
     """UserMemoryHindsightImpl delegation + mapping."""
 
@@ -132,20 +139,19 @@ class TestUserMemoryHindsightImpl:
         assert result.raw is native
 
     @pytest.mark.asyncio
-    async def test_list_maps_dict_items_and_forwards_pagination(self):
+    async def test_list_defaults_to_world_and_forwards_pagination(self):
         hindsight = MagicMock()
-        native = MagicMock()
-        native.items = [
-            {
-                "id": "m1",
-                "text": "Alice loves AI",
-                "fact_type": "world",
-                "metadata": {"k": "v"},
-                "date": "2026-07-01T00:00:00Z",
-                "mentioned_at": "2026-08-01T10:00:00Z",
-            }
-        ]
-        native.total = 5
+        native = _list_resp(
+            [
+                {
+                    "id": "m1",
+                    "text": "Alice loves AI",
+                    "fact_type": "world",
+                    "mentioned_at": "2026-08-01T10:00:00Z",
+                }
+            ],
+            total=5,
+        )
         hindsight.memory.list_memories = AsyncMock(return_value=native)
 
         memory = UserMemoryHindsightImpl(hindsight, bank_id="alice")
@@ -153,7 +159,7 @@ class TestUserMemoryHindsightImpl:
 
         hindsight.memory.list_memories.assert_awaited_once_with(
             bank_id="alice",
-            type=None,
+            type="world",
             q=None,
             limit=25,
             offset=10,
@@ -162,7 +168,28 @@ class TestUserMemoryHindsightImpl:
         assert isinstance(result, MemoryListResult)
         assert result.total == 5
         assert result.raw is native
-        assert len(result.items) == 1
+        assert [item.id for item in result.items] == ["m1"]
+
+    @pytest.mark.asyncio
+    async def test_list_maps_dict_items(self):
+        hindsight = MagicMock()
+        native = _list_resp(
+            [
+                {
+                    "id": "m1",
+                    "text": "Alice loves AI",
+                    "fact_type": "world",
+                    "metadata": {"k": "v"},
+                    "date": "2026-07-01T00:00:00Z",
+                    "mentioned_at": "2026-08-01T10:00:00Z",
+                }
+            ]
+        )
+        hindsight.memory.list_memories = AsyncMock(return_value=native)
+
+        memory = UserMemoryHindsightImpl(hindsight, bank_id="alice")
+        result = await memory.list_async(skip=0, limit=25)
+
         item = result.items[0]
         assert isinstance(item, MemoryContent)
         assert item.id == "m1"
@@ -191,10 +218,7 @@ class TestUserMemoryHindsightImpl:
             timestamp=None,
             created_at="2026-07-01T00:00:00Z",
         )
-        native = MagicMock()
-        native.items = [item]
-        native.total = 1
-        hindsight.memory.list_memories = AsyncMock(return_value=native)
+        hindsight.memory.list_memories = AsyncMock(return_value=_list_resp([item]))
 
         memory = UserMemoryHindsightImpl(hindsight, bank_id="alice")
         result = await memory.list_async()
@@ -206,10 +230,7 @@ class TestUserMemoryHindsightImpl:
     @pytest.mark.asyncio
     async def test_list_empty_items_yields_empty_result(self):
         hindsight = MagicMock()
-        native = MagicMock()
-        native.items = []
-        native.total = 0
-        hindsight.memory.list_memories = AsyncMock(return_value=native)
+        hindsight.memory.list_memories = AsyncMock(return_value=_list_resp([]))
 
         memory = UserMemoryHindsightImpl(hindsight, bank_id="alice")
         result = await memory.list_async()
@@ -220,17 +241,14 @@ class TestUserMemoryHindsightImpl:
     @pytest.mark.asyncio
     async def test_list_forwards_explicit_state_override(self):
         hindsight = MagicMock()
-        native = MagicMock()
-        native.items = []
-        native.total = 0
-        hindsight.memory.list_memories = AsyncMock(return_value=native)
+        hindsight.memory.list_memories = AsyncMock(return_value=_list_resp([]))
 
         memory = UserMemoryHindsightImpl(hindsight, bank_id="alice")
         await memory.list_async(state="invalidated")
 
         hindsight.memory.list_memories.assert_awaited_once_with(
             bank_id="alice",
-            type=None,
+            type="world",
             q=None,
             limit=100,
             offset=0,
@@ -238,30 +256,26 @@ class TestUserMemoryHindsightImpl:
         )
 
     @pytest.mark.asyncio
-    async def test_list_drops_observations_by_default(self):
+    async def test_list_forwards_explicit_type(self):
         hindsight = MagicMock()
-        native = MagicMock()
-        native.items = [
-            {"id": "w1", "text": "world fact", "fact_type": "world"},
-            {"id": "o1", "text": "derived", "fact_type": "observation"},
-            {"id": "e1", "text": "experience fact", "type": "experience"},
-        ]
-        native.total = 3
+        native = _list_resp(
+            [{"id": "e1", "text": "did a thing", "type": "experience"}],
+            total=1,
+        )
         hindsight.memory.list_memories = AsyncMock(return_value=native)
 
         memory = UserMemoryHindsightImpl(hindsight, bank_id="alice")
-        result = await memory.list_async()
+        result = await memory.list_async(type="experience")
 
         hindsight.memory.list_memories.assert_awaited_once_with(
             bank_id="alice",
-            type=None,
+            type="experience",
             q=None,
             limit=100,
             offset=0,
             state="valid",
         )
-        assert [item.id for item in result.items] == ["w1", "e1"]
-        assert result.total == 3
+        assert [item.id for item in result.items] == ["e1"]
 
     @pytest.mark.asyncio
     async def test_list_forwards_explicit_type_and_keeps_observations(self):

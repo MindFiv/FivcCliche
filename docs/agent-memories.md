@@ -35,12 +35,12 @@ response objects (`raw` is an escape hatch).
 
 `list_async(*, skip=0, limit=100, **kwargs)` returns `MemoryListResult` with
 `items` and `total`. Extra `kwargs` are backend-specific (e.g. Hindsight
-`type` / `search_query` / `state`) and are not exposed by the HTTP module.
+`type` / `search_query` / `state`). HTTP `GET /memories/?type=` forwards
+`type` as an opaque string into those kwargs; it is not a Hindsight enum.
 `list_async` and `recall_async` return only memories that still participate
-in recall (valid / unexpired). Hindsight `list_async` defaults to
-`state="valid"` and drops derived `observation` rows (those cannot be
-invalidated). `recall_async` may still return observations. Pass Hindsight
-`type=` to override the list type filter (not exposed by HTTP).
+in recall (valid / unexpired). Hindsight `list_async` calls `list_memories`
+once (`offset=skip`); if `type` is omitted it uses `world`. `recall_async`
+may still return observations.
 
 `delete_async(memory_id)` removes a memory from that space: after success it
 must not appear in `list_async` or `recall_async`. Hindsight maps this to
@@ -58,9 +58,8 @@ client error, not a silent no-op.
 - Creates the `Hindsight` SDK client lazily on first `get_memory` call
 - Maps `space_id` directly to Hindsight `bank_id` (`None` → `"default"`)
 - Banks are created automatically by Hindsight on first retain/recall
-- `list_async` calls `client.memory.list_memories` (`offset=skip`,
-  `state="valid"` unless overridden) and drops `observation` items unless
-  `type=` is set
+- `list_async` calls `client.memory.list_memories` once (`offset=skip`,
+  `state="valid"` unless overridden, `type` from kwargs or `"world"`)
 - `delete_async` calls `client.memory.update_memory` with
   `state="invalidated"`
 
@@ -72,7 +71,7 @@ Mounted under `/api` (same as other modules). Requires a Bearer JWT.
 
 | Method | Path | Behavior |
 |--------|------|----------|
-| `GET` | `/memories/` | Paginated list of valid memories (`skip` / `limit`) → `{ total, results }` |
+| `GET` | `/memories/` | Paginated list (`skip` / `limit`, optional `type` string) → `{ total, results }` |
 | `GET` | `/memories/recall/?query=` | Semantic recall of valid memories → `{ results }` |
 | `POST` | `/memories/retain/` | Superuser-only retain → `{ success, count, ids }` (`raw` is not exposed) |
 | `DELETE` | `/memories/{id}/` | Authenticated user deletes one memory → `{ success, id }` (`raw` is not exposed) |
@@ -181,7 +180,7 @@ or an unmounted provider raises `ValueError`.
 |-------|------------|-------------|
 | `MemoryRetain` | `content` | `{ success, count, ids }` |
 | `MemoryRecall` | `query` | `{ items }` |
-| `MemoryList` | `skip=0`, `limit=20` | `{ total, items }` |
+| `MemoryList` | `skip=0`, `limit=20`, optional `type` | `{ total, items }` |
 | `MemoryDelete` | `memory_id` | `{ success, id }` |
 
 ## Chat memorize job
@@ -274,8 +273,8 @@ async def example(
 
 ## Testing
 
-- `tests/test_agent_memories_hindsight.py` — Hindsight provider (mocked SDK), including `list_async` (default `state=valid`, no observations) and `delete_async` (invalidate)
-- `tests/test_agent_memories_api.py` — HTTP auth, 503 when unmounted, list/recall/retain/delete success, retain 403 for non-superuser, delete 400/404 mapping
+- `tests/test_agent_memories_hindsight.py` — Hindsight provider (mocked SDK), including `list_async` (default `type=world`) and `delete_async` (invalidate)
+- `tests/test_agent_memories_api.py` — HTTP auth, 503 when unmounted, list/recall/retain/delete success, list `type` query, retain 403 for non-superuser, delete 400/404 mapping
 - `tests/test_agent_memories_tools.py` — retain/recall/list/delete tools, missing
   user/provider, JSON without `raw`
 - `tests/test_agent_chats_memorize.py` — conversation JSON, LLM extract/skip/

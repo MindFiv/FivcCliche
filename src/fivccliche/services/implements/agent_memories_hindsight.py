@@ -85,7 +85,7 @@ class UserMemoryHindsightImpl(IUserMemory):
     ) -> MemoryListResult:
         resp = await self._hindsight.memory.list_memories(
             bank_id=self._bank_id,
-            type=kwargs.get("type"),
+            type=kwargs.get("type", "world"),
             q=kwargs.get("search_query") or kwargs.get("q"),
             limit=limit,
             offset=skip,
@@ -93,12 +93,6 @@ class UserMemoryHindsightImpl(IUserMemory):
         )
         raw_items = getattr(resp, "items", None) or []
         items = [self._map_item(r) for r in raw_items]
-        if kwargs.get("type") is None:
-            items = [
-                item
-                for item in items
-                if not item.categories or "observation" not in item.categories
-            ]
         total = int(getattr(resp, "total", 0) or 0)
         return MemoryListResult(items=items, total=total, raw=resp)
 

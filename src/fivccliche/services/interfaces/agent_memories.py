@@ -98,9 +98,9 @@ class IUserMemory(IComponent):
         """List memories with pagination (``skip`` / ``limit``).
 
         Returns only memories that still participate in recall (valid /
-        unexpired). Extra ``kwargs`` are backend-specific (e.g. Hindsight
-        ``type`` / ``search_query`` / ``state``) and are not exposed by the
-        HTTP module.
+        unexpired). Extra ``kwargs`` are backend-specific (e.g. ``type`` /
+        ``search_query`` / ``state``). HTTP may forward ``type`` as an
+        opaque string.
         """
 
     @abstractmethod

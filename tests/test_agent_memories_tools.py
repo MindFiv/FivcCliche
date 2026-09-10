@@ -158,6 +158,19 @@ class TestMemoryList:
         memory.list_async.assert_awaited_once_with(skip=2, limit=5)
         assert result == MemoryListResult(items=[CONTENT], total=1).model_dump_json(exclude={"raw"})
 
+    @pytest.mark.asyncio
+    async def test_forwards_type_when_provided(self):
+        memory = MagicMock()
+        memory.list_async = AsyncMock(return_value=MemoryListResult(items=[], total=0))
+        tool = MemoryList(user_uuid=USER_UUID)
+        with patch(
+            "fivccliche.modules.agent_memories.tools.get_memory_provider_async",
+            new=AsyncMock(return_value=_provider_with_memory(memory)),
+        ):
+            await tool(skip=0, limit=20, type="experience")
+
+        memory.list_async.assert_awaited_once_with(skip=0, limit=20, type="experience")
+
 
 class TestMemoryDelete:
     @pytest.mark.asyncio

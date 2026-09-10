@@ -36,11 +36,15 @@ async def get_required_memory_provider_async(
 async def list_memories_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
+    memory_type: str | None = Query(None, alias="type", min_length=1),
     user: IUser = Depends(get_authenticated_user_async),
     memory_provider: IUserMemoryProvider = Depends(get_required_memory_provider_async),
 ) -> PaginatedResponse[schemas.MemoryContentSchema]:
     memory = memory_provider.get_memory(space_id=user.uuid)
-    result = await memory.list_async(skip=skip, limit=limit)
+    if memory_type is None:
+        result = await memory.list_async(skip=skip, limit=limit)
+    else:
+        result = await memory.list_async(skip=skip, limit=limit, type=memory_type)
     return PaginatedResponse(
         total=result.total,
         results=[
