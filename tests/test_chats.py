@@ -57,6 +57,41 @@ class TestChatStreamGetStream:
         assert hasattr(stream, "__aiter__")
 
     @pytest.mark.asyncio
+    async def test_events_and_sse_chunks_use_the_same_payload(self):
+        """The WebSocket event payload and SSE chunk contain the same object."""
+        chat_stream = self._make_chat_stream()
+        mock_run = Mock()
+        mock_run.model_dump.return_value = {
+            "id": "run-1",
+            "agent_id": "agent-1",
+            "started_at": "2024-01-01T00:00:00",
+            "completed_at": None,
+            "query": "test query",
+            "reply": None,
+            "tool_calls": [],
+        }
+
+        async def mock_wait_for(coro, timeout):
+            if chat_stream._asyncio_task.done.return_value:
+                raise TimeoutError()
+            chat_stream._asyncio_task.done.return_value = True
+            return (AgentRunEvent.START, mock_run)
+
+        chat_stream._chat_queue.empty.return_value = True
+        with patch("asyncio.wait_for", side_effect=mock_wait_for):
+            events = [event async for event in chat_stream.events()]
+
+        async def repeated_events():
+            yield events[0]
+
+        chat_stream.events = repeated_events
+        chunks = [chunk async for chunk in chat_stream()]
+
+        assert len(events) == 1
+        assert len(chunks) == 1
+        assert json.loads(chunks[0].removeprefix("data: ").strip()) == events[0]
+
+    @pytest.mark.asyncio
     async def test_start_event_formatting(self):
         """Test START event is formatted correctly."""
         chat_stream = self._make_chat_stream()

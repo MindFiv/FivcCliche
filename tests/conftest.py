@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
@@ -12,7 +13,7 @@ from urllib.parse import urlparse, urlunparse
 
 import pytest
 from fastapi.testclient import TestClient
-from pg0 import Pg0, Pg0AlreadyRunningError
+from pg0 import Pg0
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 from sqlmodel import SQLModel
@@ -49,25 +50,25 @@ def with_database(url: str, database: str) -> str:
     return urlunparse(parsed._replace(path=f"/{database}"))
 
 
-def _start_pg0(name: str) -> Pg0:
-    pg = Pg0(name=name)
-    try:
-        pg.start()
-    except Pg0AlreadyRunningError:
-        pass
-    return pg
-
-
 @pytest.fixture(scope="session", autouse=True)
 def pg0_instance() -> Iterator[Pg0]:
     global _pg0_for_tests
-    pg = _start_pg0(_TEST_PG0_NAME)
-    _pg0_for_tests = pg
-    try:
-        yield pg
-    finally:
-        _pg0_for_tests = None
-        pg.stop()
+    with tempfile.TemporaryDirectory(prefix="fivcliche-test-pg0-") as data_root:
+        pg = Pg0(
+            name=f"{_TEST_PG0_NAME}-{uuid.uuid4().hex}",
+            data_dir=f"{data_root}/data",
+        )
+        _pg0_for_tests = pg
+        try:
+            pg.start()
+        except Exception:
+            _pg0_for_tests = None
+            raise
+        try:
+            yield pg
+        finally:
+            _pg0_for_tests = None
+            pg.stop()
 
 
 def create_test_database(pg: Pg0) -> tuple[str, str]:

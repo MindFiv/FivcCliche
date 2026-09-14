@@ -1,11 +1,12 @@
 """Integration tests for agent_chats API endpoints."""
 
 import asyncio
+from json import JSONDecodeError
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from fivccliche.modules.agent_chats.models import UserChat
@@ -1485,6 +1486,7 @@ class TestCreateChatMessages:
         chat_uuid: str = "chat-123",
         user_uuid: str | None = "user-123",
         context: dict | None = None,
+        description: str | None = None,
     ):
 
         return UserChat(
@@ -1492,6 +1494,7 @@ class TestCreateChatMessages:
             user_uuid=user_uuid,
             agent_id="test-agent",
             context=context,
+            description=description,
         )
 
     @staticmethod
@@ -1512,6 +1515,35 @@ class TestCreateChatMessages:
         instance = MagicMock()
         instance.run_async = AsyncMock()
         return instance
+
+    @staticmethod
+    def _fake_websocket(frames=None, *, fail_on_send=0):
+        class FakeWebSocket:
+            def __init__(self):
+                self.frames = list(frames or [])
+                self.sent = []
+                self.closed = []
+
+            async def accept(self):
+                return None
+
+            async def receive_json(self):
+                if not self.frames:
+                    raise WebSocketDisconnect
+                frame = self.frames.pop(0)
+                if isinstance(frame, Exception):
+                    raise frame
+                return frame
+
+            async def send_json(self, message):
+                self.sent.append(message)
+                if fail_on_send and len(self.sent) >= fail_on_send:
+                    raise WebSocketDisconnect
+
+            async def close(self, code=1000):
+                self.closed.append(code)
+
+        return FakeWebSocket()
 
     @staticmethod
     def _query_kwargs(job):
@@ -1545,6 +1577,338 @@ class TestCreateChatMessages:
             ) as mock_job_cls,
         ):
             yield fake_stream, fake_job, mock_stream_cls, mock_job_cls
+
+    @staticmethod
+    def _patch_ws_stream_and_job(events):
+        fake_stream = MagicMock()
+        fake_stream.attach = MagicMock()
+        fake_stream.on_event = MagicMock()
+
+        async def event_generator():
+            for event in events:
+                yield event
+
+        fake_stream.events = event_generator
+        fake_job = MagicMock()
+        fake_job.run_async = AsyncMock()
+        return fake_stream, fake_job
+
+    @pytest.mark.asyncio
+    async def test_websocket_requires_timely_auth_frame(self):
+        """A missing first auth frame closes the socket as unauthorized."""
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_ws_async
+
+        websocket = self._fake_websocket()
+        with patch(
+            "fivccliche.modules.agent_chats.routers.CHAT_MESSAGE_AUTH_TIMEOUT",
+            0.01,
+        ):
+            await create_chat_messages_ws_async(
+                websocket=websocket,
+                chat_uuid="chat-123",
+                auth=AsyncMock(),
+                session=AsyncMock(),
+                mutex_site=None,
+            )
+
+        assert websocket.closed == [1008]
+
+    @pytest.mark.asyncio
+    async def test_websocket_rejects_invalid_auth_token(self):
+        """An invalid first-frame token is reported before any chat lookup."""
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_ws_async
+
+        websocket = self._fake_websocket([{"type": "auth", "access_token": "invalid-token"}])
+        auth = MagicMock()
+        auth.verify_credential_async = AsyncMock(return_value=None)
+        with patch("fivccliche.modules.agent_chats.routers.utils.get_chat_async") as get_chat:
+            await create_chat_messages_ws_async(
+                websocket=websocket,
+                chat_uuid="chat-123",
+                auth=auth,
+                session=AsyncMock(),
+                mutex_site=None,
+            )
+
+        auth.verify_credential_async.assert_awaited_once_with("invalid-token")
+        get_chat.assert_not_called()
+        assert websocket.sent == [
+            {"event": "error", "info": {"code": "unauthorized", "message": "Invalid token"}}
+        ]
+        assert websocket.closed == [1008]
+
+    @pytest.mark.asyncio
+    async def test_websocket_rejects_non_json_auth_frame(self):
+        """Malformed transport data is rejected without token verification."""
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_ws_async
+
+        websocket = self._fake_websocket([JSONDecodeError("Invalid JSON", "", 0)])
+        auth = AsyncMock()
+        await create_chat_messages_ws_async(
+            websocket=websocket,
+            chat_uuid="chat-123",
+            auth=auth,
+            session=AsyncMock(),
+            mutex_site=None,
+        )
+
+        auth.verify_credential_async.assert_not_called()
+        assert websocket.sent == [
+            {"event": "error", "info": {"code": "invalid_frame", "message": "Invalid JSON frame"}}
+        ]
+        assert websocket.closed == [1003]
+
+    @pytest.mark.asyncio
+    async def test_websocket_rejects_invalid_message_frame(self):
+        """A message frame must contain a non-empty query."""
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_ws_async
+
+        websocket = self._fake_websocket(
+            [
+                {"type": "auth", "access_token": "valid-token"},
+                {"type": "message", "query": " "},
+            ]
+        )
+        auth = MagicMock()
+        auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
+        with patch("fivccliche.modules.agent_chats.routers.utils.get_chat_async") as get_chat:
+            await create_chat_messages_ws_async(
+                websocket=websocket,
+                chat_uuid="chat-123",
+                auth=auth,
+                session=AsyncMock(),
+                mutex_site=None,
+            )
+
+        get_chat.assert_not_called()
+        assert websocket.sent[-1] == {
+            "event": "error",
+            "info": {"code": "invalid_message", "message": "A non-empty query is required"},
+        }
+        assert websocket.closed == [1003]
+
+    @pytest.mark.asyncio
+    async def test_websocket_returns_chat_not_found(self):
+        """WebSocket uses the same editable ownership lookup as SSE."""
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_ws_async
+
+        websocket = self._fake_websocket(
+            [
+                {"type": "auth", "access_token": "valid-token"},
+                {"type": "message", "query": "Hello"},
+            ]
+        )
+        session = AsyncMock()
+        auth = MagicMock()
+        auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
+        with patch(
+            "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+            new_callable=AsyncMock,
+            return_value=None,
+        ) as get_chat:
+            await create_chat_messages_ws_async(
+                websocket=websocket,
+                chat_uuid="missing-chat",
+                auth=auth,
+                session=session,
+                mutex_site=None,
+            )
+
+        assert get_chat.await_args.args[1] == "missing-chat"
+        session.close.assert_awaited_once()
+        assert websocket.sent[-1] == {
+            "event": "error",
+            "info": {"code": "chat_not_found", "message": "Chat not found"},
+        }
+        assert websocket.closed == [4004]
+
+    @pytest.mark.asyncio
+    async def test_websocket_returns_busy_when_mutex_is_held(self):
+        """A held chat mutex maps the HTTP 409 case to close code 4009."""
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_ws_async
+
+        websocket = self._fake_websocket(
+            [
+                {"type": "auth", "access_token": "valid-token"},
+                {"type": "message", "query": "Hello"},
+            ]
+        )
+        mutex = MagicMock()
+        mutex.acquire_async = AsyncMock(return_value=False)
+        mutex.release_async = AsyncMock()
+        mutex_site = MagicMock()
+        mutex_site.get_mutex.return_value = mutex
+        auth = MagicMock()
+        auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
+
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._mock_chat(),
+            ),
+            patch("fivccliche.modules.agent_chats.routers.ChatStream") as stream_cls,
+            patch("fivccliche.modules.agent_chats.routers.ChatQueryJob") as job_cls,
+        ):
+            await create_chat_messages_ws_async(
+                websocket=websocket,
+                chat_uuid="chat-123",
+                auth=auth,
+                session=AsyncMock(),
+                mutex_site=mutex_site,
+            )
+
+        stream_cls.assert_not_called()
+        job_cls.assert_not_called()
+        mutex.release_async.assert_not_awaited()
+        assert websocket.sent[-1] == {
+            "event": "error",
+            "info": {"code": "chat_busy", "message": "Chat message processing already running"},
+        }
+        assert websocket.closed == [4009]
+
+    @pytest.mark.asyncio
+    async def test_websocket_streams_events_and_closes_normally(self):
+        """A successful WebSocket turn emits events then closes with code 1000."""
+        from fivccliche.modules.agent_chats.routers import (
+            CHAT_MESSAGE_RUN_TIMEOUT,
+            create_chat_messages_ws_async,
+        )
+
+        websocket = self._fake_websocket(
+            [
+                {"type": "auth", "access_token": "valid-token"},
+                {"type": "message", "query": "Hello"},
+            ]
+        )
+        events = [
+            {"event": "start", "info": {"chat_uuid": "chat-123"}},
+            {"event": "finish", "info": {"chat_uuid": "chat-123"}},
+        ]
+        fake_stream, fake_job = self._patch_ws_stream_and_job(events)
+        mutex = MagicMock()
+        mutex.acquire_async = AsyncMock(return_value=True)
+        mutex.release_async = AsyncMock()
+        mutex_site = MagicMock()
+        mutex_site.get_mutex.return_value = mutex
+        session = AsyncMock()
+        auth = MagicMock()
+        auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
+
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._mock_chat(context={"scope": "router"}),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.ChatStream",
+                return_value=fake_stream,
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.ChatQueryJob",
+                return_value=fake_job,
+            ),
+        ):
+            await create_chat_messages_ws_async(
+                websocket=websocket,
+                chat_uuid="chat-123",
+                auth=auth,
+                session=session,
+                mutex_site=mutex_site,
+            )
+            query_task = fake_stream.attach.call_args[0][0]
+            await asyncio.sleep(0)
+
+        assert websocket.sent == events
+        assert websocket.closed == [1000]
+        args, kwargs = fake_job.run_async.call_args
+        assert args == ("chat-123",)
+        assert kwargs["user_uuid"] == "user-123"
+        assert kwargs["query"] == "Hello"
+        assert kwargs["agent_id"] == "test-agent"
+        assert kwargs["context"] == {"scope": "router"}
+        assert kwargs["chat_mutex"] is mutex
+        assert kwargs["run_timeout"] == CHAT_MESSAGE_RUN_TIMEOUT.total_seconds()
+        assert kwargs["event_callback"] == fake_stream.on_event
+        self._describe_job.run_async.assert_awaited_once_with(
+            "chat-123", user_uuid="user-123", query_text="Hello"
+        )
+        assert query_task.done() is True
+        session.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_websocket_disconnect_keeps_agent_task_alive(self):
+        """Disconnect does not cancel the query job or bypass mutex release."""
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_ws_async
+
+        websocket = self._fake_websocket(
+            [
+                {"type": "auth", "access_token": "valid-token"},
+                {"type": "message", "query": "Hello"},
+            ],
+            fail_on_send=1,
+        )
+        events = [
+            {"event": "start", "info": {"chat_uuid": "chat-123"}},
+            {"event": "finish", "info": {"chat_uuid": "chat-123"}},
+        ]
+        fake_stream, fake_job = self._patch_ws_stream_and_job(events)
+        mutex = MagicMock()
+        mutex.acquire_async = AsyncMock(return_value=True)
+        mutex.release_async = AsyncMock()
+
+        async def run_query(*args, **kwargs):
+            await mutex.release_async()
+
+        fake_job.run_async = AsyncMock(side_effect=run_query)
+        mutex_site = MagicMock()
+        mutex_site.get_mutex.return_value = mutex
+        auth = MagicMock()
+        auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
+
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._mock_chat(description="Already titled"),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.ChatStream",
+                return_value=fake_stream,
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.ChatQueryJob",
+                return_value=fake_job,
+            ),
+        ):
+            await create_chat_messages_ws_async(
+                websocket=websocket,
+                chat_uuid="chat-123",
+                auth=auth,
+                session=AsyncMock(),
+                mutex_site=mutex_site,
+            )
+            query_task = fake_stream.attach.call_args[0][0]
+
+        assert query_task.done() is True
+        assert query_task.cancelled() is False
+        assert mutex.release_async.await_count == 1
+
+    def test_websocket_route_is_mounted_and_authenticates(self, client, auth_token):
+        """The mounted route accepts first-frame JWT authentication."""
+        with client.websocket_connect("/chats/missing-chat/messages/ws/") as websocket:
+            websocket.send_json({"type": "auth", "access_token": auth_token})
+            websocket.send_json({"type": "message", "query": "Hello"})
+            error = websocket.receive_json()
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                websocket.receive_json()
+
+        assert error == {
+            "event": "error",
+            "info": {"code": "chat_not_found", "message": "Chat not found"},
+        }
+        assert exc_info.value.code == 4004
 
     @pytest.mark.asyncio
     async def test_create_message_does_not_access_mutex_when_chat_not_found(self):

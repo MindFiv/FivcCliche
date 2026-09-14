@@ -1,4 +1,4 @@
-"""SSE adapter for chat agent events."""
+"""Transport-independent chat event adapter."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class ChatStream:
-    """Yield SSE chunks from an attached agent task's event queue."""
+    """Yield events from an attached agent task's event queue."""
 
     def __init__(self, chat_uuid: str | None = None) -> None:
         self._chat_uuid = chat_uuid
@@ -21,15 +21,15 @@ class ChatStream:
         self._asyncio_task: asyncio.Task | None = None
 
     def attach(self, task: asyncio.Task) -> None:
-        """Watch ``task`` so ``__call__`` can detect completion."""
+        """Watch ``task`` so ``events`` can detect completion."""
         self._asyncio_task = task
 
     def on_event(self, ev, run) -> None:
-        """Enqueue an agent event for SSE formatting."""
+        """Enqueue an agent event for formatting."""
         self._chat_queue.put_nowait((ev, run))
 
-    async def __call__(self) -> AsyncIterator[str]:
-        """Yield SSE chunks from the agent event queue."""
+    async def events(self) -> AsyncIterator[dict]:
+        """Yield JSON-compatible event payloads from the agent event queue."""
         try:
             while True:
                 if (
@@ -60,22 +60,18 @@ class ChatStream:
                     *data_fields_basics,
                 }
                 if ev == AgentRunEvent.START:
-                    data = ev_run.model_dump(mode="json", include=data_fields)
-                    data.update({"chat_uuid": self._chat_uuid})
-                    data = {"event": "start", "info": data}
-                    data_json = json.dumps(data)
-                    yield f"data: {data_json}\n\n"
+                    info = ev_run.model_dump(mode="json", include=data_fields)
+                    info.update({"chat_uuid": self._chat_uuid})
+                    yield {"event": "start", "info": info}
 
                 elif ev == AgentRunEvent.FINISH:
-                    data = ev_run.model_dump(mode="json", include=data_fields)
-                    data.update({"chat_uuid": self._chat_uuid})
-                    data = {"event": "finish", "info": data}
-                    data_json = json.dumps(data)
-                    yield f"data: {data_json}\n\n"
+                    info = ev_run.model_dump(mode="json", include=data_fields)
+                    info.update({"chat_uuid": self._chat_uuid})
+                    yield {"event": "finish", "info": info}
 
                 elif ev == AgentRunEvent.STREAM:
-                    data = ev_run.model_dump(mode="json", include=data_fields_basics)
-                    data.update(
+                    info = ev_run.model_dump(mode="json", include=data_fields_basics)
+                    info.update(
                         {
                             "chat_uuid": self._chat_uuid,
                             "delta": (
@@ -83,22 +79,25 @@ class ChatStream:
                             ),
                         }
                     )
-                    data = {"event": "stream", "info": data}
-                    data = json.dumps(data)
-                    yield f"data: {data}\n\n"
+                    yield {"event": "stream", "info": info}
 
                 elif ev == AgentRunEvent.TOOL:
-                    data = ev_run.model_dump(mode="json", include=data_fields)
-                    data.update({"chat_uuid": self._chat_uuid})
-                    data = {"event": "tool", "info": data}
-                    data = json.dumps(data)
-                    yield f"data: {data}\n\n"
+                    info = ev_run.model_dump(mode="json", include=data_fields)
+                    info.update({"chat_uuid": self._chat_uuid})
+                    yield {"event": "tool", "info": info}
 
                 self._chat_queue.task_done()
 
-        except Exception as e:
-            message = "Chat message processing timed out" if isinstance(e, TimeoutError) else str(e)
-            data = {"event": "error", "info": {"message": message}}
-            data = json.dumps(data)
+        except Exception as exception:
+            message = (
+                "Chat message processing timed out"
+                if isinstance(exception, TimeoutError)
+                else str(exception)
+            )
             logger.exception("Error in chat queue")
-            yield f"data: {data}\n\n"
+            yield {"event": "error", "info": {"message": message}}
+
+    async def __call__(self) -> AsyncIterator[str]:
+        """Yield the event queue as SSE chunks."""
+        async for event in self.events():
+            yield f"data: {json.dumps(event)}\n\n"
