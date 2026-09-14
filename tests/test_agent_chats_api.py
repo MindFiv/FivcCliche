@@ -629,7 +629,7 @@ class TestChatIntegration:
 
 
 class TestChatStreamApiSurface:
-    """Test cases for ChatStream() used by routers."""
+    """ChatStream remains importable as an alias of ChatEventHandler."""
 
     def test_call_returns_async_generator(self):
         """Calling ChatStream returns an async generator."""
@@ -1503,7 +1503,7 @@ class TestCreateChatMessages:
 
     @staticmethod
     def _fake_chat_stream(stream_factory):
-        """Build a ChatStream-like mock for router tests."""
+        """Build a ChatEventHandler-like mock for router tests."""
         instance = MagicMock()
         instance.attach = MagicMock()
         instance.on_event = MagicMock()
@@ -1568,7 +1568,7 @@ class TestCreateChatMessages:
         )
         with (
             patch(
-                "fivccliche.modules.agent_chats.routers.ChatStream",
+                "fivccliche.modules.agent_chats.routers.ChatEventHandler",
                 return_value=fake_stream,
             ) as mock_stream_cls,
             patch(
@@ -1747,7 +1747,7 @@ class TestCreateChatMessages:
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(),
             ),
-            patch("fivccliche.modules.agent_chats.routers.ChatStream") as stream_cls,
+            patch("fivccliche.modules.agent_chats.routers.ChatEventHandler") as stream_cls,
             patch("fivccliche.modules.agent_chats.routers.ChatQueryJob") as job_cls,
         ):
             await create_chat_messages_ws_async(
@@ -1802,7 +1802,7 @@ class TestCreateChatMessages:
                 return_value=self._mock_chat(context={"scope": "router"}),
             ),
             patch(
-                "fivccliche.modules.agent_chats.routers.ChatStream",
+                "fivccliche.modules.agent_chats.routers.ChatEventHandler",
                 return_value=fake_stream,
             ),
             patch(
@@ -1874,7 +1874,7 @@ class TestCreateChatMessages:
                 return_value=self._mock_chat(description="Already titled"),
             ),
             patch(
-                "fivccliche.modules.agent_chats.routers.ChatStream",
+                "fivccliche.modules.agent_chats.routers.ChatEventHandler",
                 return_value=fake_stream,
             ),
             patch(
@@ -1924,7 +1924,7 @@ class TestCreateChatMessages:
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch("fivccliche.modules.agent_chats.routers.ChatStream") as mock_stream_cls,
+            patch("fivccliche.modules.agent_chats.routers.ChatEventHandler") as mock_stream_cls,
             patch("fivccliche.modules.agent_chats.routers.ChatQueryJob") as mock_job_cls,
         ):
             with pytest.raises(HTTPException) as exc_info:
@@ -2122,7 +2122,7 @@ class TestCreateChatMessages:
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(),
             ),
-            patch("fivccliche.modules.agent_chats.routers.ChatStream") as mock_stream_cls,
+            patch("fivccliche.modules.agent_chats.routers.ChatEventHandler") as mock_stream_cls,
             patch("fivccliche.modules.agent_chats.routers.ChatQueryJob") as mock_job_cls,
         ):
             with pytest.raises(HTTPException) as exc_info:

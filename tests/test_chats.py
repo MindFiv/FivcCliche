@@ -3,13 +3,15 @@
 import asyncio
 import json
 from contextlib import contextmanager
+from json import JSONDecodeError
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from fastapi import WebSocketDisconnect
 from fivcplayground.agents import AgentRunEvent
 
 from fivccliche.modules.agent_chats.jobs import ChatQueryJob
-from fivccliche.utils.stream import ChatStream
+from fivccliche.utils.stream import ChatEventHandler, ChatStream, ChatWSHandler
 
 _QUERY = "fivccliche.modules.agent_chats.jobs.query"
 
@@ -31,11 +33,11 @@ def _patch_query_providers(config_provider, chat_provider):
         yield
 
 
-class TestChatStreamGetStream:
-    """Test ChatStream() SSE formatting."""
+class TestChatEventHandlerGetStream:
+    """Test ChatEventHandler() SSE formatting."""
 
     def _make_chat_stream(self, chat_uuid: str | None = "test-chat-uuid"):
-        chat_stream = ChatStream(chat_uuid=chat_uuid)
+        chat_stream = ChatEventHandler(chat_uuid=chat_uuid)
         chat_stream._asyncio_task = MagicMock(spec=asyncio.Task)
         chat_stream._asyncio_task.done.return_value = False
         chat_stream._asyncio_task.result.return_value = None
@@ -45,16 +47,20 @@ class TestChatStreamGetStream:
         return chat_stream
 
     def test_get_stream_returns_async_generator(self):
-        """Calling ChatStream returns an async generator."""
+        """Calling ChatEventHandler returns an async generator."""
         chat_stream = self._make_chat_stream()
         stream = chat_stream()
         assert hasattr(stream, "__aiter__")
 
     def test_get_stream_without_chat_uuid(self):
-        """Calling ChatStream works when chat_uuid is None."""
+        """Calling ChatEventHandler works when chat_uuid is None."""
         chat_stream = self._make_chat_stream(chat_uuid=None)
         stream = chat_stream()
         assert hasattr(stream, "__aiter__")
+
+    def test_chat_stream_alias_is_chat_event_handler(self):
+        """ChatStream remains a compatible alias of ChatEventHandler."""
+        assert ChatStream is ChatEventHandler
 
     @pytest.mark.asyncio
     async def test_events_and_sse_chunks_use_the_same_payload(self):
@@ -365,7 +371,7 @@ class TestChatStreamGetStream:
     @pytest.mark.asyncio
     async def test_call_uses_attach_and_on_event(self):
         """attach + on_event + __call__ complete a stream without private fields."""
-        chat_stream = ChatStream(chat_uuid="public-api")
+        chat_stream = ChatEventHandler(chat_uuid="public-api")
         mock_run = Mock()
         mock_run.model_dump.return_value = {
             "id": "run-1",
@@ -391,7 +397,7 @@ class TestChatStreamGetStream:
 
 
 class TestChatQueryJob:
-    """Test ChatQueryJob agent execution and ChatStream integration."""
+    """Test ChatQueryJob agent execution and ChatEventHandler integration."""
 
     def _make_mock_user(self):
         user = Mock()
@@ -428,10 +434,10 @@ class TestChatQueryJob:
         return tool
 
     def _start_query(self, user, **kwargs):
-        """Create ChatQueryJob task, attach ChatStream, return (stream, task, agen)."""
+        """Create ChatQueryJob task, attach ChatEventHandler, return (stream, task, agen)."""
         chat_uuid = kwargs.pop("chat_uuid")
         query = kwargs.pop("query")
-        chat_stream = ChatStream(chat_uuid=chat_uuid)
+        chat_stream = ChatEventHandler(chat_uuid=chat_uuid)
         query_task = asyncio.create_task(
             ChatQueryJob(MagicMock()).run_async(
                 chat_uuid,
@@ -714,7 +720,7 @@ class TestChatQueryJob:
     async def test_create_generator_returns_streaming_generator(
         self, mock_create_agent, mock_create_tool_retriever, mock_create_skill_retriever
     ):
-        """Calling ChatStream returns an async generator."""
+        """Calling ChatEventHandler returns an async generator."""
         mock_agent = AsyncMock()
         mock_agent.run_async = AsyncMock()
         mock_create_agent.return_value = mock_agent
@@ -1152,3 +1158,203 @@ class TestChatQueryJob:
 
         mutex.release_async.assert_awaited_once()
         assert any('"event": "finish"' in chunk for chunk in chunks)
+
+
+class TestChatWSHandler:
+    """Test first-frame auth, typed receive, error close, and event send."""
+
+    @staticmethod
+    def _fake_websocket(frames=None, *, fail_on_send=0, hang_on_empty=False):
+        class FakeWebSocket:
+            def __init__(self):
+                self.frames = list(frames or [])
+                self.sent = []
+                self.closed = []
+                self.accepted = False
+
+            async def accept(self):
+                self.accepted = True
+
+            async def receive_json(self):
+                if not self.frames:
+                    if hang_on_empty:
+                        await asyncio.sleep(10)
+                    raise WebSocketDisconnect
+                frame = self.frames.pop(0)
+                if isinstance(frame, Exception):
+                    raise frame
+                return frame
+
+            async def send_json(self, message):
+                self.sent.append(message)
+                if fail_on_send and len(self.sent) >= fail_on_send:
+                    raise WebSocketDisconnect
+
+            async def close(self, code=1000):
+                self.closed.append(code)
+
+        return FakeWebSocket()
+
+    @pytest.mark.asyncio
+    async def test_authenticate_times_out_without_auth_frame(self):
+        websocket = self._fake_websocket(hang_on_empty=True)
+        auth = AsyncMock()
+        chat_ws = ChatWSHandler(websocket, auth_timeout=0.01)
+
+        user = await chat_ws.authenticate(auth)
+
+        assert user is None
+        auth.verify_credential_async.assert_not_called()
+        assert websocket.accepted is True
+        assert websocket.sent == [
+            {
+                "event": "error",
+                "info": {"code": "unauthorized", "message": "Authentication timed out"},
+            }
+        ]
+        assert websocket.closed == [1008]
+
+    @pytest.mark.asyncio
+    async def test_authenticate_rejects_invalid_token(self):
+        websocket = self._fake_websocket([{"type": "auth", "access_token": "invalid-token"}])
+        auth = MagicMock()
+        auth.verify_credential_async = AsyncMock(return_value=None)
+
+        user = await ChatWSHandler(websocket).authenticate(auth)
+
+        assert user is None
+        auth.verify_credential_async.assert_awaited_once_with("invalid-token")
+        assert websocket.sent == [
+            {"event": "error", "info": {"code": "unauthorized", "message": "Invalid token"}}
+        ]
+        assert websocket.closed == [1008]
+
+    @pytest.mark.asyncio
+    async def test_authenticate_rejects_non_json_frame(self):
+        websocket = self._fake_websocket([JSONDecodeError("Invalid JSON", "", 0)])
+        auth = AsyncMock()
+
+        user = await ChatWSHandler(websocket).authenticate(auth)
+
+        assert user is None
+        auth.verify_credential_async.assert_not_called()
+        assert websocket.sent == [
+            {"event": "error", "info": {"code": "invalid_frame", "message": "Invalid JSON frame"}}
+        ]
+        assert websocket.closed == [1003]
+
+    @pytest.mark.asyncio
+    async def test_authenticate_rejects_value_error_as_invalid_frame(self):
+        websocket = self._fake_websocket([ValueError("invalid json")])
+        auth = AsyncMock()
+
+        user = await ChatWSHandler(websocket).authenticate(auth)
+
+        assert user is None
+        assert websocket.sent[-1]["info"]["code"] == "invalid_frame"
+        assert websocket.closed == [1003]
+
+    @pytest.mark.asyncio
+    async def test_authenticate_returns_verified_user(self):
+        websocket = self._fake_websocket([{"type": "auth", "access_token": "valid-token"}])
+        verified = MagicMock()
+        auth = MagicMock()
+        auth.verify_credential_async = AsyncMock(return_value=verified)
+
+        user = await ChatWSHandler(websocket).authenticate(auth)
+
+        assert user is verified
+        assert websocket.accepted is True
+        assert websocket.sent == []
+        assert websocket.closed == []
+
+    @pytest.mark.asyncio
+    async def test_receive_returns_typed_frame(self):
+        websocket = self._fake_websocket([{"type": "message", "query": "hello"}])
+        chat_ws = ChatWSHandler(websocket)
+        await websocket.accept()
+
+        frame = await chat_ws.receive(expected_type="message", invalid_code="invalid_message")
+
+        assert frame == {"type": "message", "query": "hello"}
+        assert websocket.closed == []
+
+    @pytest.mark.asyncio
+    async def test_receive_rejects_wrong_type(self):
+        websocket = self._fake_websocket([{"type": "report"}])
+        chat_ws = ChatWSHandler(websocket)
+        await websocket.accept()
+
+        frame = await chat_ws.receive(expected_type="message", invalid_code="invalid_message")
+
+        assert frame is None
+        assert websocket.sent == [
+            {
+                "event": "error",
+                "info": {
+                    "code": "invalid_message",
+                    "message": "A message frame is required",
+                },
+            }
+        ]
+        assert websocket.closed == [1003]
+
+    @pytest.mark.asyncio
+    async def test_receive_closes_normally_on_disconnect(self):
+        websocket = self._fake_websocket()
+        chat_ws = ChatWSHandler(websocket)
+        await websocket.accept()
+
+        frame = await chat_ws.receive(expected_type="message", invalid_code="invalid_message")
+
+        assert frame is None
+        assert websocket.sent == []
+        assert websocket.closed == [1000]
+
+    @pytest.mark.asyncio
+    async def test_fail_sends_error_envelope_and_closes(self):
+        websocket = self._fake_websocket()
+        chat_ws = ChatWSHandler(websocket)
+
+        await chat_ws.fail(code="chat_not_found", message="Chat not found", close_code=4004)
+
+        assert websocket.sent == [
+            {"event": "error", "info": {"code": "chat_not_found", "message": "Chat not found"}}
+        ]
+        assert websocket.closed == [4004]
+
+    @pytest.mark.asyncio
+    async def test_send_pushes_events_and_returns_false(self):
+        websocket = self._fake_websocket()
+        events = [
+            {"event": "start", "info": {"chat_uuid": "chat-1"}},
+            {"event": "finish", "info": {"chat_uuid": "chat-1"}},
+        ]
+
+        async def event_generator():
+            for event in events:
+                yield event
+
+        disconnected = await ChatWSHandler(websocket).send(event_generator())
+
+        assert disconnected is False
+        assert websocket.sent == events
+        assert websocket.closed == []
+
+    @pytest.mark.asyncio
+    async def test_send_returns_true_when_client_disconnects(self):
+        websocket = self._fake_websocket(fail_on_send=1)
+        events = [
+            {"event": "start", "info": {}},
+            {"event": "finish", "info": {}},
+        ]
+
+        async def event_generator():
+            for event in events:
+                yield event
+
+        disconnected = await ChatWSHandler(websocket).send(event_generator())
+
+        assert disconnected is True
+        assert websocket.sent == [events[0]]
+        assert websocket.closed == []

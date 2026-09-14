@@ -7,12 +7,15 @@ import json
 import logging
 from collections.abc import AsyncIterator
 
+from fastapi import WebSocket, WebSocketDisconnect
 from fivcplayground.agents import AgentRunEvent
+
+from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator
 
 logger = logging.getLogger(__name__)
 
 
-class ChatStream:
+class ChatEventHandler:
     """Yield events from an attached agent task's event queue."""
 
     def __init__(self, chat_uuid: str | None = None) -> None:
@@ -101,3 +104,107 @@ class ChatStream:
         """Yield the event queue as SSE chunks."""
         async for event in self.events():
             yield f"data: {json.dumps(event)}\n\n"
+
+
+ChatStream = ChatEventHandler
+
+
+class ChatWSHandler:
+    """One-shot WebSocket protocol for first-frame JWT auth and event send."""
+
+    def __init__(self, websocket: WebSocket, *, auth_timeout: float = 5.0) -> None:
+        self._ws = websocket
+        self._auth_timeout = auth_timeout
+
+    async def fail(self, *, code: str, message: str, close_code: int) -> None:
+        """Send an error envelope and close the socket."""
+        await self._ws.send_json({"event": "error", "info": {"code": code, "message": message}})
+        await self._ws.close(code=close_code)
+
+    async def authenticate(self, authenticator: IUserAuthenticator) -> IUser | None:
+        """Accept the socket and verify a first-frame JWT.
+
+        Returns ``None`` when the socket has already been closed with an error.
+        """
+        await self._ws.accept()
+        try:
+            auth_frame = await asyncio.wait_for(
+                self._ws.receive_json(),
+                timeout=self._auth_timeout,
+            )
+        except TimeoutError:
+            await self.fail(
+                code="unauthorized",
+                message="Authentication timed out",
+                close_code=1008,
+            )
+            return None
+        except WebSocketDisconnect:
+            await self._ws.close(code=1008)
+            return None
+        except (json.JSONDecodeError, ValueError):
+            await self.fail(
+                code="invalid_frame",
+                message="Invalid JSON frame",
+                close_code=1003,
+            )
+            return None
+
+        if (
+            not isinstance(auth_frame, dict)
+            or auth_frame.get("type") != "auth"
+            or not isinstance(auth_frame.get("access_token"), str)
+        ):
+            await self.fail(
+                code="unauthorized",
+                message="Invalid token",
+                close_code=1008,
+            )
+            return None
+
+        user = await authenticator.verify_credential_async(auth_frame["access_token"])
+        if user is None:
+            await self.fail(
+                code="unauthorized",
+                message="Invalid token",
+                close_code=1008,
+            )
+            return None
+        return user
+
+    async def receive(self, *, expected_type: str, invalid_code: str) -> dict | None:
+        """Read one JSON object of ``expected_type``.
+
+        Disconnect closes ``1000``. Invalid JSON closes ``1003``. A type
+        mismatch closes ``1003`` with ``invalid_code``.
+        """
+        try:
+            frame = await self._ws.receive_json()
+        except WebSocketDisconnect:
+            await self._ws.close(code=1000)
+            return None
+        except (json.JSONDecodeError, ValueError):
+            await self.fail(
+                code="invalid_frame",
+                message="Invalid JSON frame",
+                close_code=1003,
+            )
+            return None
+
+        if not isinstance(frame, dict) or frame.get("type") != expected_type:
+            await self.fail(
+                code=invalid_code,
+                message=f"A {expected_type} frame is required",
+                close_code=1003,
+            )
+            return None
+        return frame
+
+    async def send(self, events: AsyncIterator[dict]) -> bool:
+        """Push JSON events. Return True if the client disconnected."""
+        try:
+            async for event in events:
+                await self._ws.send_json(event)
+        except WebSocketDisconnect:
+            return True
+        return False

@@ -1,6 +1,5 @@
 import asyncio
 import uuid
-from json import JSONDecodeError
 from datetime import datetime, timedelta, timezone
 from typing import cast
 
@@ -14,7 +13,6 @@ from fastapi import (
     responses,
     status,
     WebSocket,
-    WebSocketDisconnect,
 )
 from fivcglue import IComponentSite
 from fivcglue.interfaces.mutexes import IMutexSite
@@ -33,7 +31,7 @@ from fivccliche.utils.deps import (
 )
 from fivccliche.utils.filters import FilterError
 from fivccliche.utils.schemas import PaginatedResponse
-from fivccliche.utils.stream import ChatStream
+from fivccliche.utils.stream import ChatEventHandler, ChatWSHandler
 
 from . import models, schemas, utils
 from .filters import ChatEditableFilterSet, ChatFilterSet
@@ -267,7 +265,7 @@ async def create_chat_messages_async(
         )
 
     try:
-        chat_stream = ChatStream(chat_uuid=chat_uuid)
+        chat_stream = ChatEventHandler(chat_uuid=chat_uuid)
         query_task = asyncio.create_task(
             ChatQueryJob(cast(IComponentSite, service_site)).run_async(
                 chat_uuid,
@@ -321,81 +319,22 @@ async def create_chat_messages_ws_async(
     mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
 ) -> None:
     """Stream one chat turn over WebSocket after first-frame authentication."""
-    await websocket.accept()
-    try:
-        auth_frame = await asyncio.wait_for(
-            websocket.receive_json(),
-            timeout=CHAT_MESSAGE_AUTH_TIMEOUT,
-        )
-    except TimeoutError:
-        await websocket.send_json(
-            {
-                "event": "error",
-                "info": {"code": "unauthorized", "message": "Authentication timed out"},
-            }
-        )
-        await websocket.close(code=1008)
-        return
-    except WebSocketDisconnect:
-        await websocket.close(code=1008)
-        return
-    except JSONDecodeError:
-        await websocket.send_json(
-            {"event": "error", "info": {"code": "invalid_frame", "message": "Invalid JSON frame"}}
-        )
-        await websocket.close(code=1003)
-        return
-
-    if (
-        not isinstance(auth_frame, dict)
-        or auth_frame.get("type") != "auth"
-        or not isinstance(auth_frame.get("access_token"), str)
-    ):
-        await websocket.send_json(
-            {"event": "error", "info": {"code": "unauthorized", "message": "Invalid token"}}
-        )
-        await websocket.close(code=1008)
-        return
-
-    user = await auth.verify_credential_async(auth_frame["access_token"])
+    chat_ws = ChatWSHandler(websocket, auth_timeout=CHAT_MESSAGE_AUTH_TIMEOUT)
+    user = await chat_ws.authenticate(auth)
     if user is None:
-        await websocket.send_json(
-            {"event": "error", "info": {"code": "unauthorized", "message": "Invalid token"}}
-        )
-        await websocket.close(code=1008)
         return
 
-    try:
-        message_frame = await websocket.receive_json()
-    except WebSocketDisconnect:
-        await websocket.close(code=1000)
-        return
-    except JSONDecodeError:
-        await websocket.send_json(
-            {"event": "error", "info": {"code": "invalid_frame", "message": "Invalid JSON frame"}}
-        )
-        await websocket.close(code=1003)
-        return
-
-    if not isinstance(message_frame, dict) or message_frame.get("type") != "message":
-        await websocket.send_json(
-            {
-                "event": "error",
-                "info": {"code": "invalid_message", "message": "Invalid message frame"},
-            }
-        )
-        await websocket.close(code=1003)
+    message_frame = await chat_ws.receive(expected_type="message", invalid_code="invalid_message")
+    if message_frame is None:
         return
 
     query_value = message_frame.get("query")
     if not isinstance(query_value, str) or not query_value.strip():
-        await websocket.send_json(
-            {
-                "event": "error",
-                "info": {"code": "invalid_message", "message": "A non-empty query is required"},
-            }
+        await chat_ws.fail(
+            code="invalid_message",
+            message="A non-empty query is required",
+            close_code=1003,
         )
-        await websocket.close(code=1003)
         return
     query = query_value.strip()
 
@@ -406,10 +345,11 @@ async def create_chat_messages_ws_async(
     )
     await session.close()
     if not chat:
-        await websocket.send_json(
-            {"event": "error", "info": {"code": "chat_not_found", "message": "Chat not found"}}
+        await chat_ws.fail(
+            code="chat_not_found",
+            message="Chat not found",
+            close_code=4004,
         )
-        await websocket.close(code=4004)
         return
 
     chat_mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
@@ -417,16 +357,14 @@ async def create_chat_messages_ws_async(
         expire=CHAT_MESSAGE_LOCK_EXPIRE,
         timeout=None,
     ):
-        await websocket.send_json(
-            {
-                "event": "error",
-                "info": {"code": "chat_busy", "message": "Chat message processing already running"},
-            }
+        await chat_ws.fail(
+            code="chat_busy",
+            message="Chat message processing already running",
+            close_code=4009,
         )
-        await websocket.close(code=4009)
         return
 
-    chat_stream = ChatStream(chat_uuid=chat_uuid)
+    chat_stream = ChatEventHandler(chat_uuid=chat_uuid)
     query_task: asyncio.Task | None = None
     try:
         query_task = asyncio.create_task(
@@ -446,13 +384,11 @@ async def create_chat_messages_ws_async(
     except Exception:
         if chat_mutex:
             await chat_mutex.release_async()
-        await websocket.send_json(
-            {
-                "event": "error",
-                "info": {"code": "internal_error", "message": "Failed to start chat message"},
-            }
+        await chat_ws.fail(
+            code="internal_error",
+            message="Failed to start chat message",
+            close_code=1011,
         )
-        await websocket.close(code=1011)
         return
 
     completion_tasks = [query_task]
@@ -467,12 +403,10 @@ async def create_chat_messages_ws_async(
         completion_tasks.append(describe_task)
     completion_task = asyncio.gather(*completion_tasks, return_exceptions=True)
 
-    try:
-        async for event in chat_stream.events():
-            await websocket.send_json(event)
-        await websocket.close(code=1000)
-    except WebSocketDisconnect:
+    if await chat_ws.send(chat_stream.events()):
         await completion_task
+    else:
+        await websocket.close(code=1000)
 
 
 @router_messages.get(
