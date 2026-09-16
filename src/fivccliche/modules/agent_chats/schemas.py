@@ -76,6 +76,10 @@ class UserChatCreateSchema(BaseModel):
 
     agent_id: str = Field(default="default", description="Agent ID for the chat")
     context: dict | None = Field(default=None, description="Initial chat context")
+    is_memorable: bool = Field(
+        default=True,
+        description="Whether this chat is eligible for memory retention",
+    )
 
 
 class UserChatUpdateSchema(BaseModel):

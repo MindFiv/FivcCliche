@@ -121,6 +121,19 @@ class TestChatAPI:
         assert "created_at" in data or "started_at" in data
         assert data["is_memorable"] is True
 
+    def test_create_chat_with_is_memorable_false(self, client: TestClient, auth_token: str):
+        """Test creating a chat that is not eligible for memory retention."""
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.post(
+            "/chats/",
+            json={"agent_id": "custom_agent", "is_memorable": False},
+            headers=headers,
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["agent_id"] == "custom_agent"
+        assert data["is_memorable"] is False
+
 
 class TestChatContextAPI:
     """Test cases for context field handling in chat API."""
