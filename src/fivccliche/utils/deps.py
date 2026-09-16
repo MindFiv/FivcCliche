@@ -14,6 +14,7 @@ from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.services.interfaces.agent_memories import IUserMemoryProvider
 from fivccliche.services.interfaces.db import IDatabase
 from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator
+from fivccliche.services.interfaces.speech import ISpeechProvider
 from fivccliche.services.implements import service_site
 from fivccliche.utils.types import UNSET, UnsetType
 from sqlalchemy.ext.asyncio.session import AsyncSession
@@ -267,3 +268,15 @@ async def get_chat_provider_async() -> IUserChatProvider:
 async def get_memory_provider_async() -> IUserMemoryProvider | None:
     """Return the memory provider, or None if not registered."""
     return cast("IUserMemoryProvider | None", default_memory_provider())
+
+
+async def get_speech_provider_async(name: str = "dashscope") -> ISpeechProvider | None:
+    """Return a named speech provider, or None if not registered.
+
+    Default ``name`` is ``dashscope`` (Flash). Use ``dashscope_realtime`` for
+    the realtime provider.
+    """
+    return cast(
+        "ISpeechProvider | None",
+        query_component(cast(IComponentSite, service_site), ISpeechProvider, name=name),
+    )

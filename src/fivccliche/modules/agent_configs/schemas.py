@@ -1,4 +1,6 @@
 __all__ = [
+    "UserASRProbeRequest",
+    "UserASRSchema",
     "UserAgentSchema",
     "UserEmbeddingSchema",
     "UserLLMSchema",
@@ -9,8 +11,9 @@ __all__ = [
 ]
 
 from datetime import datetime
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fivcplayground.embeddings.types import EmbeddingConfig
 from fivcplayground.models.types import ModelConfig
@@ -53,6 +56,47 @@ class UserLLMSchema(ModelConfig):
     )
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserASRSchema(BaseModel):
+    """Schema for reading ASR config data (response)."""
+
+    id: str = Field(..., description="ASR config ID (unique within user scope)")
+    description: str | None = Field(default=None, description="ASR description")
+    model: str = Field(..., description="ASR model name")
+    base_url: str | None = Field(default=None, description="ASR base URL")
+    api_key: str | None = Field(default=None, exclude=True)
+    model_type: Literal["dashscope", "dashscope_realtime"] = Field(
+        default="dashscope",
+        description="ISpeechProvider name (dashscope or dashscope_realtime)",
+    )
+    uuid: str | None = Field(default=None, description="ASR config UUID (globally unique)")
+    user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
+    updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
+    updated_user_uuid: str | None = Field(
+        default=None, description="UUID of user who last updated (read-only)"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserASRProbeRequest(BaseModel):
+    """Request body for probing an ASR config with a clip."""
+
+    url: str | None = Field(default=None, description="Publicly reachable audio URL")
+    data_b64: str | None = Field(default=None, description="Base64-encoded audio")
+    format: str = Field(default="wav", description="Clip format, such as wav or mp3")
+    language: str | None = Field(default=None, description="Optional language hint")
+    hotwords: list[str] | None = Field(default=None, description="Optional hotwords")
+    context: str | None = Field(default=None, description="Optional recognition context")
+
+    @model_validator(mode="after")
+    def require_one_source(self) -> Self:
+        has_url = bool(self.url)
+        has_data = bool(self.data_b64)
+        if has_url == has_data:
+            raise ValueError("Exactly one of url or data_b64 is required")
+        return self
 
 
 class UserToolSchema(ToolConfig):

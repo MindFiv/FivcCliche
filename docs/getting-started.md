@@ -53,10 +53,11 @@ curl -X POST http://localhost:8000/api/users/login/ \
 
 Send the token as `Authorization: Bearer <access_token>` on later requests.
 
-Create and list user-scoped configs under `/api/configs/` (embeddings, models, agents, tools, skills, questions). Superusers create globals (`user_uuid` is null); regular users can read those but cannot update or delete them.
+Create and list user-scoped configs under `/api/configs/` (embeddings, models, asrs, agents, tools, skills, questions). Superusers create globals (`user_uuid` is null); regular users can read those but cannot update or delete them.
 
 ## Next
 
 - [Architecture](architecture.md) — module layering, ownership, HTTP CRUD
 - [Scheduled Tasks](scheduler.md) — per-module APScheduler jobs
 - [Agent Memories](agent-memories.md) — optional Hindsight memory API
+- [Speech recognition](speech.md) — optional ASR, message WebSocket audio

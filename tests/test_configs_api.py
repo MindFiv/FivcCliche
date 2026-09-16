@@ -1,8 +1,13 @@
 """Integration tests for configs API endpoints."""
 
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from fastapi.testclient import TestClient
 
+from fivccliche.services.implements.speech.fake import FakeSpeechProvider
+from fivccliche.services.interfaces.speech import SpeechEvent
 from tests.conftest import make_api_client
 
 
@@ -461,6 +466,305 @@ class TestLLMConfigAPI:
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert response.status_code == 404
+
+
+class TestASRConfigAPI:
+    """Test cases for ASR Config API endpoints."""
+
+    def test_create_asr_config_unauthorized(self, client: TestClient):
+        response = client.post(
+            "/configs/asrs/",
+            json={
+                "id": "asr",
+                "model": "qwen3-asr-flash",
+                "api_key": "test-key",
+                "model_type": "dashscope",
+            },
+        )
+        assert response.status_code == 401
+
+    def test_create_asr_config(self, client: TestClient, auth_token: str):
+        response = client.post(
+            "/configs/asrs/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "asr",
+                "description": "Default ASR",
+                "model": "qwen3-asr-flash",
+                "api_key": "test-key",
+                "base_url": "https://dashscope.aliyuncs.com",
+                "model_type": "dashscope",
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["id"] == "asr"
+        assert data["model"] == "qwen3-asr-flash"
+        assert data["model_type"] == "dashscope"
+        assert "api_key" not in data
+        assert "user_uuid" in data
+
+    def test_list_asr_configs(self, client: TestClient, auth_token: str):
+        for i in range(3):
+            client.post(
+                "/configs/asrs/",
+                headers={"Authorization": f"Bearer {auth_token}"},
+                json={
+                    "id": f"asr-{i}",
+                    "model": f"model-{i}",
+                    "api_key": f"key-{i}",
+                    "model_type": "dashscope",
+                },
+            )
+
+        response = client.get(
+            "/configs/asrs/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 3
+        assert len(data["results"]) == 3
+
+    def test_get_asr_config(self, client: TestClient, auth_token: str):
+        create_response = client.post(
+            "/configs/asrs/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "asr-get",
+                "model": "qwen3-asr-flash",
+                "api_key": "secret-key",
+                "model_type": "dashscope",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.get(
+            f"/configs/asrs/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == "asr-get"
+        assert "api_key" not in data
+
+    def test_get_asr_config_not_found(self, client: TestClient, auth_token: str):
+        response = client.get(
+            "/configs/asrs/nonexistent",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 404
+
+    def test_update_asr_config(self, client: TestClient, auth_token: str):
+        create_response = client.post(
+            "/configs/asrs/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "asr-update",
+                "model": "qwen3-asr-flash",
+                "api_key": "test-key",
+                "model_type": "dashscope",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.patch(
+            f"/configs/asrs/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"model": "qwen3-asr-flash-realtime", "model_type": "dashscope_realtime"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["model"] == "qwen3-asr-flash-realtime"
+        assert data["model_type"] == "dashscope_realtime"
+
+    def test_delete_asr_config(self, client: TestClient, auth_token: str):
+        create_response = client.post(
+            "/configs/asrs/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "asr-delete",
+                "model": "qwen3-asr-flash",
+                "api_key": "test-key",
+                "model_type": "dashscope",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        response = client.delete(
+            f"/configs/asrs/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 204
+
+        response = client.get(
+            f"/configs/asrs/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert response.status_code == 404
+
+    def test_probe_asr_config_unauthorized(self, client: TestClient):
+        response = client.post(
+            "/configs/asrs/nonexistent/probe/",
+            json={"url": "https://example.com/a.wav"},
+        )
+        assert response.status_code == 401
+
+    @staticmethod
+    def _sse_events(response):
+        events = []
+        for line in response.text.splitlines():
+            if line.startswith("data: "):
+                events.append(json.loads(line[6:]))
+        return events
+
+    def test_probe_asr_config(self, client: TestClient, auth_token: str):
+        create_response = client.post(
+            "/configs/asrs/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "asr-probe",
+                "model": "qwen3-asr-flash",
+                "api_key": "sk-probe",
+                "base_url": "https://dashscope.aliyuncs.com",
+                "model_type": "dashscope",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+        captured: dict = {}
+        provider = FakeSpeechProvider(transcript="hello")
+        original = provider.get_recognizer
+
+        async def get_recognizer(options=None, **kwargs):
+            captured["options"] = options
+            captured["kwargs"] = kwargs
+            return await original(options, **kwargs)
+
+        provider.get_recognizer = get_recognizer  # type: ignore[method-assign]
+        with patch(
+            "fivccliche.modules.agent_configs.routers.get_speech_provider_async",
+            new=AsyncMock(return_value=provider),
+        ) as get_provider:
+            response = client.post(
+                f"/configs/asrs/{config_uuid}/probe/",
+                headers={"Authorization": f"Bearer {auth_token}"},
+                json={"url": "https://example.com/a.wav", "language": "zh"},
+            )
+
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
+        assert self._sse_events(response) == [
+            {"event": "final", "info": {"text": "hello", "language": "zh"}},
+        ]
+        get_provider.assert_awaited_once_with("dashscope")
+        assert captured["kwargs"]["api_key"] == "sk-probe"
+        assert captured["kwargs"]["model"] == "qwen3-asr-flash"
+        assert captured["kwargs"]["base_url"] == "https://dashscope.aliyuncs.com"
+        assert captured["options"].language == "zh"
+
+    def test_probe_asr_config_not_found(self, client: TestClient, auth_token: str):
+        with patch(
+            "fivccliche.modules.agent_configs.routers.get_speech_provider_async",
+            new=AsyncMock(return_value=FakeSpeechProvider()),
+        ):
+            response = client.post(
+                "/configs/asrs/nonexistent/probe/",
+                headers={"Authorization": f"Bearer {auth_token}"},
+                json={"url": "https://example.com/a.wav"},
+            )
+        assert response.status_code == 404
+
+    def test_probe_asr_config_provider_missing(self, client: TestClient, auth_token: str):
+        create_response = client.post(
+            "/configs/asrs/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "asr-probe-missing",
+                "model": "qwen3-asr-flash",
+                "api_key": "sk-probe",
+                "model_type": "dashscope_realtime",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+        with patch(
+            "fivccliche.modules.agent_configs.routers.get_speech_provider_async",
+            new=AsyncMock(return_value=None),
+        ) as get_provider:
+            response = client.post(
+                f"/configs/asrs/{config_uuid}/probe/",
+                headers={"Authorization": f"Bearer {auth_token}"},
+                json={"url": "https://example.com/a.wav"},
+            )
+        assert response.status_code == 503
+        get_provider.assert_awaited_once_with("dashscope_realtime")
+
+    def test_probe_asr_config_requires_one_source(self, client: TestClient, auth_token: str):
+        create_response = client.post(
+            "/configs/asrs/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "asr-probe-source",
+                "model": "qwen3-asr-flash",
+                "api_key": "sk-probe",
+                "model_type": "dashscope",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        missing = client.post(
+            f"/configs/asrs/{config_uuid}/probe/",
+            headers=headers,
+            json={},
+        )
+        both = client.post(
+            f"/configs/asrs/{config_uuid}/probe/",
+            headers=headers,
+            json={"url": "https://example.com/a.wav", "data_b64": "abc"},
+        )
+        assert missing.status_code == 422
+        assert both.status_code == 422
+
+    def test_probe_asr_config_error_event(self, client: TestClient, auth_token: str):
+        create_response = client.post(
+            "/configs/asrs/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "asr-probe-error",
+                "model": "qwen3-asr-flash",
+                "api_key": "sk-probe",
+                "model_type": "dashscope",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        async def stream_async(_audio):
+            yield SpeechEvent(type="error", message="boom")
+
+        recognizer = MagicMock()
+        recognizer.stream_async = stream_async
+        recognizer.__aenter__ = AsyncMock(return_value=recognizer)
+        recognizer.__aexit__ = AsyncMock(return_value=None)
+
+        async def get_recognizer(options=None, **kwargs):
+            return recognizer
+
+        provider = MagicMock()
+        provider.get_recognizer = get_recognizer
+        with patch(
+            "fivccliche.modules.agent_configs.routers.get_speech_provider_async",
+            new=AsyncMock(return_value=provider),
+        ):
+            response = client.post(
+                f"/configs/asrs/{config_uuid}/probe/",
+                headers={"Authorization": f"Bearer {auth_token}"},
+                json={"url": "https://example.com/a.wav"},
+            )
+
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
+        assert self._sse_events(response) == [
+            {"event": "error", "info": {"message": "boom"}},
+        ]
 
 
 class TestAgentConfigAPI:

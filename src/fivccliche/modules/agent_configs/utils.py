@@ -168,6 +168,52 @@ async def update_llm_config_async(
     return config
 
 
+async def create_asr_config_async(
+    session: AsyncSession,
+    user_uuid: str | None,
+    config_create: schemas.UserASRSchema,
+    updated_user_uuid: str | None = None,
+) -> models.UserASR:
+    """Create a new ASR config."""
+    config = models.UserASR(
+        id=config_create.id,
+        user_uuid=user_uuid,
+        description=config_create.description,
+        model=config_create.model,
+        api_key=config_create.api_key or "",
+        base_url=config_create.base_url,
+        model_type=config_create.model_type,
+        updated_at=datetime.now(timezone.utc),
+        updated_user_uuid=updated_user_uuid,
+    )
+    session.add(config)
+    return config
+
+
+async def update_asr_config_async(
+    session: AsyncSession,
+    config: models.UserASR,
+    config_update: schemas.UserASRSchema,
+    updated_user_uuid: str | None = None,
+) -> models.UserASR:
+    """Update an ASR config."""
+    fields_set: set[str] = getattr(config_update, "model_fields_set", set())
+    if "description" in fields_set:
+        config.description = config_update.description
+    if config_update.model is not None:
+        config.model = config_update.model
+    if config_update.api_key is not None:
+        config.api_key = config_update.api_key
+    if "base_url" in fields_set:
+        config.base_url = config_update.base_url
+    if config_update.model_type is not None:
+        config.model_type = config_update.model_type
+    config.updated_at = datetime.now(timezone.utc)
+    config.updated_user_uuid = updated_user_uuid
+    session.add(config)
+    return config
+
+
 async def create_agent_config_async(
     session: AsyncSession,
     user_uuid: str | None,

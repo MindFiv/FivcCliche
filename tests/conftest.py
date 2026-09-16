@@ -21,6 +21,7 @@ from sqlmodel import SQLModel
 from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage  # noqa: F401
 from fivccliche.modules.agent_configs.models import (  # noqa: F401
     UserAgent,
+    UserASR,
     UserEmbedding,
     UserLLM,
     UserQuestion,

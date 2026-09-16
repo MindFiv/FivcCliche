@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Layering, ownership, and HTTP CRUD: [docs/architecture.md](docs/architecture.md). Scheduled jobs: [docs/scheduler.md](docs/scheduler.md). Memories: [docs/agent-memories.md](docs/agent-memories.md). Agent rules that override this file: [AGENTS.md](AGENTS.md). Getting started: [docs/getting-started.md](docs/getting-started.md).
+Layering, ownership, and HTTP CRUD: [docs/architecture.md](docs/architecture.md). Scheduled jobs: [docs/scheduler.md](docs/scheduler.md). Memories: [docs/agent-memories.md](docs/agent-memories.md). Speech / ASR: [docs/speech.md](docs/speech.md). Agent rules that override this file: [AGENTS.md](AGENTS.md). Getting started: [docs/getting-started.md](docs/getting-started.md).
 
 ## Project Overview
 
@@ -51,6 +51,7 @@ Key interfaces (in `src/fivccliche/services/interfaces/`):
 - `IUserConfigProvider` → `UserConfigProviderImpl` — LLM/embedding/tool/agent config repos
 - `IUserChatProvider` → `UserChatProviderImpl` — conversation repos and chat context
 - `IUserMemoryProvider` → optional `UserMemoryProviderImpl` (Hindsight; requires separate `hindsight-client`)
+- `ISpeechProvider` → named DashScope providers `dashscope` (Flash) and `dashscope_realtime` (`get_speech_provider_async(name=...)` → `get_recognizer` → `ISpeechRecognizer`; later `get_synthesizer`). Chat audio uses `UserASR.model_type` as `name`.
 - `IModule` / `IModuleSite` → module registration and FastAPI app mounting
 
 ### Module Pattern

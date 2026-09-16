@@ -1,17 +1,24 @@
+import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, responses, status
 from pydantic_strict_partial import create_partial_model
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivcplayground.tools import create_tool_retriever_async
 
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
+from fivccliche.services.interfaces.speech import (
+    SpeechAudioInput,
+    SpeechRecognizeOptions,
+    SpeechRequestError,
+)
 from fivccliche.utils.deps import (
     IUser,
     get_authenticated_user_async,
     get_config_provider_async,
     get_db_session_async,
+    get_speech_provider_async,
 )
 from fivccliche.utils.schemas import PaginatedResponse
 
@@ -296,6 +303,231 @@ async def delete_llm_config_async(
     )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM config not found")
+    await session.delete(config)
+    await session.commit()
+
+
+# ============================================================================
+# ASR Config Endpoints
+# ============================================================================
+
+router_asrs = APIRouter(prefix="/configs/asrs", tags=["asr_configs"])
+
+
+@router_asrs.post(
+    "/",
+    summary="Create a new asr config for the authenticated user.",
+    response_model=schemas.UserASRSchema,
+    status_code=status.HTTP_201_CREATED,
+    operation_id="create_asr_config",
+)
+async def create_asr_config_async(
+    config_create: schemas.UserASRSchema,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+):
+    config = await utils.create_asr_config_async(
+        session,
+        None if user.is_superuser else user.uuid,
+        config_create,
+        updated_user_uuid=user.uuid,
+    )
+    await session.commit()
+    await session.refresh(config)
+    return config.to_schema()
+
+
+@router_asrs.get(
+    "/",
+    summary="List all asr configs for the authenticated user.",
+    response_model=PaginatedResponse[schemas.UserASRSchema],
+    operation_id="list_asr_configs",
+)
+async def list_asr_configs_async(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> PaginatedResponse:
+    filters = UserScopedReadableFilterSet(
+        models.UserASR.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
+    configs = await utils.list_user_scoped_async(
+        session, models.UserASR, filters=filters, skip=skip, limit=limit
+    )
+    total = await utils.count_user_scoped_async(session, models.UserASR, filters=filters)
+    return PaginatedResponse(
+        total=total,
+        results=[config.to_schema() for config in configs],
+    )
+
+
+@router_asrs.post(
+    "/{config_uuid}/probe/",
+    summary="Probe asr config for the authenticated user.",
+    status_code=status.HTTP_200_OK,
+)
+async def probe_asr_config_async(
+    config_uuid: str,
+    probe: schemas.UserASRProbeRequest,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> responses.StreamingResponse:
+    filters = UserScopedReadableFilterSet(
+        models.UserASR.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
+    config = await utils.get_user_scoped_async(
+        session, models.UserASR, filters=filters, config_uuid=config_uuid
+    )
+    if not config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ASR config not found")
+    model_type = config.model_type
+    api_key = config.api_key
+    model = config.model
+    base_url = config.base_url
+    await session.close()
+
+    speech_provider = await get_speech_provider_async(model_type)
+    if speech_provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Speech provider is not mounted",
+        )
+
+    options = SpeechRecognizeOptions(
+        language=probe.language,
+        hotwords=probe.hotwords,
+        context=probe.context,
+        format=probe.format,
+    )
+
+    async def stream():
+        try:
+            async with await speech_provider.get_recognizer(
+                options,
+                api_key=api_key,
+                model=model,
+                base_url=base_url,
+            ) as recognizer:
+                async for event in recognizer.stream_async(
+                    SpeechAudioInput(url=probe.url, data_b64=probe.data_b64, format=probe.format),
+                ):
+                    if event.type == "error":
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "event": "error",
+                                    "info": {
+                                        "message": event.message or "Speech recognition failed"
+                                    },
+                                }
+                            )
+                            + "\n\n"
+                        )
+                        return
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "event": event.type,
+                                "info": {"text": event.text, "language": event.language},
+                            }
+                        )
+                        + "\n\n"
+                    )
+        except SpeechRequestError as exc:
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "event": "error",
+                        "info": {"message": str(exc) or "Speech recognition failed"},
+                    }
+                )
+                + "\n\n"
+            )
+
+    return responses.StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router_asrs.get(
+    "/{config_uuid}/",
+    summary="Get a asr config by ID for the authenticated user.",
+    response_model=schemas.UserASRSchema,
+    operation_id="get_asr_config",
+)
+async def get_asr_config_async(
+    config_uuid: str,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+):
+    filters = UserScopedReadableFilterSet(
+        models.UserASR.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
+    config = await utils.get_user_scoped_async(
+        session, models.UserASR, filters=filters, config_uuid=config_uuid
+    )
+    if not config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ASR config not found")
+    return config.to_schema()
+
+
+@router_asrs.patch(
+    "/{config_uuid}/",
+    summary="Update a asr config by ID for the authenticated user.",
+    response_model=schemas.UserASRSchema,
+    operation_id="update_asr_config",
+)
+async def update_asr_config_async(
+    config_uuid: str,
+    config_update: create_partial_model(schemas.UserASRSchema),  # type: ignore[valid-type]
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+):
+    filters = UserScopedEditableFilterSet(
+        models.UserASR.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
+    config = await utils.get_user_scoped_async(
+        session, models.UserASR, filters=filters, config_uuid=config_uuid
+    )
+    if not config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ASR config not found")
+    config = await utils.update_asr_config_async(
+        session, config, config_update, updated_user_uuid=user.uuid
+    )
+    await session.commit()
+    await session.refresh(config)
+    return config.to_schema()
+
+
+@router_asrs.delete(
+    "/{config_uuid}/",
+    summary="Delete a asr config by ID for the authenticated user.",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="delete_asr_config",
+)
+async def delete_asr_config_async(
+    config_uuid: str,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> None:
+    filters = UserScopedEditableFilterSet(
+        models.UserASR.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
+    config = await utils.get_user_scoped_async(
+        session, models.UserASR, filters=filters, config_uuid=config_uuid
+    )
+    if not config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ASR config not found")
     await session.delete(config)
     await session.commit()
 

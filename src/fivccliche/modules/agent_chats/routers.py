@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from fivccliche.services.implements import service_site
+from fivccliche.utils.chats import ChatEventHandler, ChatWSHandler, ChatWSQuery
 from fivccliche.utils.deps import (
     IUser,
     get_authenticator_async,
@@ -31,7 +32,6 @@ from fivccliche.utils.deps import (
 )
 from fivccliche.utils.filters import FilterError
 from fivccliche.utils.schemas import PaginatedResponse
-from fivccliche.utils.stream import ChatEventHandler, ChatWSHandler
 
 from . import models, schemas, utils
 from .filters import ChatEditableFilterSet, ChatFilterSet
@@ -325,31 +325,31 @@ async def create_chat_messages_ws_async(
         return
 
     message_frame = await chat_ws.receive(expected_type="message", invalid_code="invalid_message")
-    if message_frame is None:
+    if message_frame is None or not isinstance(message_frame, dict):
         return
-
-    query_value = message_frame.get("query")
-    if not isinstance(query_value, str) or not query_value.strip():
-        await chat_ws.fail(
-            code="invalid_message",
-            message="A non-empty query is required",
-            close_code=1003,
-        )
-        return
-    query = query_value.strip()
 
     chat = await utils.get_chat_async(
         session,
         chat_uuid,
         filters=ChatEditableFilterSet(user.uuid, is_superuser=user.is_superuser),
     )
-    await session.close()
     if not chat:
+        await session.close()
         await chat_ws.fail(
             code="chat_not_found",
             message="Chat not found",
             close_code=4004,
         )
+        return
+
+    query = await ChatWSQuery(chat_ws, websocket).resolve(
+        message_frame,
+        user=user,
+        session=session,
+        chat_context=chat.context,
+    )
+    await session.close()
+    if query is None:
         return
 
     chat_mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None

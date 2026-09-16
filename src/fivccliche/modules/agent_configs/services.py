@@ -518,6 +518,7 @@ class ModuleImpl(IModule):
         logger.info("agent_configs module mounted")
         app.include_router(routers.router_embeddings, **kwargs)
         app.include_router(routers.router_models, **kwargs)
+        app.include_router(routers.router_asrs, **kwargs)
         app.include_router(routers.router_agents, **kwargs)
         app.include_router(routers.router_tools, **kwargs)
         app.include_router(routers.router_skills, **kwargs)

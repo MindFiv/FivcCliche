@@ -24,6 +24,7 @@ from fivccliche.modules.agent_configs.services import (
 # Import models to ensure they're registered with SQLModel
 from fivccliche.modules.users.models import User
 from fivccliche.modules.agent_configs.models import (
+    UserASR,
     UserEmbedding,
     UserLLM,
     UserAgent,
@@ -2740,6 +2741,123 @@ class TestModelsRegressionUserEmbedding:
         assert schema.description is None
         assert schema.base_url is None
         assert schema.user_uuid is None
+
+
+class TestModelsRegressionUserASR:
+    """Regression tests for UserASR model structure and database constraints."""
+
+    async def test_user_asr_model_has_required_fields(self, session: AsyncSession):
+        import uuid as uuid_lib
+
+        config = UserASR(
+            uuid=str(uuid_lib.uuid4()),
+            id="asr",
+            model="qwen3-asr-flash",
+            api_key="test-key",
+            model_type="dashscope",
+            user_uuid="user123",
+        )
+
+        assert config.uuid is not None
+        assert config.id == "asr"
+        assert config.model == "qwen3-asr-flash"
+        assert config.api_key == "test-key"
+        assert config.model_type == "dashscope"
+        assert config.user_uuid == "user123"
+
+    async def test_user_asr_model_field_defaults(self, session: AsyncSession):
+        import uuid as uuid_lib
+
+        config = UserASR(
+            uuid=str(uuid_lib.uuid4()),
+            id="asr",
+            model="qwen3-asr-flash",
+            api_key="test-key",
+        )
+
+        assert config.model_type == "dashscope"
+        assert config.description is None
+        assert config.base_url is None
+        assert config.user_uuid is None
+
+    async def test_user_asr_composite_unique_index_prevents_duplicate(self, session: AsyncSession):
+        import uuid as uuid_lib
+
+        config1 = UserASR(
+            uuid=str(uuid_lib.uuid4()),
+            id="asr",
+            model="qwen3-asr-flash",
+            api_key="test-key",
+            user_uuid="user123",
+        )
+        session.add(config1)
+        await session.commit()
+
+        session.add(
+            UserASR(
+                uuid=str(uuid_lib.uuid4()),
+                id="asr",
+                model="qwen3-asr-flash",
+                api_key="test-key",
+                user_uuid="user123",
+            )
+        )
+
+        with pytest.raises(IntegrityError, match=_UNIQUE_VIOLATION):
+            await session.commit()
+
+    async def test_user_asr_same_id_different_users_succeeds(self, session: AsyncSession):
+        import uuid as uuid_lib
+
+        session.add(
+            UserASR(
+                uuid=str(uuid_lib.uuid4()),
+                id="asr",
+                model="qwen3-asr-flash",
+                api_key="test-key",
+                user_uuid="user123",
+            )
+        )
+        await session.commit()
+
+        config2 = UserASR(
+            uuid=str(uuid_lib.uuid4()),
+            id="asr",
+            model="qwen3-asr-flash",
+            api_key="test-key",
+            user_uuid="user456",
+        )
+        session.add(config2)
+        await session.commit()
+
+        assert config2.user_uuid == "user456"
+
+    async def test_user_asr_to_schema_conversion(self, session: AsyncSession):
+        import uuid as uuid_lib
+
+        config_uuid = str(uuid_lib.uuid4())
+        config = UserASR(
+            uuid=config_uuid,
+            id="asr",
+            description="Default ASR",
+            model="qwen3-asr-flash",
+            api_key="test-key",
+            base_url="https://dashscope.aliyuncs.com",
+            model_type="dashscope",
+            user_uuid="user123",
+        )
+
+        schema = config.to_schema()
+
+        assert isinstance(schema, schemas.UserASRSchema)
+        assert schema.uuid == config_uuid
+        assert schema.id == "asr"
+        assert schema.description == "Default ASR"
+        assert schema.model == "qwen3-asr-flash"
+        assert schema.api_key == "test-key"
+        assert schema.base_url == "https://dashscope.aliyuncs.com"
+        assert schema.model_type == "dashscope"
+        assert schema.user_uuid == "user123"
 
 
 class TestModelsRegressionUserLLM:

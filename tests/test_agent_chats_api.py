@@ -1,6 +1,7 @@
 """Integration tests for agent_chats API endpoints."""
 
 import asyncio
+import json
 from json import JSONDecodeError
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -633,7 +634,7 @@ class TestChatStreamApiSurface:
 
     def test_call_returns_async_generator(self):
         """Calling ChatStream returns an async generator."""
-        from fivccliche.utils.stream import ChatStream
+        from fivccliche.utils.chats import ChatStream
 
         chat_stream = ChatStream(chat_uuid="c1")
         stream = chat_stream()
@@ -641,7 +642,7 @@ class TestChatStreamApiSurface:
 
     def test_call_is_async_iterable(self):
         """Calling ChatStream supports async iteration."""
-        from fivccliche.utils.stream import ChatStream
+        from fivccliche.utils.chats import ChatStream
 
         chat_stream = ChatStream()
         stream = chat_stream()
@@ -1498,6 +1499,21 @@ class TestCreateChatMessages:
         )
 
     @staticmethod
+    def _mock_asr(
+        *,
+        model_type: str = "dashscope",
+        model: str = "qwen3-asr-flash",
+        api_key: str = "sk-x",
+        base_url: str | None = None,
+    ):
+        asr = MagicMock()
+        asr.model_type = model_type
+        asr.model = model
+        asr.api_key = api_key
+        asr.base_url = base_url
+        return asr
+
+    @staticmethod
     async def _consume_response(response):
         return [chunk async for chunk in response.body_iterator]
 
@@ -1526,6 +1542,16 @@ class TestCreateChatMessages:
 
             async def accept(self):
                 return None
+
+            async def receive(self):
+                if not self.frames:
+                    raise WebSocketDisconnect
+                frame = self.frames.pop(0)
+                if isinstance(frame, Exception):
+                    raise frame
+                if isinstance(frame, (bytes, bytearray)):
+                    return {"type": "websocket.receive", "bytes": bytes(frame)}
+                return {"type": "websocket.receive", "text": json.dumps(frame)}
 
             async def receive_json(self):
                 if not self.frames:
@@ -1671,7 +1697,11 @@ class TestCreateChatMessages:
         )
         auth = MagicMock()
         auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
-        with patch("fivccliche.modules.agent_chats.routers.utils.get_chat_async") as get_chat:
+        with patch(
+            "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+            new_callable=AsyncMock,
+            return_value=self._mock_chat(),
+        ) as get_chat:
             await create_chat_messages_ws_async(
                 websocket=websocket,
                 chat_uuid="chat-123",
@@ -1680,7 +1710,7 @@ class TestCreateChatMessages:
                 mutex_site=None,
             )
 
-        get_chat.assert_not_called()
+        get_chat.assert_awaited_once()
         assert websocket.sent[-1] == {
             "event": "error",
             "info": {"code": "invalid_message", "message": "A non-empty query is required"},
@@ -1836,6 +1866,292 @@ class TestCreateChatMessages:
         )
         assert query_task.done() is True
         session.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_websocket_rejects_query_and_audio_together(self):
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_ws_async
+
+        websocket = self._fake_websocket(
+            [
+                {"type": "auth", "access_token": "valid-token"},
+                {"type": "message", "query": "Hello", "audio": "abc"},
+            ]
+        )
+        auth = MagicMock()
+        auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
+        with patch(
+            "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+            new_callable=AsyncMock,
+            return_value=self._mock_chat(),
+        ) as get_chat:
+            await create_chat_messages_ws_async(
+                websocket=websocket,
+                chat_uuid="chat-123",
+                auth=auth,
+                session=AsyncMock(),
+                mutex_site=None,
+            )
+
+        get_chat.assert_awaited_once()
+        assert websocket.sent[-1]["info"]["code"] == "invalid_message"
+        assert websocket.closed == [1003]
+
+    @pytest.mark.asyncio
+    async def test_websocket_audio_requires_asr_config(self):
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_ws_async
+
+        websocket = self._fake_websocket(
+            [
+                {"type": "auth", "access_token": "valid-token"},
+                {"type": "message", "audio": "abc"},
+            ]
+        )
+        auth = MagicMock()
+        auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
+        with (
+            patch(
+                "fivccliche.utils.chats.get_user_scoped_async",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._mock_chat(),
+            ) as get_chat,
+        ):
+            await create_chat_messages_ws_async(
+                websocket=websocket,
+                chat_uuid="chat-123",
+                auth=auth,
+                session=AsyncMock(),
+                mutex_site=None,
+            )
+
+        get_chat.assert_awaited_once()
+        assert websocket.sent[-1] == {
+            "event": "error",
+            "info": {
+                "code": "speech_unavailable",
+                "message": "Speech provider is not mounted",
+            },
+        }
+        assert websocket.closed == [1011]
+
+    @pytest.mark.asyncio
+    async def test_websocket_audio_requires_mounted_provider(self):
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_ws_async
+
+        websocket = self._fake_websocket(
+            [
+                {"type": "auth", "access_token": "valid-token"},
+                {"type": "message", "audio": "abc"},
+            ]
+        )
+        auth = MagicMock()
+        auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
+        get_provider = AsyncMock(return_value=None)
+        with (
+            patch("fivccliche.utils.chats.get_speech_provider_async", new=get_provider),
+            patch(
+                "fivccliche.utils.chats.get_user_scoped_async",
+                new=AsyncMock(return_value=self._mock_asr()),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._mock_chat(),
+            ),
+        ):
+            await create_chat_messages_ws_async(
+                websocket=websocket,
+                chat_uuid="chat-123",
+                auth=auth,
+                session=AsyncMock(),
+                mutex_site=None,
+            )
+
+        get_provider.assert_awaited_once_with("dashscope")
+        assert websocket.sent[-1] == {
+            "event": "error",
+            "info": {
+                "code": "speech_unavailable",
+                "message": "Speech provider is not mounted",
+            },
+        }
+        assert websocket.closed == [1011]
+
+    @pytest.mark.asyncio
+    async def test_websocket_audio_clip_runs_agent_with_transcript(self):
+        from fivccliche.modules.agent_chats.routers import (
+            CHAT_MESSAGE_RUN_TIMEOUT,
+            create_chat_messages_ws_async,
+        )
+        from fivccliche.services.implements.speech.fake import FakeSpeechProvider
+
+        websocket = self._fake_websocket(
+            [
+                {"type": "auth", "access_token": "valid-token"},
+                {"type": "message", "audio": "https://example.com/a.wav"},
+            ]
+        )
+        events = [
+            {"event": "start", "info": {"chat_uuid": "chat-123"}},
+            {"event": "finish", "info": {"chat_uuid": "chat-123"}},
+        ]
+        fake_stream, fake_job = self._patch_ws_stream_and_job(events)
+        session = AsyncMock()
+        auth = MagicMock()
+        auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
+
+        with (
+            patch(
+                "fivccliche.utils.chats.get_speech_provider_async",
+                new=AsyncMock(return_value=FakeSpeechProvider(transcript="said hello")),
+            ) as get_provider,
+            patch(
+                "fivccliche.utils.chats.get_user_scoped_async",
+                new=AsyncMock(return_value=self._mock_asr()),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._mock_chat(),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.ChatEventHandler",
+                return_value=fake_stream,
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.ChatQueryJob",
+                return_value=fake_job,
+            ),
+        ):
+            await create_chat_messages_ws_async(
+                websocket=websocket,
+                chat_uuid="chat-123",
+                auth=auth,
+                session=session,
+                mutex_site=None,
+            )
+            await asyncio.sleep(0)
+
+        assert websocket.sent[0] == {
+            "event": "transcript",
+            "info": {"text": "said hello", "is_final": True},
+        }
+        assert websocket.sent[1:] == events
+        assert fake_job.run_async.call_args.kwargs["query"] == "said hello"
+        assert fake_job.run_async.call_args.kwargs["run_timeout"] == (
+            CHAT_MESSAGE_RUN_TIMEOUT.total_seconds()
+        )
+        self._describe_job.run_async.assert_awaited_once_with(
+            "chat-123", user_uuid="user-123", query_text="said hello"
+        )
+        get_provider.assert_awaited_once_with("dashscope")
+
+    @pytest.mark.asyncio
+    async def test_websocket_empty_transcript_is_rejected(self):
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_ws_async
+        from fivccliche.services.implements.speech.fake import FakeSpeechProvider
+
+        websocket = self._fake_websocket(
+            [
+                {"type": "auth", "access_token": "valid-token"},
+                {"type": "message", "audio": "abc"},
+            ]
+        )
+        auth = MagicMock()
+        auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
+        with (
+            patch(
+                "fivccliche.utils.chats.get_speech_provider_async",
+                new=AsyncMock(return_value=FakeSpeechProvider(transcript="  ")),
+            ),
+            patch(
+                "fivccliche.utils.chats.get_user_scoped_async",
+                new=AsyncMock(return_value=self._mock_asr()),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._mock_chat(),
+            ) as get_chat,
+            patch("fivccliche.modules.agent_chats.routers.ChatQueryJob") as job_cls,
+        ):
+            await create_chat_messages_ws_async(
+                websocket=websocket,
+                chat_uuid="chat-123",
+                auth=auth,
+                session=AsyncMock(),
+                mutex_site=None,
+            )
+
+        get_chat.assert_awaited_once()
+        job_cls.assert_not_called()
+        assert websocket.sent[-1]["info"]["code"] == "empty_transcript"
+        assert websocket.closed == [1003]
+
+    @pytest.mark.asyncio
+    async def test_websocket_audio_stream_runs_agent_after_commit(self):
+        from fivccliche.modules.agent_chats.routers import create_chat_messages_ws_async
+        from fivccliche.services.implements.speech.fake import FakeSpeechProvider
+
+        websocket = self._fake_websocket(
+            [
+                {"type": "auth", "access_token": "valid-token"},
+                {"type": "message", "audio_stream": True, "format": "pcm"},
+                b"\x00\x01",
+                {"type": "audio_commit"},
+            ]
+        )
+        events = [
+            {"event": "start", "info": {"chat_uuid": "chat-123"}},
+            {"event": "finish", "info": {"chat_uuid": "chat-123"}},
+        ]
+        fake_stream, fake_job = self._patch_ws_stream_and_job(events)
+        auth = MagicMock()
+        auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
+
+        with (
+            patch(
+                "fivccliche.utils.chats.get_speech_provider_async",
+                new=AsyncMock(return_value=FakeSpeechProvider(transcript="streamed hello")),
+            ) as get_provider,
+            patch(
+                "fivccliche.utils.chats.get_user_scoped_async",
+                new=AsyncMock(return_value=self._mock_asr()),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._mock_chat(),
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.ChatEventHandler",
+                return_value=fake_stream,
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.routers.ChatQueryJob",
+                return_value=fake_job,
+            ),
+        ):
+            await create_chat_messages_ws_async(
+                websocket=websocket,
+                chat_uuid="chat-123",
+                auth=auth,
+                session=AsyncMock(),
+                mutex_site=None,
+            )
+
+        assert any(
+            item.get("event") == "transcript"
+            and item.get("info", {}).get("text") == "streamed hello"
+            and item.get("info", {}).get("is_final") is True
+            for item in websocket.sent
+        )
+        assert fake_job.run_async.call_args.kwargs["query"] == "streamed hello"
+        assert websocket.closed == [1000]
+        get_provider.assert_awaited_once_with("dashscope")
 
     @pytest.mark.asyncio
     async def test_websocket_disconnect_keeps_agent_task_alive(self):

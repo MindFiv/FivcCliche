@@ -11,7 +11,7 @@ from fastapi import WebSocketDisconnect
 from fivcplayground.agents import AgentRunEvent
 
 from fivccliche.modules.agent_chats.jobs import ChatQueryJob
-from fivccliche.utils.stream import ChatEventHandler, ChatStream, ChatWSHandler
+from fivccliche.utils.chats import ChatEventHandler, ChatStream, ChatWSHandler
 
 _QUERY = "fivccliche.modules.agent_chats.jobs.query"
 
@@ -1175,6 +1175,18 @@ class TestChatWSHandler:
             async def accept(self):
                 self.accepted = True
 
+            async def receive(self):
+                if not self.frames:
+                    if hang_on_empty:
+                        await asyncio.sleep(10)
+                    raise WebSocketDisconnect
+                frame = self.frames.pop(0)
+                if isinstance(frame, Exception):
+                    raise frame
+                if isinstance(frame, (bytes, bytearray)):
+                    return {"type": "websocket.receive", "bytes": bytes(frame)}
+                return {"type": "websocket.receive", "text": json.dumps(frame)}
+
             async def receive_json(self):
                 if not self.frames:
                     if hang_on_empty:
@@ -1358,3 +1370,29 @@ class TestChatWSHandler:
         assert disconnected is True
         assert websocket.sent == [events[0]]
         assert websocket.closed == []
+
+    @pytest.mark.asyncio
+    async def test_receive_returns_bytes_and_commit_frame(self):
+        websocket = self._fake_websocket(
+            [b"pcm", {"type": "audio_commit"}],
+        )
+        chat_ws = ChatWSHandler(websocket)
+        await websocket.accept()
+
+        first = await chat_ws.receive()
+        second = await chat_ws.receive()
+
+        assert first == b"pcm"
+        assert second == {"type": "audio_commit"}
+        assert websocket.closed == []
+
+    @pytest.mark.asyncio
+    async def test_untyped_receive_closes_normally_on_disconnect(self):
+        websocket = self._fake_websocket()
+        chat_ws = ChatWSHandler(websocket)
+        await websocket.accept()
+
+        frame = await chat_ws.receive()
+
+        assert frame is None
+        assert websocket.closed == [1000]

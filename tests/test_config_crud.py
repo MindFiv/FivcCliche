@@ -25,6 +25,16 @@ CONFIG_MODELS = [
         id="llm",
     ),
     pytest.param(
+        models.UserASR,
+        {
+            "id": "asr",
+            "model": "qwen3-asr-flash",
+            "api_key": "k",
+            "model_type": "dashscope",
+        },
+        id="asr",
+    ),
+    pytest.param(
         models.UserAgent,
         {"id": "agent-1", "model_id": "llm-1"},
         id="agent",

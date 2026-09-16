@@ -19,16 +19,17 @@ Do not import SQL from `routers.py` (services would cycle). `utils.py` does not 
 
 Modules: `users`, `agent_configs`, `agent_chats`, `agent_memories`. All mounted under `/api`. All HTTP routes are hand-written FastAPI handlers.
 
-`agent_configs` owns embeddings, models, agents, tools, skills, and questions. Extra config routes:
+`agent_configs` owns embeddings, models, asrs, agents, tools, skills, and questions. Extra config routes:
 
 - `POST /configs/tools/index/` — index tools for the authenticated user
 - `POST /configs/tools/{config_uuid}/probe/` — probe a tool config
+- `POST /configs/asrs/{config_uuid}/probe/` — SSE probe of an ASR config with a clip (`url` or `data_b64`); each `SpeechEvent` is one `data:` line (`partial` / `final` / `error`)
 
 Frozen agents: `_reject_frozen_agent_update` / `_reject_frozen_agent_delete` in [`agent_configs/routers.py`](../src/fivccliche/modules/agent_configs/routers.py), called from the agent PATCH and DELETE handlers. A frozen agent cannot be deleted. Updates may only set `is_frozen`; any other field in the PATCH body is 403.
 
 HTTP list/get returns every matching row, including inactive tools/skills. Playground repositories filter `is_active` themselves so agents never pick up disabled configs. Question configs have no playground repository. Question list accepts an `is_active` query parameter.
 
-Config responses call `config.to_schema()` with no include/exclude arguments. PATCH bodies use `create_partial_model(schema)`. `api_key` is write-only on the schema (`Field(exclude=True)` on `UserEmbeddingSchema` / `UserLLMSchema`).
+Config responses call `config.to_schema()` with no include/exclude arguments. PATCH bodies use `create_partial_model(schema)`. `api_key` is write-only on the schema (`Field(exclude=True)` on `UserEmbeddingSchema` / `UserLLMSchema` / `UserASRSchema`).
 
 Do not add get/list/count/delete wrappers around `get/list/count_user_scoped_async` or around `session.delete` + `commit`.
 
@@ -64,7 +65,7 @@ Question list uses [`QuestionFilterSet`](../src/fivccliche/modules/agent_configs
 - `?agent_id=` exact match on the chat agent
 - `?created_at_from=` / `?created_at_to=` inclusive bounds (`>=` / `<=`) on `UserChat.created_at` (response field remains `started_at`)
 - `?updated_at_from=` / `?updated_at_to=` inclusive bounds (`>=` / `<=`) on `UserChat.updated_at`
-- `?context.<key>=<value>` exact match on a top-level JSON key of `context` (one level only). `UserChat.context` stays a persisted dict. `UserChatProviderImpl.get_chat_context` returns a copy of that JSON plus `user_uuid`, merged `**kwargs` (for example `chat_uuid`), default `timezone` (`Asia/Shanghai`), and a lazy `time` whose `__str__` computes a timezone-aware ISO string and is not persisted. `ChatQueryJob` calls `get_chat_context` and passes the result to the agent run.
+- `?context.<key>=<value>` exact match on a top-level JSON key of `context` (one level only). `UserChat.context` stays a persisted dict. `context.asr_id` selects the UserASR config id used for WebSocket audio (default `"default"`). `UserChatProviderImpl.get_chat_context` returns a copy of that JSON plus `user_uuid`, merged `**kwargs` (for example `chat_uuid`), default `timezone` (`Asia/Shanghai`), and a lazy `time` whose `__str__` computes a timezone-aware ISO string and is not persisted. `ChatQueryJob` calls `get_chat_context` and passes the result to the agent run.
 - Repeated paths use the last value
 - Nested keys such as `context.profile.uuid` return 422; bare `context=` is invalid if passed into `parse`
 - Question list: `?is_active=` exact match when provided
@@ -77,7 +78,7 @@ Question list uses [`QuestionFilterSet`](../src/fivccliche/modules/agent_configs
 The handler looks up the chat via Editable (404 if missing), acquires mutex `chats:message:{uuid}` (409 if already held), then starts the agent **before** returning SSE:
 
 1. `asyncio.create_task(ChatQueryJob.run_async(...))` — `get_chat_context`, agent/tools/skills, `event_callback=chat_stream.on_event`. Mutex is released in the job `finally`.
-2. [`ChatEventHandler`](../src/fivccliche/utils/stream.py)`()` yields SSE chunks from that task. `ChatStream` remains an alias of `ChatEventHandler`.
+2. [`ChatEventHandler`](../src/fivccliche/utils/chats.py)`()` yields SSE chunks from that task. `ChatStream` remains an alias of `ChatEventHandler`.
 3. `BackgroundTasks` first `asyncio.gather(query_task, return_exceptions=True)` (keeps the run alive after client disconnect), then `ChatDescribeJob` when the chat still has an empty description and the query is not a slash command.
 
 `ChatQueryJob` and `ChatDescribeJob` have `config is None` and are not on `list_jobs()`.
@@ -88,11 +89,14 @@ SSE remains the default message transport. The WebSocket endpoint is an alternat
 
 1. Connect to `ws://` locally or `wss://` in production, without a token in the URL.
 2. Within 5 seconds, send `{"type": "auth", "access_token": "<JWT>"}`.
-3. Send one `{"type": "message", "query": "..."}` frame.
-4. Receive JSON events with the same `{event, info}` shape as SSE: `start`, `stream`, `tool`, `finish`, or `error`.
-5. The server closes `1000` after the turn, `1008` for authentication failures, `1003` for malformed/invalid frames, `4004` when the chat is missing/not editable, `4009` while another message run holds the mutex, and `1011` when the run cannot be started.
+3. Send one message frame:
+   - `{"type": "message", "query": "..."}` for text (existing), or
+   - `{"type": "message", "audio": "<url-or-base64>", "format": "wav"}` for one clip, or
+   - `{"type": "message", "audio_stream": true, "format": "pcm"}` followed by binary PCM frames and `{"type": "audio_commit"}` for one streamed utterance.
+4. Receive JSON events with the `{event, info}` shape: optional `transcript`, then the same `start`, `stream`, `tool`, `finish`, or `error` payloads as SSE.
+5. The server closes `1000` after the turn, `1008` for authentication failures, `1003` for malformed/invalid frames or an empty transcript, `4004` when the chat is missing/not editable, `4009` while another message run holds the mutex, and `1011` when the run cannot be started or ASR is unavailable/failed.
 
-The endpoint uses [`ChatWSHandler`](../src/fivccliche/utils/stream.py) for first-frame JWT authentication, typed request frames, error envelopes, and event send. It reuses the same Editable lookup, mutex, `ChatQueryJob`, `ChatDescribeJob`, run timeout, and event payloads as SSE. Disconnecting does not cancel the agent run; the handler waits for its completion tasks so persistence and mutex release still finish. Each connection handles one message and does not provide reconnect event replay.
+The endpoint uses [`ChatWSHandler`](../src/fivccliche/utils/chats.py) for first-frame JWT authentication, typed request frames, binary audio frames, error envelopes, and event send. It reuses the same Editable lookup, mutex, `ChatQueryJob`, `ChatDescribeJob`, run timeout, and agent event payloads as SSE. Audio is transcribed through [`UserASR`](../src/fivccliche/modules/agent_configs/models.py) (`context.asr_id`, default `default`) plus the named [`ISpeechProvider`](../src/fivccliche/services/interfaces/speech.py) selected by `model_type` (see [Speech recognition](speech.md)). Disconnecting does not cancel the agent run; the handler waits for its completion tasks so persistence and mutex release still finish. Each connection handles one message and does not provide reconnect event replay. Continuous duplex voice and TTS are not implemented.
 
 `UserChat.updated_at` is set equal to `created_at` on create. It is refreshed when a new message is created (`create_chat_message_async`) and when a description is written (`PATCH /{chat_uuid}/`, `ChatDescribeJob`, and repository session description updates). Updating an existing message does not refresh it. List order stays `created_at` descending.
 
