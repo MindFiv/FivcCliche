@@ -69,14 +69,16 @@ class SpeechEvent(BaseModel):
 class ISpeechRecognizer(ABC):
     """One recognition turn. Created by ``ISpeechProvider.get_recognizer``."""
 
+    @abstractmethod
     async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *exc: object) -> None:
-        return
+        raise NotImplementedError
 
     @abstractmethod
-    def stream_async(
+    async def __aexit__(self, *exc: object) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def stream_async(
         self,
         audio: SpeechAudioInput | AsyncIterator[bytes],
     ) -> AsyncIterator[SpeechEvent]:
@@ -86,6 +88,7 @@ class ISpeechRecognizer(ABC):
         fetched by the adapter). An async byte iterator is one utterance;
         exhaustion is the commit.
         """
+        yield SpeechEvent(type="final")
 
 
 class ISpeechProvider(IComponent):

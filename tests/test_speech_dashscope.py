@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -50,6 +51,14 @@ def _flash_response(
         "usage": {"seconds": 1},
         "request_id": "req-1",
     }
+    return response
+
+
+def _qwen_audio_response(output: dict[str, Any]):
+    response = MagicMock()
+    response.is_success = True
+    response.status_code = 200
+    response.json.return_value = {"output": output, "request_id": "req-qwen-audio"}
     return response
 
 
@@ -101,6 +110,33 @@ class TestDashScopeMultimodalRecognizer:
         assert audio == "data:audio/wav;base64,abc123"
 
     @pytest.mark.asyncio
+    async def test_custom_model_uses_qwen3_payload(self):
+        http_client = MagicMock()
+        http_client.post = AsyncMock(return_value=_flash_response(text="hi"))
+        recognizer = DashScopeMultimodalRecognizer(
+            api_key="sk-test",
+            model="custom-flash",
+            http_client=http_client,
+            options=SpeechRecognizeOptions(language="zh", enable_itn=True),
+        )
+
+        events = await _collect(
+            recognizer,
+            SpeechAudioInput(url="https://example.com/a.wav", format="wav"),
+        )
+
+        kwargs = http_client.post.call_args.kwargs
+        assert kwargs["headers"]["Authorization"] == "Bearer sk-test"
+        assert "X-DashScope-SSE" not in kwargs["headers"]
+        assert kwargs["json"]["input"]["messages"][-1]["content"] == [
+            {"audio": "https://example.com/a.wav"}
+        ]
+        assert kwargs["json"]["parameters"] == {
+            "asr_options": {"enable_itn": True, "language": "zh"}
+        }
+        assert events[-1].text == "hi"
+
+    @pytest.mark.asyncio
     async def test_recognize_buffers_byte_stream(self):
         http_client = MagicMock()
         http_client.post = AsyncMock(return_value=_flash_response(text="hi"))
@@ -132,6 +168,81 @@ class TestDashScopeMultimodalRecognizer:
         recognizer = DashScopeMultimodalRecognizer(api_key="bad", http_client=http_client)
         with pytest.raises(SpeechRequestError, match="401"):
             await _collect(recognizer, SpeechAudioInput(url="https://example.com/a.wav"))
+
+
+class TestDashScopeQwenAudioRecognizer:
+    @pytest.mark.asyncio
+    async def test_recognize_posts_qwen_audio_payload(self):
+        http_client = MagicMock()
+        http_client.post = AsyncMock(
+            return_value=_qwen_audio_response({"text": "欢迎使用阿里云。"})
+        )
+        recognizer = DashScopeMultimodalRecognizer(
+            api_key="sk-test",
+            model="qwen-audio-3.0-asr-flash",
+            http_client=http_client,
+            options=SpeechRecognizeOptions(language="zh", enable_itn=True, context="fivc"),
+        )
+
+        events = await _collect(
+            recognizer,
+            SpeechAudioInput(url="https://example.com/a.mp3", format="mp3"),
+        )
+
+        http_client.post.assert_awaited_once()
+        args, kwargs = http_client.post.call_args
+        assert args[0] == DEFAULT_GENERATION_URL
+        assert kwargs["headers"]["Authorization"] == "Bearer sk-test"
+        assert kwargs["headers"]["X-DashScope-SSE"] == "disable"
+        payload = kwargs["json"]
+        assert payload == {
+            "model": "qwen-audio-3.0-asr-flash",
+            "input": {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_audio",
+                                "input_audio": {
+                                    "data": "https://example.com/a.mp3",
+                                },
+                            }
+                        ],
+                    }
+                ]
+            },
+            "parameters": {"format": "mp3"},
+        }
+        assert events == [SpeechEvent(type="final", text="欢迎使用阿里云。", language=None)]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("output", "expected_text"),
+        [
+            ({"text": "hello"}, "hello"),
+            ({"sentence": {"text": "world"}}, "world"),
+        ],
+    )
+    async def test_recognize_parses_qwen_audio_outputs(self, output, expected_text):
+        http_client = MagicMock()
+        http_client.post = AsyncMock(return_value=_qwen_audio_response(output))
+        recognizer = DashScopeMultimodalRecognizer(
+            api_key="sk-test",
+            model="qwen-audio-3.0-asr-flash",
+            http_client=http_client,
+        )
+
+        events = await _collect(
+            recognizer,
+            SpeechAudioInput(data_b64="abc123", format="wav"),
+        )
+
+        payload = http_client.post.call_args.kwargs["json"]
+        content = payload["input"]["messages"][0]["content"][0]
+        assert content["input_audio"]["data"].startswith("data:audio/wav;base64,")
+        assert payload["parameters"] == {"format": "wav"}
+        assert events == [SpeechEvent(type="final", text=expected_text, language=None)]
 
 
 class _FakeDashScopeWs:

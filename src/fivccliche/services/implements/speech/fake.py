@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Self
 
 from fivccliche.services.interfaces.speech import (
     ISpeechProvider,
@@ -22,6 +22,12 @@ class FakeSpeechRecognizer(ISpeechRecognizer):
         self.last_audio: SpeechAudioInput | None = None
         self.last_options = options
         self.last_chunks: list[bytes] = []
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return
 
     async def stream_async(
         self,

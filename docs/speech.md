@@ -15,6 +15,18 @@ TTS, and other vendors are out of scope for this phase.
   runs the existing text `ChatQueryJob`
 - Function tool `SpeechTranscribe` for later `transport=function` wiring
 
+The synchronous `dashscope` provider supports:
+
+- `qwen3-asr-flash` using DashScope multimodal `asr_options`
+- `qwen-audio-3.0-asr-flash` using its native `input_audio` request and
+  `parameters.format`; context, hotwords, language, and ITN options are not
+  sent for this protocol
+
+The `dashscope_realtime` provider currently supports only the Qwen3 Realtime
+WebSocket protocol (`qwen3-asr-flash-realtime`). Qwen-Audio streaming,
+Fun-ASR realtime, Paraformer realtime, and asynchronous file transcription are
+not integrated yet.
+
 ## Interfaces
 
 Defined in `src/fivccliche/services/interfaces/speech.py`:

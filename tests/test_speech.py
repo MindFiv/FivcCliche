@@ -1,5 +1,7 @@
 """Unit tests for the speech recognition contract and Fake provider."""
 
+import inspect
+from collections.abc import AsyncIterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,6 +10,7 @@ from pydantic import ValidationError
 from fivccliche.services.implements.speech.fake import FakeSpeechProvider, FakeSpeechRecognizer
 from fivccliche.services.interfaces.speech import (
     ISpeechProvider,
+    ISpeechRecognizer,
     SpeechAudioInput,
     SpeechEvent,
     SpeechRecognizeOptions,
@@ -65,6 +68,23 @@ class TestFakeSpeechProvider:
             SpeechEvent(type="final", text="streamed hello", language="zh"),
         ]
         assert recognizer.last_chunks == [b"\x00\x01", b"\x02"]
+
+
+class TestSpeechRecognizerInterface:
+    def test_stream_is_async_generator_and_lifecycle_is_abstract(self):
+        assert inspect.isasyncgenfunction(ISpeechRecognizer.stream_async)
+        assert ISpeechRecognizer.__aenter__.__isabstractmethod__
+        assert ISpeechRecognizer.__aexit__.__isabstractmethod__
+
+        class MissingLifecycle(ISpeechRecognizer):
+            async def stream_async(
+                self,
+                audio: SpeechAudioInput | AsyncIterator[bytes],
+            ) -> AsyncIterator[SpeechEvent]:
+                yield SpeechEvent(type="final")
+
+        with pytest.raises(TypeError, match="abstract"):
+            MissingLifecycle()
 
 
 class TestGetSpeechProviderAsync:
