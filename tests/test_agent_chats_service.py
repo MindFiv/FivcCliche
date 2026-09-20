@@ -365,6 +365,39 @@ class TestChatMethods:
 
         assert count == 1
 
+    async def test_list_and_count_chats_async_filters_by_description_contains(
+        self, session: AsyncSession, test_user
+    ):
+        """description_contains is a case-insensitive literal substring match."""
+        matching = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent",
+            description="Meeting 100_percent, 50% discount",
+        )
+        wildcard_match = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent",
+            description="Meeting 100xpercent and 50 percent discount",
+        )
+        no_match = UserChat(
+            user_uuid=test_user.uuid,
+            agent_id="agent",
+            description="Other conversation",
+        )
+        no_description = UserChat(user_uuid=test_user.uuid, agent_id="agent")
+        session.add_all([matching, wildcard_match, no_match, no_description])
+        await session.commit()
+
+        filters = ChatFilterSet(test_user.uuid, is_superuser=False)
+        filters.parse(description_contains="meeting 100_p")
+        chats = await methods.list_chats_async(session, filters=filters)
+        assert [chat.uuid for chat in chats] == [matching.uuid]
+        assert await methods.count_chats_async(session, filters=filters) == 1
+
+        filters.parse(description_contains="")
+        assert len(await methods.list_chats_async(session, filters=filters)) == 4
+        assert await methods.count_chats_async(session, filters=filters) == 4
+
     async def test_list_chats_async_combines_agent_and_context_filters(
         self, session: AsyncSession, test_user
     ):

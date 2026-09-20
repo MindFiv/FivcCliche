@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import operator
+from typing import Any
 
 from fivccliche.utils.filters import (
     FilterEditableField,
@@ -11,6 +12,11 @@ from fivccliche.utils.filters import (
 )
 
 from . import models
+
+
+def _ilike_contains(column: Any, value: Any) -> Any:
+    escaped = str(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return column.ilike(f"%{escaped}%", escape="\\")
 
 
 class ChatFilterSet(FilterSet):
@@ -26,6 +32,9 @@ class ChatFilterSet(FilterSet):
                     is_superuser=is_superuser,
                 ),
                 FilterSimpleField("agent_id", models.UserChat.agent_id, operator.eq),
+                FilterSimpleField(
+                    "description_contains", models.UserChat.description, _ilike_contains
+                ),
                 FilterSimpleField("created_at_from", models.UserChat.created_at, operator.ge),
                 FilterSimpleField("created_at_to", models.UserChat.created_at, operator.le),
                 FilterSimpleField("updated_at_from", models.UserChat.updated_at, operator.ge),

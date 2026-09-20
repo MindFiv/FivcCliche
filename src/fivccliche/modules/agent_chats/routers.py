@@ -80,6 +80,9 @@ async def list_chats_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     agent_id: str | None = Query(None, description="Filter chats by agent ID"),
+    description_contains: str | None = Query(
+        None, description="Case-insensitive substring match on chat description"
+    ),
     created_at_from: datetime | None = Query(
         None, description="Inclusive lower bound on chat created_at"
     ),
@@ -102,6 +105,7 @@ async def list_chats_async(
         filters = ChatFilterSet(user.uuid, is_superuser=user.is_superuser)
         filters.parse(
             agent_id=agent_id,
+            description_contains=description_contains,
             created_at_from=created_at_from,
             created_at_to=created_at_to,
             updated_at_from=updated_at_from,

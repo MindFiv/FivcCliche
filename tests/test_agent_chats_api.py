@@ -372,6 +372,47 @@ class TestListChatDateFilters:
         assert response.status_code == 422
 
 
+class TestListChatDescriptionFilters:
+    """GET /chats/ description_contains filter."""
+
+    def test_list_chats_filters_by_description_contains(self, client: TestClient, auth_token: str):
+        from fivccliche.modules.users.utils import get_user_async
+
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            admin = await get_user_async(session, username="admin")
+            matching = UserChat(
+                user_uuid=str(admin.uuid),
+                agent_id="default",
+                description="Project Meeting Notes",
+            )
+            uppercase = UserChat(
+                user_uuid=str(admin.uuid),
+                agent_id="default",
+                description="MEETING NOTES",
+            )
+            other = UserChat(
+                user_uuid=str(admin.uuid),
+                agent_id="default",
+                description="Other conversation",
+            )
+            no_description = UserChat(user_uuid=str(admin.uuid), agent_id="default")
+            session.add_all([matching, uppercase, other, no_description])
+            await session.commit()
+            return {str(matching.uuid), str(uppercase.uuid)}
+
+        matching_uuids = loop.run_until_complete(setup())
+        response = client.get("/chats/?description_contains=meeting notes", headers=headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 2
+        assert {chat["uuid"] for chat in data["results"]} == matching_uuids
+
+
 class TestListChatsOrdering:
     """GET /chats/ order_by and order_dir query params."""
 

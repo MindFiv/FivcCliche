@@ -58,11 +58,12 @@ Chats use the same Readable/Editable FilterSets for chat ownership; they are not
 
 HTTP list filters that bind query params to SQL belong in that module's `filters.py` as a `FilterSet` subclass. Do not put them in `schemas.py` or in [`utils/filters.py`](../src/fivccliche/utils/filters.py) (reusable `FilterField` / `FilterSimpleField` / `FilterJsonField` / `FilterReadableField` / `FilterEditableField` / `FilterSet`). Do not use FilterSet as a FastAPI `Depends`; declare scalar query params with `Query()` on the handler, instantiate the FilterSet, call `parse(...)` (plus any dotted JSON keys from the request), then pass it into SQL helpers that call `filter(statement)`.
 
-Chat list uses [`ChatFilterSet`](../src/fivccliche/modules/agent_chats/filters.py): `ChatFilterSet(user_uuid, is_superuser=...)` → `parse(agent_id=..., created_at_from=..., created_at_to=..., updated_at_from=..., updated_at_to=..., context.*=...)` → `filter(statement)` (includes Readable).
+Chat list uses [`ChatFilterSet`](../src/fivccliche/modules/agent_chats/filters.py): `ChatFilterSet(user_uuid, is_superuser=...)` → `parse(agent_id=..., description_contains=..., created_at_from=..., created_at_to=..., updated_at_from=..., updated_at_to=..., context.*=...)` → `filter(statement)` (includes Readable).
 
 Question list uses [`QuestionFilterSet`](../src/fivccliche/modules/agent_configs/filters.py): `QuestionFilterSet(user_uuid, is_superuser=...)` → `parse(is_active=...)` → passed into `list_user_scoped_async` / `count_user_scoped_async` as `filters`.
 
 - `?agent_id=` exact match on the chat agent
+- `?description_contains=` case-insensitive literal substring match on `UserChat.description`; LIKE wildcards are escaped, empty values do not filter, and `NULL` descriptions do not match
 - `?created_at_from=` / `?created_at_to=` inclusive bounds (`>=` / `<=`) on `UserChat.created_at` (response field remains `started_at`)
 - `?updated_at_from=` / `?updated_at_to=` inclusive bounds (`>=` / `<=`) on `UserChat.updated_at`
 - `?context.<key>=<value>` exact match on a top-level JSON key of `context` (one level only). `UserChat.context` stays a persisted dict. `context.asr_id` selects the UserASR config id used for WebSocket audio (default `"default"`). `UserChatProviderImpl.get_chat_context` returns a copy of that JSON plus `user_uuid`, merged `**kwargs` (for example `chat_uuid`), default `timezone` (`Asia/Shanghai`), and a lazy `time` whose `__str__` computes a timezone-aware ISO string and is not persisted. `ChatQueryJob` calls `get_chat_context` and passes the result to the agent run.
