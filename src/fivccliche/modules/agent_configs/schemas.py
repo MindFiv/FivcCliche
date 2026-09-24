@@ -6,6 +6,7 @@ __all__ = [
     "UserLLMSchema",
     "UserQuestionSchema",
     "UserSkillSchema",
+    "UserTTSSchema",
     "UserToolSchema",
     "UserToolTransport",
 ]
@@ -97,6 +98,40 @@ class UserASRProbeRequest(BaseModel):
         if has_url == has_data:
             raise ValueError("Exactly one of url or data_b64 is required")
         return self
+
+
+class UserTTSSchema(BaseModel):
+    """Schema for reading TTS config data (response)."""
+
+    id: str = Field(..., description="TTS config ID (unique within user scope)")
+    description: str | None = Field(default=None, description="TTS description")
+    model: str = Field(..., description="TTS model name")
+    base_url: str | None = Field(default=None, description="TTS base URL")
+    api_key: str | None = Field(default=None, exclude=True)
+    model_type: Literal["dashscope_tts"] = Field(
+        default="dashscope_tts",
+        description="ISpeechProvider name (dashscope_tts)",
+    )
+    uuid: str | None = Field(default=None, description="TTS config UUID (globally unique)")
+    user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
+    updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
+    updated_user_uuid: str | None = Field(
+        default=None, description="UUID of user who last updated (read-only)"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserTTSProbeRequest(BaseModel):
+    """Request body for synthesizing a short probe with a TTS config."""
+
+    text: str = Field(..., min_length=1, description="Text to synthesize")
+    voice: str = Field(..., description="Vendor voice name")
+    format: str = Field(default="mp3", description="Audio encoding, such as mp3, wav, or pcm")
+    sample_rate: int = Field(default=22050, ge=8000, le=48000, description="Audio sample rate")
+    volume: int = Field(default=50, ge=0, le=100, description="Volume")
+    speech_rate: float = Field(default=1.0, ge=0.5, le=2.0, description="Speech rate")
+    pitch_rate: float = Field(default=1.0, ge=0.5, le=2.0, description="Pitch rate")
 
 
 class UserToolSchema(ToolConfig):

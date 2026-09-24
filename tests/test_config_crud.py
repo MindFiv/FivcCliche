@@ -35,6 +35,16 @@ CONFIG_MODELS = [
         id="asr",
     ),
     pytest.param(
+        models.UserTTS,
+        {
+            "id": "tts",
+            "model": "qwen-audio-3.1-tts-flash",
+            "api_key": "k",
+            "model_type": "dashscope_tts",
+        },
+        id="tts",
+    ),
+    pytest.param(
         models.UserAgent,
         {"id": "agent-1", "model_id": "llm-1"},
         id="agent",

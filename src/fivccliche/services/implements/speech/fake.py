@@ -8,9 +8,11 @@ from typing import Any, Self
 from fivccliche.services.interfaces.speech import (
     ISpeechProvider,
     ISpeechRecognizer,
+    ISpeechSynthesizer,
     SpeechAudioInput,
     SpeechEvent,
     SpeechRecognizeOptions,
+    SpeechSynthesisOptions,
 )
 
 
@@ -54,9 +56,11 @@ class FakeSpeechProvider(ISpeechProvider):
         component_site: Any | None = None,
         *,
         transcript: str = "hello from fake",
+        audio: tuple[bytes, ...] = (b"fake audio",),
         **_kwargs: Any,
     ) -> None:
         self.transcript = transcript
+        self.audio = audio
 
     async def get_recognizer(
         self,
@@ -68,3 +72,41 @@ class FakeSpeechProvider(ISpeechProvider):
         **_kwargs: Any,
     ) -> ISpeechRecognizer:
         return FakeSpeechRecognizer(self.transcript, options)
+
+    async def get_synthesizer(
+        self,
+        options: SpeechSynthesisOptions | None = None,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        **_kwargs: Any,
+    ) -> ISpeechSynthesizer:
+        return FakeSpeechSynthesizer(self.audio, options)
+
+
+class FakeSpeechSynthesizer(ISpeechSynthesizer):
+    """Yields configured audio after recording the synthesis input."""
+
+    def __init__(
+        self,
+        audio: tuple[bytes, ...],
+        options: SpeechSynthesisOptions | None,
+    ) -> None:
+        self.audio = audio
+        self.options = options
+        self.text_chunks: list[str] = []
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return
+
+    async def stream_async(self, text: str | AsyncIterator[str]) -> AsyncIterator[bytes]:
+        if isinstance(text, str):
+            self.text_chunks = [text]
+        else:
+            self.text_chunks = [chunk async for chunk in text]
+        for chunk in self.audio:
+            yield chunk

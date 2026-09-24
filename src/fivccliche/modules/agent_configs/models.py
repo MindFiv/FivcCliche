@@ -244,6 +244,77 @@ class UserASR(SQLModel, table=True):
         )
 
 
+class UserTTS(SQLModel, table=True):
+    """TTS model configuration."""
+
+    __tablename__ = "user_tts"
+    __table_args__ = (Index("ix_user_tts_id_user_uuid", "id", "user_uuid", unique=True),)
+
+    uuid: str = Field(
+        default_factory=lambda: str(uuid4()),
+        primary_key=True,
+        max_length=36,
+        description="TTS config UUID.",
+    )
+    id: str = Field(
+        max_length=36,
+        description="TTS config ID (unique within user scope).",
+        index=True,
+    )
+    description: str | None = Field(default=None, max_length=1024, description="TTS description.")
+    model: str = Field(
+        max_length=255,
+        description="TTS model name.",
+    )
+    api_key: str = Field(
+        max_length=255,
+        description="TTS API key.",
+    )
+    base_url: str | None = Field(
+        default=None,
+        max_length=255,
+        description="TTS base URL.",
+    )
+    model_type: str = Field(
+        default="dashscope_tts",
+        max_length=64,
+        description="ISpeechProvider name (dashscope_tts).",
+    )
+    user_uuid: str | None = Field(
+        default=None,
+        foreign_key="user.uuid",
+        description="User ID.",
+    )
+    updated_at: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            default=lambda: datetime.now(timezone.utc),
+            nullable=False,
+        ),
+        description="Last update time.",
+    )
+    updated_user_uuid: str | None = Field(
+        default=None,
+        foreign_key="user.uuid",
+        description="UUID of user who last updated.",
+    )
+
+    def to_schema(self) -> schemas.UserTTSSchema:
+        return schemas.UserTTSSchema(
+            uuid=self.uuid,
+            id=self.id,
+            description=self.description,
+            model=self.model,
+            api_key=self.api_key,
+            base_url=self.base_url,
+            model_type=self.model_type,  # type: ignore[arg-type]
+            user_uuid=self.user_uuid,
+            updated_at=self.updated_at,
+            updated_user_uuid=self.updated_user_uuid,
+        )
+
+
 class UserTool(SQLModel, table=True):
     """Tool configuration model."""
 

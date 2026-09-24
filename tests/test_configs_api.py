@@ -7,7 +7,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fivccliche.services.implements.speech.fake import FakeSpeechProvider
-from fivccliche.services.interfaces.speech import SpeechEvent
+from fivccliche.services.interfaces.speech import (
+    SpeechEvent,
+    SpeechRequestError,
+    SpeechSynthesisOptions,
+)
 from tests.conftest import make_api_client
 
 
@@ -571,11 +575,14 @@ class TestASRConfigAPI:
         response = client.patch(
             f"/configs/asrs/{config_uuid}",
             headers={"Authorization": f"Bearer {auth_token}"},
-            json={"model": "qwen3-asr-flash-realtime", "model_type": "dashscope_realtime"},
+            json={
+                "model": "qwen-audio-3.1-asr-flash-streaming",
+                "model_type": "dashscope_realtime",
+            },
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["model"] == "qwen3-asr-flash-realtime"
+        assert data["model"] == "qwen-audio-3.1-asr-flash-streaming"
         assert data["model_type"] == "dashscope_realtime"
 
     def test_delete_asr_config(self, client: TestClient, auth_token: str):
@@ -765,6 +772,214 @@ class TestASRConfigAPI:
         assert self._sse_events(response) == [
             {"event": "error", "info": {"message": "boom"}},
         ]
+
+
+class TestTTSConfigAPI:
+    """Test cases for TTS Config API endpoints."""
+
+    @staticmethod
+    def _sse_events(response):
+        events = []
+        for line in response.text.splitlines():
+            if line.startswith("data: "):
+                events.append(json.loads(line[6:]))
+        return events
+
+    def test_create_tts_config_unauthorized(self, client: TestClient):
+        response = client.post(
+            "/configs/tts/",
+            json={
+                "id": "tts",
+                "model": "qwen-audio-3.1-tts-flash",
+                "api_key": "test-key",
+            },
+        )
+        assert response.status_code == 401
+
+    def test_tts_config_crud_hides_api_key(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.post(
+            "/configs/tts/",
+            headers=headers,
+            json={
+                "id": "tts",
+                "description": "Default TTS",
+                "model": "qwen-audio-3.1-tts-flash",
+                "api_key": "secret-key",
+                "base_url": "https://dashscope.aliyuncs.com",
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["id"] == "tts"
+        assert data["model_type"] == "dashscope_tts"
+        assert "api_key" not in data
+        config_uuid = data["uuid"]
+
+        response = client.patch(
+            f"/configs/tts/{config_uuid}",
+            headers=headers,
+            json={"model": "custom-tts", "api_key": "new-key"},
+        )
+        assert response.status_code == 200
+        assert response.json()["model"] == "custom-tts"
+        assert "api_key" not in response.json()
+
+        response = client.delete(
+            f"/configs/tts/{config_uuid}",
+            headers=headers,
+        )
+        assert response.status_code == 204
+        assert client.get(f"/configs/tts/{config_uuid}", headers=headers).status_code == 404
+
+    def test_probe_tts_config(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        create_response = client.post(
+            "/configs/tts/",
+            headers=headers,
+            json={
+                "id": "tts-probe",
+                "model": "qwen-audio-3.1-tts-flash",
+                "api_key": "sk-probe",
+                "base_url": "https://dashscope.aliyuncs.com",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+        captured: dict = {}
+        provider = FakeSpeechProvider(audio=(b"abc", b"def"))
+        original = provider.get_synthesizer
+
+        async def get_synthesizer(options, **kwargs):
+            captured["options"] = options
+            captured["kwargs"] = kwargs
+            return await original(options, **kwargs)
+
+        provider.get_synthesizer = get_synthesizer  # type: ignore[method-assign]
+        with patch(
+            "fivccliche.modules.agent_configs.routers.get_speech_provider_async",
+            new=AsyncMock(return_value=provider),
+        ) as get_provider:
+            response = client.post(
+                f"/configs/tts/{config_uuid}/probe/",
+                headers=headers,
+                json={"text": "你好", "voice": "Cherry", "volume": 70},
+            )
+
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
+        assert self._sse_events(response) == [
+            {"event": "audio", "info": {"data_b64": "YWJj"}},
+            {"event": "audio", "info": {"data_b64": "ZGVm"}},
+            {"event": "complete", "info": {}},
+        ]
+        get_provider.assert_awaited_once_with("dashscope_tts")
+        assert captured["kwargs"]["api_key"] == "sk-probe"
+        assert captured["kwargs"]["model"] == "qwen-audio-3.1-tts-flash"
+        assert captured["kwargs"]["base_url"] == "https://dashscope.aliyuncs.com"
+        assert captured["options"] == SpeechSynthesisOptions(voice="Cherry", volume=70)
+
+    def test_probe_tts_config_requires_text_and_voice(
+        self,
+        client: TestClient,
+        auth_token: str,
+    ):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        create_response = client.post(
+            "/configs/tts/",
+            headers=headers,
+            json={
+                "id": "tts-validation",
+                "model": "qwen-audio-3.1-tts-flash",
+                "api_key": "key",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+        missing = client.post(
+            f"/configs/tts/{config_uuid}/probe/",
+            headers=headers,
+            json={"voice": "Cherry"},
+        )
+        no_voice = client.post(
+            f"/configs/tts/{config_uuid}/probe/",
+            headers=headers,
+            json={"text": "hello"},
+        )
+        assert missing.status_code == 422
+        assert no_voice.status_code == 422
+
+    def test_probe_tts_config_not_found_and_provider_missing(
+        self,
+        client: TestClient,
+        auth_token: str,
+    ):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.post(
+            "/configs/tts/missing/probe/",
+            headers=headers,
+            json={"text": "hello", "voice": "Cherry"},
+        )
+        assert response.status_code == 404
+
+        create_response = client.post(
+            "/configs/tts/",
+            headers=headers,
+            json={
+                "id": "tts-missing-provider",
+                "model": "qwen-audio-3.1-tts-flash",
+                "api_key": "key",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+        with patch(
+            "fivccliche.modules.agent_configs.routers.get_speech_provider_async",
+            new=AsyncMock(return_value=None),
+        ):
+            response = client.post(
+                f"/configs/tts/{config_uuid}/probe/",
+                headers=headers,
+                json={"text": "hello", "voice": "Cherry"},
+            )
+        assert response.status_code == 503
+
+    def test_probe_tts_config_error_event(self, client: TestClient, auth_token: str):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        create_response = client.post(
+            "/configs/tts/",
+            headers=headers,
+            json={
+                "id": "tts-error",
+                "model": "qwen-audio-3.1-tts-flash",
+                "api_key": "key",
+            },
+        )
+        config_uuid = create_response.json()["uuid"]
+
+        async def stream_async(_text):
+            raise SpeechRequestError("boom")
+            yield b""
+
+        synthesizer = MagicMock()
+        synthesizer.stream_async = stream_async
+        synthesizer.__aenter__ = AsyncMock(return_value=synthesizer)
+        synthesizer.__aexit__ = AsyncMock(return_value=None)
+
+        async def get_synthesizer(_options, **_kwargs):
+            return synthesizer
+
+        provider = MagicMock()
+        provider.get_synthesizer = get_synthesizer
+        with patch(
+            "fivccliche.modules.agent_configs.routers.get_speech_provider_async",
+            new=AsyncMock(return_value=provider),
+        ):
+            response = client.post(
+                f"/configs/tts/{config_uuid}/probe/",
+                headers=headers,
+                json={"text": "hello", "voice": "Cherry"},
+            )
+
+        assert response.status_code == 200
+        assert self._sse_events(response) == [{"event": "error", "info": {"message": "boom"}}]
 
 
 class TestAgentConfigAPI:

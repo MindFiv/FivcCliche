@@ -1,11 +1,11 @@
-"""Speech recognition implementations (Fake, DashScope Flash, DashScope Realtime)."""
+"""Speech implementations (Fake, DashScope Flash, Realtime, and TTS)."""
 
-from .dashscope_multimodal import DashScopeMultimodalSpeechProvider
+from .dashscope import DashScopeSpeechProvider
 from .dashscope_realtime import DashScopeRealtimeSpeechProvider
 from .fake import FakeSpeechProvider
 
 __all__ = [
-    "DashScopeMultimodalSpeechProvider",
     "DashScopeRealtimeSpeechProvider",
+    "DashScopeSpeechProvider",
     "FakeSpeechProvider",
 ]

@@ -19,17 +19,18 @@ Do not import SQL from `routers.py` (services would cycle). `utils.py` does not 
 
 Modules: `users`, `agent_configs`, `agent_chats`, `agent_memories`. All mounted under `/api`. All HTTP routes are hand-written FastAPI handlers.
 
-`agent_configs` owns embeddings, models, asrs, agents, tools, skills, and questions. Extra config routes:
+`agent_configs` owns embeddings, models, asrs, tts, agents, tools, skills, and questions. Extra config routes:
 
 - `POST /configs/tools/index/` — index tools for the authenticated user
 - `POST /configs/tools/{config_uuid}/probe/` — probe a tool config
 - `POST /configs/asrs/{config_uuid}/probe/` — SSE probe of an ASR config with a clip (`url` or `data_b64`); each `SpeechEvent` is one `data:` line (`partial` / `final` / `error`)
+- `POST /configs/tts/{config_uuid}/probe/` — SSE probe of a TTS config with request-level voice/audio parameters; audio chunks are Base64 `audio` events followed by `complete` or `error`
 
 Frozen agents: `_reject_frozen_agent_update` / `_reject_frozen_agent_delete` in [`agent_configs/routers.py`](../src/fivccliche/modules/agent_configs/routers.py), called from the agent PATCH and DELETE handlers. A frozen agent cannot be deleted. Updates may only set `is_frozen`; any other field in the PATCH body is 403.
 
 HTTP list/get returns every matching row, including inactive tools/skills. Playground repositories filter `is_active` themselves so agents never pick up disabled configs. Question configs have no playground repository. Question list accepts an `is_active` query parameter.
 
-Config responses call `config.to_schema()` with no include/exclude arguments. PATCH bodies use `create_partial_model(schema)`. `api_key` is write-only on the schema (`Field(exclude=True)` on `UserEmbeddingSchema` / `UserLLMSchema` / `UserASRSchema`).
+Config responses call `config.to_schema()` with no include/exclude arguments. PATCH bodies use `create_partial_model(schema)`. `api_key` is write-only on the schema (`Field(exclude=True)` on `UserEmbeddingSchema` / `UserLLMSchema` / `UserASRSchema` / `UserTTSSchema`).
 
 Do not add get/list/count/delete wrappers around `get/list/count_user_scoped_async` or around `session.delete` + `commit`.
 
@@ -97,7 +98,7 @@ SSE remains the default message transport. The WebSocket endpoint is an alternat
 4. Receive JSON events with the `{event, info}` shape: optional `transcript`, then the same `start`, `stream`, `tool`, `finish`, or `error` payloads as SSE.
 5. The server closes `1000` after the turn, `1008` for authentication failures, `1003` for malformed/invalid frames or an empty transcript, `4004` when the chat is missing/not editable, `4009` while another message run holds the mutex, and `1011` when the run cannot be started or ASR is unavailable/failed.
 
-The endpoint uses [`ChatWSHandler`](../src/fivccliche/utils/chats.py) for first-frame JWT authentication, typed request frames, binary audio frames, error envelopes, and event send. It reuses the same Editable lookup, mutex, `ChatQueryJob`, `ChatDescribeJob`, run timeout, and agent event payloads as SSE. Audio is transcribed through [`UserASR`](../src/fivccliche/modules/agent_configs/models.py) (`context.asr_id`, default `default`) plus the named [`ISpeechProvider`](../src/fivccliche/services/interfaces/speech.py) selected by `model_type` (see [Speech recognition](speech.md)). Disconnecting does not cancel the agent run; the handler waits for its completion tasks so persistence and mutex release still finish. Each connection handles one message and does not provide reconnect event replay. Continuous duplex voice and TTS are not implemented.
+The endpoint uses [`ChatWSHandler`](../src/fivccliche/utils/chats.py) for first-frame JWT authentication, typed request frames, binary audio frames, error envelopes, and event send. It reuses the same Editable lookup, mutex, `ChatQueryJob`, `ChatDescribeJob`, run timeout, and agent event payloads as SSE. Audio is transcribed through [`UserASR`](../src/fivccliche/modules/agent_configs/models.py) (`context.asr_id`, default `default`) plus the named [`ISpeechProvider`](../src/fivccliche/services/interfaces/speech.py) selected by `model_type` (see [Speech recognition and synthesis](speech.md)). Disconnecting does not cancel the agent run; the handler waits for its completion tasks so persistence and mutex release still finish. Each connection handles one message and does not provide reconnect event replay. Continuous duplex voice and automatic reply TTS are not implemented.
 
 `UserChat.updated_at` is set equal to `created_at` on create. It is refreshed when a new message is created (`create_chat_message_async`) and when a description is written (`PATCH /{chat_uuid}/`, `ChatDescribeJob`, and repository session description updates). Updating an existing message does not refresh it. List order stays `created_at` descending.
 

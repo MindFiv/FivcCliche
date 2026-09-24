@@ -131,4 +131,3 @@ filterwarnings = [
     "ignore::DeprecationWarning:passlib.utils",
     "ignore::DeprecationWarning:passlib.handlers.argon2",
 ]
-

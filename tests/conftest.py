@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import uuid
@@ -27,6 +28,7 @@ from fivccliche.modules.agent_configs.models import (  # noqa: F401
     UserQuestion,
     UserSkill,
     UserTool,
+    UserTTS,
 )
 from fivccliche.modules.users.models import User  # noqa: F401
 from fivccliche.services.implements.modules import ModuleSiteImpl
@@ -36,6 +38,27 @@ from fivcglue.implements.utils import load_component_site
 
 _TEST_PG0_NAME = "fivccliche-test"
 _pg0_for_tests: Pg0 | None = None
+_test_config_json: str | None = None
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Keep lazy service loading away from a developer's runtime database."""
+    global _test_config_json
+    if "CONFIG_JSON" in os.environ:
+        return
+    descriptor, filename = tempfile.mkstemp(suffix=".json", prefix="fivccliche-pytest-")
+    with os.fdopen(descriptor, "w") as config_file:
+        json.dump(
+            {"database": {"DB_URL": "sqlite+aiosqlite://"}},
+            config_file,
+        )
+    _test_config_json = filename
+    os.environ["CONFIG_JSON"] = filename
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    if _test_config_json is not None:
+        os.unlink(_test_config_json)
 
 
 def to_asyncpg_url(uri: str) -> str:
@@ -55,8 +78,12 @@ def with_database(url: str, database: str) -> str:
 def pg0_instance() -> Iterator[Pg0]:
     global _pg0_for_tests
     with tempfile.TemporaryDirectory(prefix="fivcliche-test-pg0-") as data_root:
+        # Avoid the developer machine's default pg0 instance without probing
+        # ports, which is denied by the local test sandbox.
+        port = 49152 + uuid.uuid4().int % 16384
         pg = Pg0(
             name=f"{_TEST_PG0_NAME}-{uuid.uuid4().hex}",
+            port=port,
             data_dir=f"{data_root}/data",
         )
         _pg0_for_tests = pg
@@ -139,6 +166,11 @@ def make_api_client(
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    config_file = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    json.dump({"database": {"DB_URL": url}}, config_file)
+    config_file.close()
+    original_config_json = os.environ.get("CONFIG_JSON")
+    os.environ["CONFIG_JSON"] = config_file.name
     try:
         # Create schema once; seed session is only for test-side DB access.
         seed_engine = loop.run_until_complete(open_test_engine(url))
@@ -224,3 +256,8 @@ def make_api_client(
         drop_test_database(pg, db_name)
     finally:
         loop.close()
+        if original_config_json is None:
+            os.environ.pop("CONFIG_JSON", None)
+        else:
+            os.environ["CONFIG_JSON"] = original_config_json
+        os.unlink(config_file.name)

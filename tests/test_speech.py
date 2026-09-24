@@ -14,6 +14,7 @@ from fivccliche.services.interfaces.speech import (
     SpeechAudioInput,
     SpeechEvent,
     SpeechRecognizeOptions,
+    SpeechSynthesisOptions,
 )
 
 
@@ -68,6 +69,42 @@ class TestFakeSpeechProvider:
             SpeechEvent(type="final", text="streamed hello", language="zh"),
         ]
         assert recognizer.last_chunks == [b"\x00\x01", b"\x02"]
+
+    @pytest.mark.asyncio
+    async def test_synthesizer_options_default(self):
+        provider = FakeSpeechProvider(audio=(b"audio",))
+
+        async with await provider.get_synthesizer() as synthesizer:
+            audio = [chunk async for chunk in synthesizer.stream_async("hello")]
+
+        assert audio == [b"audio"]
+        assert synthesizer.options is None
+
+    @pytest.mark.asyncio
+    async def test_synthesizer_yields_configured_audio(self):
+        provider = FakeSpeechProvider(audio=(b"left ", b"right"))
+
+        async with await provider.get_synthesizer(
+            SpeechSynthesisOptions(voice="longxiaochun")
+        ) as synthesizer:
+            audio = [chunk async for chunk in synthesizer.stream_async("hello")]
+
+        assert audio == [b"left ", b"right"]
+
+    @pytest.mark.asyncio
+    async def test_synthesizer_consumes_text_chunks(self):
+        provider = FakeSpeechProvider(audio=(b"audio",))
+
+        async def text():
+            yield "hello "
+            yield "world"
+
+        async with await provider.get_synthesizer(
+            SpeechSynthesisOptions(voice="longxiaochun")
+        ) as synthesizer:
+            audio = [chunk async for chunk in synthesizer.stream_async(text())]
+
+        assert audio == [b"audio"]
 
 
 class TestSpeechRecognizerInterface:
@@ -124,3 +161,19 @@ class TestGetSpeechProviderAsync:
             result = await deps.get_speech_provider_async()
 
         assert result is None
+
+
+class TestSpeechProviderSynthesisContract:
+    def test_get_synthesizer_is_abstract(self):
+        assert ISpeechProvider.get_synthesizer.__isabstractmethod__
+
+    @pytest.mark.asyncio
+    async def test_multimodal_provider_rejects_synthesis(self):
+        from fivccliche.services.implements.speech.dashscope import (
+            DashScopeSpeechProvider,
+        )
+        from fivccliche.services.interfaces.speech import SpeechRequestError
+
+        provider = DashScopeSpeechProvider(MagicMock())
+        with pytest.raises(SpeechRequestError, match="does not support TTS"):
+            await provider.get_synthesizer()

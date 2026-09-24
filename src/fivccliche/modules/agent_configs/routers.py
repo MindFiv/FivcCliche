@@ -1,3 +1,4 @@
+import base64
 import json
 from datetime import datetime, timezone
 
@@ -12,6 +13,7 @@ from fivccliche.services.interfaces.speech import (
     SpeechAudioInput,
     SpeechRecognizeOptions,
     SpeechRequestError,
+    SpeechSynthesisOptions,
 )
 from fivccliche.utils.deps import (
     IUser,
@@ -528,6 +530,203 @@ async def delete_asr_config_async(
     )
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ASR config not found")
+    await session.delete(config)
+    await session.commit()
+
+
+# ============================================================================
+# TTS Config Endpoints
+# ============================================================================
+
+router_tts = APIRouter(prefix="/configs/tts", tags=["tts_configs"])
+
+
+@router_tts.post(
+    "/",
+    summary="Create a new tts config for the authenticated user.",
+    response_model=schemas.UserTTSSchema,
+    status_code=status.HTTP_201_CREATED,
+    operation_id="create_tts_config",
+)
+async def create_tts_config_async(
+    config_create: schemas.UserTTSSchema,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+):
+    config = await utils.create_tts_config_async(
+        session,
+        None if user.is_superuser else user.uuid,
+        config_create,
+        updated_user_uuid=user.uuid,
+    )
+    await session.commit()
+    await session.refresh(config)
+    return config.to_schema()
+
+
+@router_tts.get(
+    "/",
+    summary="List all tts configs for the authenticated user.",
+    response_model=PaginatedResponse[schemas.UserTTSSchema],
+    operation_id="list_tts_configs",
+)
+async def list_tts_configs_async(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> PaginatedResponse:
+    filters = UserScopedReadableFilterSet(
+        models.UserTTS.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
+    configs = await utils.list_user_scoped_async(
+        session, models.UserTTS, filters=filters, skip=skip, limit=limit
+    )
+    total = await utils.count_user_scoped_async(session, models.UserTTS, filters=filters)
+    return PaginatedResponse(
+        total=total,
+        results=[config.to_schema() for config in configs],
+    )
+
+
+@router_tts.post(
+    "/{config_uuid}/probe/",
+    summary="Probe tts config for the authenticated user.",
+    status_code=status.HTTP_200_OK,
+)
+async def probe_tts_config_async(
+    config_uuid: str,
+    probe: schemas.UserTTSProbeRequest,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> responses.StreamingResponse:
+    filters = UserScopedReadableFilterSet(
+        models.UserTTS.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
+    config = await utils.get_user_scoped_async(
+        session, models.UserTTS, filters=filters, config_uuid=config_uuid
+    )
+    if not config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="TTS config not found")
+    api_key = config.api_key
+    model = config.model
+    base_url = config.base_url
+    await session.close()
+
+    speech_provider = await get_speech_provider_async(config.model_type)
+    if speech_provider is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Speech provider is not mounted",
+        )
+    options = SpeechSynthesisOptions(
+        voice=probe.voice,
+        format=probe.format,
+        sample_rate=probe.sample_rate,
+        volume=probe.volume,
+        speech_rate=probe.speech_rate,
+        pitch_rate=probe.pitch_rate,
+    )
+
+    async def stream():
+        try:
+            async with await speech_provider.get_synthesizer(
+                options,
+                api_key=api_key,
+                model=model,
+                base_url=base_url,
+            ) as synthesizer:
+                async for audio in synthesizer.stream_async(probe.text):
+                    encoded = base64.b64encode(audio).decode("ascii")
+                    yield "data: " + json.dumps(
+                        {"event": "audio", "info": {"data_b64": encoded}}
+                    ) + "\n\n"
+            yield "data: " + json.dumps({"event": "complete", "info": {}}) + "\n\n"
+        except SpeechRequestError as exc:
+            yield (
+                "data: " + json.dumps({"event": "error", "info": {"message": str(exc)}}) + "\n\n"
+            )
+
+    return responses.StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router_tts.get(
+    "/{config_uuid}/",
+    summary="Get a tts config by ID for the authenticated user.",
+    response_model=schemas.UserTTSSchema,
+    operation_id="get_tts_config",
+)
+async def get_tts_config_async(
+    config_uuid: str,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+):
+    filters = UserScopedReadableFilterSet(
+        models.UserTTS.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
+    config = await utils.get_user_scoped_async(
+        session, models.UserTTS, filters=filters, config_uuid=config_uuid
+    )
+    if not config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="TTS config not found")
+    return config.to_schema()
+
+
+@router_tts.patch(
+    "/{config_uuid}/",
+    summary="Update a tts config by ID for the authenticated user.",
+    response_model=schemas.UserTTSSchema,
+    operation_id="update_tts_config",
+)
+async def update_tts_config_async(
+    config_uuid: str,
+    config_update: create_partial_model(schemas.UserTTSSchema),  # type: ignore[valid-type]
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+):
+    filters = UserScopedEditableFilterSet(
+        models.UserTTS.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
+    config = await utils.get_user_scoped_async(
+        session, models.UserTTS, filters=filters, config_uuid=config_uuid
+    )
+    if not config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="TTS config not found")
+    config = await utils.update_tts_config_async(
+        session, config, config_update, updated_user_uuid=user.uuid
+    )
+    await session.commit()
+    await session.refresh(config)
+    return config.to_schema()
+
+
+@router_tts.delete(
+    "/{config_uuid}/",
+    summary="Delete a tts config by ID for the authenticated user.",
+    status_code=status.HTTP_204_NO_CONTENT,
+    operation_id="delete_tts_config",
+)
+async def delete_tts_config_async(
+    config_uuid: str,
+    user: IUser = Depends(get_authenticated_user_async),
+    session: AsyncSession = Depends(get_db_session_async),
+) -> None:
+    filters = UserScopedEditableFilterSet(
+        models.UserTTS.user_uuid, user.uuid, is_superuser=user.is_superuser
+    )
+    config = await utils.get_user_scoped_async(
+        session, models.UserTTS, filters=filters, config_uuid=config_uuid
+    )
+    if not config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="TTS config not found")
     await session.delete(config)
     await session.commit()
 

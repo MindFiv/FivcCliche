@@ -39,11 +39,17 @@
     - interface: fivccliche.services.interfaces.speech.ISpeechProvider
       name: dashscope
 
-  class: fivccliche.services.implements.speech.dashscope_multimodal.DashScopeMultimodalSpeechProvider
+  class: fivccliche.services.implements.speech.dashscope.DashScopeSpeechProvider
 
 - entries:
     - interface: fivccliche.services.interfaces.speech.ISpeechProvider
       name: dashscope_realtime
+
+  class: fivccliche.services.implements.speech.dashscope_realtime.DashScopeRealtimeSpeechProvider
+
+- entries:
+    - interface: fivccliche.services.interfaces.speech.ISpeechProvider
+      name: dashscope_tts
 
   class: fivccliche.services.implements.speech.dashscope_realtime.DashScopeRealtimeSpeechProvider
 

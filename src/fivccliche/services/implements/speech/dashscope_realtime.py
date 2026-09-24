@@ -1,4 +1,4 @@
-"""Qwen3-ASR-Flash-Realtime via DashScope realtime WebSocket."""
+"""DashScope realtime ASR and TTS."""
 
 from __future__ import annotations
 
@@ -6,9 +6,10 @@ import asyncio
 import base64
 import json
 import logging
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from fivcglue import IComponentSite, query_component
 from fivcglue.interfaces import configs
@@ -16,194 +17,285 @@ from fivcglue.interfaces import configs
 from fivccliche.services.interfaces.speech import (
     ISpeechProvider,
     ISpeechRecognizer,
+    ISpeechSynthesizer,
     SpeechAudioInput,
     SpeechEvent,
     SpeechRecognizeOptions,
     SpeechRequestError,
+    SpeechEventType,
+    SpeechSynthesisOptions,
 )
 from fivccliche.utils.types import to_string
 
-logger = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
+
+_DEFAULT_HTTP_ORIGIN = "https://dashscope.aliyuncs.com"
+_DEFAULT_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
+_DEFAULT_BASE_URL = _DEFAULT_HTTP_ORIGIN
+_DEFAULT_MODEL = "qwen-audio-3.1-asr-flash-streaming"
+_TTS_DEFAULT_MODEL = "qwen-audio-3.1-tts-flash"
+_TTS_DEFAULT_VOICE = "Cherry"
+_AUDIO_CHUNK_SIZE = 12800
+
+_ConnectFn = Callable[[str, dict[str, str]], Awaitable[Any]]
 
 
-class _RealtimeEndpoint:
-    """URL rules for the DashScope OpenAI-compatible realtime endpoint."""
+def _websocket_url(base_url: str) -> str:
+    """Resolve an HTTP or WebSocket origin to the DashScope inference URL."""
+    if base_url == _DEFAULT_HTTP_ORIGIN:
+        return _DEFAULT_WS_URL
+    if base_url.startswith(("ws://", "wss://")):
+        return base_url.rstrip("/")
 
-    DEFAULT_HTTP_ORIGIN = "https://dashscope.aliyuncs.com"
-    DEFAULT_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
-
-    @classmethod
-    def url(cls, model: str, base_url: str) -> str:
-        if base_url == cls.DEFAULT_HTTP_ORIGIN:
-            return f"{cls.DEFAULT_WS_URL}?model={model}"
-        ws_base = base_url.replace("https://", "wss://").replace("http://", "ws://")
-        return f"{ws_base}/api-ws/v1/realtime?model={model}"
-
-
-DEFAULT_WS_URL = _RealtimeEndpoint.DEFAULT_WS_URL
-_DEFAULT_BASE_URL = _RealtimeEndpoint.DEFAULT_HTTP_ORIGIN
-_DEFAULT_MODEL = "qwen3-asr-flash-realtime"
-
-ConnectFn = Callable[[str, dict[str, str]], Awaitable[Any]]
+    ws_base = base_url.replace("https://", "wss://").replace("http://", "ws://")
+    return f"{ws_base}/api-ws/v1/inference"
 
 
 async def _connect_websockets(url: str, headers: dict[str, str]) -> Any:
     import websockets
 
     try:
-        return await websockets.connect(url, additional_headers=headers)
-    except TypeError:
-        return await websockets.connect(url, extra_headers=headers)
+        try:
+            return await websockets.connect(url, additional_headers=headers)
+        except TypeError:
+            return await websockets.connect(url, extra_headers=headers)
+    except Exception as exc:
+        raise SpeechRequestError(f"Failed to connect to DashScope: {exc}") from exc
 
 
-class _RealtimeFrames:
-    """Qwen3 realtime request frames and response event mapping."""
-
-    @staticmethod
-    def headers(api_key: str) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {api_key}",
-            "OpenAI-Beta": "realtime=v1",
-        }
-
-    @staticmethod
-    def session_update(options: SpeechRecognizeOptions) -> dict[str, Any]:
-        session: dict[str, Any] = {
-            "input_audio_format": options.format,
-            "turn_detection": None,
-        }
-        transcription: dict[str, Any] = {}
-        if options.language:
-            transcription["language"] = options.language
-
-        context = options.context
-        if options.hotwords:
-            hotword_line = "热词: " + ", ".join(options.hotwords)
-            context = f"{context}\n{hotword_line}" if context else hotword_line
-        if context:
-            transcription["prompt"] = context
-        if transcription:
-            session["input_audio_transcription"] = transcription
-        return {"type": "session.update", "session": session}
-
-    @staticmethod
-    def append(chunk: bytes) -> dict[str, Any]:
-        audio = base64.b64encode(chunk).decode("ascii")
-        return {"type": "input_audio_buffer.append", "audio": audio}
-
-    @staticmethod
-    def commit() -> dict[str, Any]:
-        return {"type": "input_audio_buffer.commit"}
-
-    @staticmethod
-    def finish() -> dict[str, Any]:
-        return {"type": "session.finish"}
-
-    @staticmethod
-    def event(message: dict[str, Any]) -> SpeechEvent | None:
-        event_type = message.get("type")
-        if event_type == "conversation.item.input_audio_transcription.text":
-            text = f"{message.get('text') or ''}{message.get('stash') or ''}"
-            return SpeechEvent(
-                type="partial",
-                text=text,
-                language=message.get("language"),
-            )
-        if event_type == "conversation.item.input_audio_transcription.completed":
-            text = message.get("transcript") or message.get("text") or ""
-            return SpeechEvent(
-                type="final",
-                text=text,
-                language=message.get("language"),
-            )
-        if event_type == "error":
-            error = message.get("error") or {}
-            detail = error.get("message") if isinstance(error, dict) else str(message)
-            return SpeechEvent(type="error", message=str(detail))
-        return None
-
-    @staticmethod
-    def is_terminal(message: dict[str, Any]) -> bool:
-        return message.get("type") in {"session.finished", "session.closed"}
+def _tts_error_message(message: Any) -> str:
+    if isinstance(message, str):
+        try:
+            parsed_message = json.loads(message)
+        except json.JSONDecodeError:
+            return message
+        message = parsed_message
+    if not isinstance(message, dict):
+        return f"{message}"
+    header = message.get("header") or {}
+    code = (
+        header.get("error_code")
+        or message.get("code")
+        or message.get("error_code")
+        or "task-failed"
+    )
+    detail = header.get("error_message") or message.get("message") or message.get("error_message")
+    return f"{code}: {detail}" if detail else str(code)
 
 
-class _RealtimeAudio:
-    """Prepare clip or byte-stream input for a realtime websocket."""
+def _tts_start_frame(
+    model: str,
+    options: SpeechSynthesisOptions,
+    task_id: str,
+) -> dict[str, Any]:
+    parameters: dict[str, Any] = {
+        "voice": options.voice,
+        "volume": options.volume,
+        "text_type": "PlainText",
+        "sample_rate": options.sample_rate,
+        "rate": options.speech_rate,
+        "format": options.format.lower(),
+        "pitch": options.pitch_rate,
+        "seed": 0,
+        "type": 0,
+    }
+    parameters.update(options.extra)
+    return {
+        "header": {
+            "action": "run-task",
+            "task_id": task_id,
+            "streaming": "duplex",
+        },
+        "payload": {
+            "model": model,
+            "task_group": "audio",
+            "task": "tts",
+            "function": "SpeechSynthesizer",
+            "input": {},
+            "parameters": parameters,
+        },
+    }
 
-    def __init__(self, http_client: Any | None = None) -> None:
-        self._http_client = http_client
 
-    async def chunks(
-        self,
-        audio: SpeechAudioInput | AsyncIterator[bytes],
-    ) -> AsyncIterator[bytes]:
-        if not isinstance(audio, SpeechAudioInput):
-            async for chunk in audio:
-                yield chunk
-            return
+def _tts_continue_frame(
+    model: str,
+    text: str,
+    task_id: str,
+) -> dict[str, Any]:
+    return {
+        "header": {
+            "action": "continue-task",
+            "task_id": task_id,
+            "streaming": "duplex",
+        },
+        "payload": {
+            "model": model,
+            "task_group": "audio",
+            "task": "tts",
+            "function": "SpeechSynthesizer",
+            "input": {"text": text},
+        },
+    }
 
-        if audio.data_b64:
-            data = audio.data_b64
-            if data.startswith("data:") and "," in data:
-                data = data.split(",", 1)[1]
-            yield base64.b64decode(data)
-            return
 
-        response = await self._fetch(audio.url or "")
-        if not getattr(response, "is_success", False):
-            status = getattr(response, "status_code", "?")
-            raise SpeechRequestError(f"Failed to fetch audio URL HTTP {status}")
-        content = getattr(response, "content", b"")
-        yield content if isinstance(content, bytes) else bytes(content)
+def _start_frame(
+    model: str,
+    options: SpeechRecognizeOptions,
+    task_id: str,
+) -> dict[str, Any]:
+    parameters: dict[str, Any] = {
+        "format": options.format.lower(),
+        "sample_rate": options.sample_rate,
+    }
+    parameters.update(options.extra)
+    return {
+        "header": {
+            "action": "run-task",
+            "task_id": task_id,
+            "streaming": "duplex",
+        },
+        "payload": {
+            "model": model,
+            "task_group": "audio",
+            "task": "recognition",
+            "function": "recognition",
+            "parameters": parameters,
+            "input": {},
+        },
+    }
 
-    async def _fetch(self, url: str) -> Any:
-        client = self._http_client
-        if client is not None:
-            return await client.get(url)
+
+def _finish_frame(task_id: str) -> dict[str, Any]:
+    return {
+        "header": {
+            "action": "finish-task",
+            "task_id": task_id,
+            "streaming": "duplex",
+        },
+        "payload": {"input": {}},
+    }
+
+
+def _message_action(message: dict[str, Any]) -> str | None:
+    header = message.get("header")
+    return header.get("action") if isinstance(header, dict) else None
+
+
+def _message_event(message: dict[str, Any], action: str | None) -> SpeechEvent | None:
+    if action == "result-generated":
+        payload = message.get("payload") or {}
+        sentence = (payload.get("output") or {}).get("sentence") or {}
+        if not isinstance(sentence, dict):
+            raise SpeechRequestError("DashScope ASR sent an invalid sentence")
+        event_type: SpeechEventType = "final" if sentence.get("end_time") is not None else "partial"
+        return SpeechEvent(type=event_type, text=str(sentence.get("text") or ""))
+
+    if action == "task-failed":
+        header = message.get("header") or {}
+        code = header.get("error_code") or "task-failed"
+        detail = header.get("error_message")
+        return SpeechEvent(
+            type="error",
+            message=f"{code}: {detail}" if detail else str(code),
+        )
+    return None
+
+
+async def _audio_data(audio: SpeechAudioInput, http_client: Any | None) -> bytes:
+    if audio.data_b64:
+        data = audio.data_b64
+        if data.startswith("data:") and "," in data:
+            data = data.split(",", 1)[1]
+        return base64.b64decode(data)
+
+    if http_client is not None:
+        response = await http_client.get(audio.url or "")
+    else:
         import httpx
 
-        async with httpx.AsyncClient(timeout=60.0) as http_client:
-            return await http_client.get(url)
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.get(audio.url or "")
+
+    if not getattr(response, "is_success", False):
+        status = getattr(response, "status_code", "?")
+        raise SpeechRequestError(f"Failed to fetch audio URL HTTP {status}")
+    content = getattr(response, "content", b"")
+    return content if isinstance(content, bytes) else bytes(content)
 
 
-class _DashScopeRealtimeSocket:
-    """DashScope realtime websocket session with manual commit."""
+async def _audio_chunks(
+    audio: SpeechAudioInput | AsyncIterator[bytes],
+    http_client: Any | None,
+) -> AsyncIterator[bytes]:
+    if isinstance(audio, SpeechAudioInput):
+        data = await _audio_data(audio, http_client)
+    else:
+        data = bytearray()
+        async for chunk in audio:
+            data.extend(chunk)
+
+    for offset in range(0, len(data), _AUDIO_CHUNK_SIZE):
+        yield bytes(data[offset : offset + _AUDIO_CHUNK_SIZE])
+
+
+class _DashScopeRecognitionSocket:
+    """DashScope Recognition websocket session with manual completion."""
 
     def __init__(
         self,
         *,
         url: str,
+        model: str,
         headers: dict[str, str],
         options: SpeechRecognizeOptions | None,
-        connect: ConnectFn,
+        connect: _ConnectFn,
     ) -> None:
         self._url = url
+        self._model = model
         self._headers = headers
         self._options = options or SpeechRecognizeOptions()
         self._connect = connect
         self._ws: Any | None = None
+        self._task_id = uuid.uuid4().hex
+        self._started = False
+        self._finish_sent = False
         self._closed = False
 
     async def start_async(self) -> None:
-        self._ws = await self._connect(self._url, self._headers)
-        await self._send(_RealtimeFrames.session_update(self._options))
-        while True:
-            message = await asyncio.wait_for(self._recv_json(), timeout=10)
-            kind = message.get("type")
-            if kind == "session.updated":
-                return
-            if kind == "session.created":
-                continue
-            if kind == "error":
-                raise SpeechRequestError(str(message.get("error") or message))
+        try:
+            self._ws = await self._connect(self._url, self._headers)
+            await self._send_json(_start_frame(self._model, self._options, self._task_id))
+            while True:
+                message = await asyncio.wait_for(self._recv_json(), timeout=10)
+                action = _message_action(message)
+                if action == "task-started":
+                    self._started = True
+                    return
+                if action == "task-failed":
+                    event = _message_event(message, action)
+                    raise SpeechRequestError(event.message if event else "ASR task failed")
+                if action != "result-generated":
+                    raise SpeechRequestError(f"Unexpected ASR frame: {action or 'missing action'}")
+        except Exception as exc:
+            await self.close_async()
+            if isinstance(exc, SpeechRequestError):
+                raise
+            if isinstance(exc, TimeoutError):
+                raise SpeechRequestError("Timed out waiting for DashScope ASR task") from exc
+            raise SpeechRequestError(f"Failed to start DashScope ASR task: {exc}") from exc
 
     async def send_audio_async(self, chunk: bytes) -> None:
-        await self._send(_RealtimeFrames.append(chunk))
+        if self._ws is None:
+            raise SpeechRequestError("Realtime ASR session is not started")
+        await self._ws.send_bytes(chunk)
 
     async def commit_async(self) -> None:
-        await self._send(_RealtimeFrames.commit())
+        if not self._finish_sent:
+            await self._send_json(_finish_frame(self._task_id))
+            self._finish_sent = True
 
     async def events(self) -> AsyncIterator[SpeechEvent]:
+        saw_final = False
         while not self._closed:
             try:
                 message = await self._recv_json()
@@ -212,27 +304,37 @@ class _DashScopeRealtimeSocket:
                     return
                 raise
 
-            event = _RealtimeFrames.event(message)
+            action = _message_action(message)
+            if action not in {"result-generated", "task-finished", "task-failed"}:
+                raise SpeechRequestError(f"Unexpected ASR frame: {action or 'missing action'}")
+
+            event = _message_event(message, action)
             if event is not None:
+                saw_final = saw_final or event.type == "final"
                 yield event
-            if _RealtimeFrames.is_terminal(message):
+            if action == "task-failed":
+                return
+            if action == "task-finished":
+                if not saw_final:
+                    yield SpeechEvent(type="final")
                 return
 
     async def close_async(self) -> None:
         self._closed = True
         if self._ws is None:
             return
-        try:
-            await self._send(_RealtimeFrames.finish())
-        except Exception:
-            logger.debug("Failed to send session.finish", exc_info=True)
+        if self._started and not self._finish_sent:
+            try:
+                await self.commit_async()
+            except Exception:
+                _logger.debug("Failed to send DashScope finish-task", exc_info=True)
         try:
             await self._ws.close()
         except Exception:
-            logger.debug("Failed to close DashScope realtime websocket", exc_info=True)
+            _logger.debug("Failed to close DashScope ASR websocket", exc_info=True)
         self._ws = None
 
-    async def _send(self, payload: dict[str, Any]) -> None:
+    async def _send_json(self, payload: dict[str, Any]) -> None:
         if self._ws is None:
             raise SpeechRequestError("Realtime ASR session is not started")
         await self._ws.send(json.dumps(payload))
@@ -245,12 +347,109 @@ class _DashScopeRealtimeSocket:
             raw = raw.decode("utf-8")
         message = json.loads(raw)
         if not isinstance(message, dict):
-            raise SpeechRequestError("Realtime ASR received a non-object frame")
+            raise SpeechRequestError("DashScope ASR received a non-object frame")
         return message
 
 
-class DashScopeRealtimeRecognizer(ISpeechRecognizer):
-    """Streaming ASR using qwen3-asr-flash-realtime."""
+class _DashScopeTTSSocket:
+    """DashScope TTS websocket session with manual text submission."""
+
+    def __init__(
+        self,
+        *,
+        url: str,
+        model: str,
+        headers: dict[str, str],
+        options: SpeechSynthesisOptions,
+        connect: _ConnectFn,
+    ) -> None:
+        self._url = url
+        self._model = model
+        self._headers = headers
+        self._options = options
+        self._connect = connect
+        self._ws: Any | None = None
+        self._task_id = uuid.uuid4().hex
+        self._started = False
+        self._finish_sent = False
+        self._failed = False
+        self._closed = False
+
+    async def start_async(self) -> None:
+        try:
+            self._ws = await self._connect(self._url, self._headers)
+            await self._send_json(_tts_start_frame(self._model, self._options, self._task_id))
+            while True:
+                message = await asyncio.wait_for(self._recv_json(), timeout=10)
+                action = _message_action(message)
+                if action == "task-started":
+                    self._started = True
+                    return
+                if action == "task-failed":
+                    self._failed = True
+                    raise SpeechRequestError(_tts_error_message(message))
+                raise SpeechRequestError(f"Unexpected TTS frame: {action or 'missing action'}")
+        except Exception as exc:
+            await self.close_async()
+            if isinstance(exc, SpeechRequestError):
+                raise
+            if isinstance(exc, TimeoutError):
+                raise SpeechRequestError("Timed out waiting for DashScope TTS task") from exc
+            raise SpeechRequestError(f"Failed to start DashScope TTS task: {exc}") from exc
+
+    async def send_text_async(self, text: str) -> None:
+        if self._ws is None:
+            raise SpeechRequestError("TTS session is not started")
+        await self._send_json(_tts_continue_frame(self._model, text, self._task_id))
+
+    async def finish_async(self) -> None:
+        if not self._finish_sent:
+            await self._send_json(_finish_frame(self._task_id))
+            self._finish_sent = True
+
+    async def recv_async(self) -> str | bytes:
+        if self._ws is None:
+            raise SpeechRequestError("TTS session is not started")
+        raw = await self._ws.recv()
+        if isinstance(raw, bytearray):
+            return bytes(raw)
+        if isinstance(raw, str):
+            return raw
+        return bytes(raw)
+
+    async def close_async(self, *, failed: bool = False) -> None:
+        self._closed = True
+        self._failed = self._failed or failed
+        if self._ws is None:
+            return
+        if self._started and not self._finish_sent and not self._failed:
+            try:
+                await self.finish_async()
+            except Exception:
+                _logger.debug("Failed to send DashScope finish-task", exc_info=True)
+        try:
+            await self._ws.close()
+        except Exception:
+            _logger.debug("Failed to close DashScope TTS websocket", exc_info=True)
+        self._ws = None
+
+    async def _send_json(self, payload: dict[str, Any]) -> None:
+        if self._ws is None:
+            raise SpeechRequestError("TTS session is not started")
+        await self._ws.send(json.dumps(payload))
+
+    async def _recv_json(self) -> dict[str, Any]:
+        raw = await self.recv_async()
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        message = json.loads(raw)
+        if not isinstance(message, dict):
+            raise SpeechRequestError("DashScope TTS received a non-object frame")
+        return message
+
+
+class _DashScopeRealtimeRecognizer(ISpeechRecognizer):
+    """Streaming ASR using the DashScope Recognition protocol."""
 
     def __init__(
         self,
@@ -258,22 +457,23 @@ class DashScopeRealtimeRecognizer(ISpeechRecognizer):
         api_key: str,
         model: str = _DEFAULT_MODEL,
         ws_url: str | None = None,
-        connect: ConnectFn | None = None,
+        connect: _ConnectFn | None = None,
         http_client: Any | None = None,
         options: SpeechRecognizeOptions | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
-        self._ws_url = ws_url or _RealtimeEndpoint.url(model, _DEFAULT_BASE_URL)
+        self._ws_url = ws_url or _websocket_url(_DEFAULT_BASE_URL)
         self._connect = connect or _connect_websockets
-        self._audio = _RealtimeAudio(http_client)
+        self._http_client = http_client
         self._options = options
-        self._socket: _DashScopeRealtimeSocket | None = None
+        self._socket: _DashScopeRecognitionSocket | None = None
 
     async def __aenter__(self) -> Self:
-        self._socket = _DashScopeRealtimeSocket(
+        self._socket = _DashScopeRecognitionSocket(
             url=self._ws_url,
-            headers=_RealtimeFrames.headers(self._api_key),
+            model=self._model,
+            headers={"Authorization": f"Bearer {self._api_key}"},
             options=self._options,
             connect=self._connect,
         )
@@ -298,14 +498,14 @@ class DashScopeRealtimeRecognizer(ISpeechRecognizer):
         try:
 
             async def _pump_in() -> None:
-                async for chunk in self._audio.chunks(audio):
+                async for chunk in _audio_chunks(audio, self._http_client):
                     await socket.send_audio_async(chunk)
                 await socket.commit_async()
 
             send_task = asyncio.create_task(_pump_in())
             async for event in socket.events():
                 yield event
-                if event.type in {"final", "error"}:
+                if event.type == "error":
                     return
         finally:
             if send_task is not None:
@@ -314,8 +514,93 @@ class DashScopeRealtimeRecognizer(ISpeechRecognizer):
                     await send_task
 
 
+class _DashScopeTTSSynthesizer(ISpeechSynthesizer):
+    """Streaming synthesizer using the DashScope TTS websocket protocol."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str = _TTS_DEFAULT_MODEL,
+        ws_url: str = _DEFAULT_WS_URL,
+        options: SpeechSynthesisOptions | None,
+        connect: _ConnectFn | None = None,
+    ) -> None:
+        self._api_key = api_key
+        self._model = model
+        self._ws_url = ws_url
+        self._options = options or SpeechSynthesisOptions(voice=_TTS_DEFAULT_VOICE)
+        self._connect = connect or _connect_websockets
+        self._socket: _DashScopeTTSSocket | None = None
+        self._stream_lock = asyncio.Lock()
+
+    async def __aenter__(self) -> Self:
+        self._socket = _DashScopeTTSSocket(
+            url=self._ws_url,
+            model=self._model,
+            headers={"Authorization": f"Bearer {self._api_key}"},
+            options=self._options,
+            connect=self._connect,
+        )
+        await self._socket.start_async()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        socket = self._socket
+        self._socket = None
+        if socket is not None:
+            await socket.close_async()
+
+    async def stream_async(self, text: str | AsyncIterator[str]) -> AsyncIterator[bytes]:
+        socket = self._socket
+        if socket is None:
+            raise SpeechRequestError("TTS session is not started")
+        if self._stream_lock.locked():
+            raise SpeechRequestError("TTS session is already streaming")
+
+        async with self._stream_lock:
+            send_task = asyncio.create_task(self._submit_text(socket, text))
+            try:
+                while True:
+                    raw = await socket.recv_async()
+                    if isinstance(raw, bytes):
+                        yield raw
+                        continue
+
+                    message = json.loads(raw)
+                    if not isinstance(message, dict):
+                        raise SpeechRequestError("DashScope TTS received a non-object frame")
+                    action = _message_action(message)
+                    if action == "task-finished":
+                        return
+                    if action == "task-failed":
+                        await socket.close_async(failed=True)
+                        raise SpeechRequestError(_tts_error_message(message))
+                    if action not in {"result-generated", "task-started"}:
+                        raise SpeechRequestError(
+                            f"Unexpected TTS frame: {action or 'missing action'}"
+                        )
+            finally:
+                if send_task is not None:
+                    send_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await send_task
+
+    async def _submit_text(
+        self,
+        socket: _DashScopeTTSSocket,
+        text: str | AsyncIterator[str],
+    ) -> None:
+        if isinstance(text, str):
+            await socket.send_text_async(text)
+        else:
+            async for chunk in text:
+                await socket.send_text_async(chunk)
+        await socket.finish_async()
+
+
 class DashScopeRealtimeSpeechProvider(ISpeechProvider):
-    """ISpeechProvider that creates DashScope realtime recognizers."""
+    """ISpeechProvider that creates DashScope realtime ASR and TTS sessions."""
 
     def __init__(self, component_site: IComponentSite, **_kwargs: Any) -> None:
         self._component_site = component_site
@@ -330,18 +615,38 @@ class DashScopeRealtimeSpeechProvider(ISpeechProvider):
         **_kwargs: Any,
     ) -> ISpeechRecognizer:
         api_key, model, base_url = self._credentials(
-            api_key=api_key, model=model, base_url=base_url
+            capability="asr", api_key=api_key, model=model, base_url=base_url
         )
-        return DashScopeRealtimeRecognizer(
+        return _DashScopeRealtimeRecognizer(
             api_key=api_key,
             model=model,
-            ws_url=_RealtimeEndpoint.url(model, base_url),
+            ws_url=_websocket_url(base_url),
+            options=options,
+        )
+
+    async def get_synthesizer(
+        self,
+        options: SpeechSynthesisOptions | None = None,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        **_kwargs: Any,
+    ) -> ISpeechSynthesizer:
+        api_key, model, base_url = self._credentials(
+            capability="tts", api_key=api_key, model=model, base_url=base_url
+        )
+        return _DashScopeTTSSynthesizer(
+            api_key=api_key,
+            model=model,
+            ws_url=_websocket_url(base_url),
             options=options,
         )
 
     def _credentials(
         self,
         *,
+        capability: Literal["asr", "tts"],
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
@@ -349,28 +654,41 @@ class DashScopeRealtimeSpeechProvider(ISpeechProvider):
         config = query_component(self._component_site, configs.IConfig)
         session: configs.IConfigSession | None = None
         if config is None:
-            logger.warning("IConfig component not registered; using speech defaults")
+            _logger.warning("IConfig component not registered; using speech defaults")
         else:
             session = config.get_session("SPEECH")
             if session is None:
-                logger.warning("Config session 'SPEECH' not found; using speech defaults")
+                _logger.warning("Config session 'SPEECH' not found; using speech defaults")
+
+        is_tts = capability == "tts"
+        api_key_name = "TTS_API_KEY" if is_tts else "ASR_API_KEY"
+        model_name = "TTS_MODEL" if is_tts else "ASR_MODEL"
+        base_url_name = "TTS_BASE_URL" if is_tts else "ASR_BASE_URL"
+        default_model = _TTS_DEFAULT_MODEL if is_tts else _DEFAULT_MODEL
+        default_base_url = _DEFAULT_HTTP_ORIGIN if is_tts else _DEFAULT_BASE_URL
 
         resolved_api_key = (
             api_key
             if api_key is not None
-            else to_string(session.get_value("ASR_API_KEY") if session else None, "")
+            else to_string(
+                session.get_value(api_key_name) if session else None,
+                "",
+            )
         )
         resolved_model = (
             model
             if model is not None
-            else to_string(session.get_value("ASR_MODEL") if session else None, _DEFAULT_MODEL)
+            else to_string(
+                session.get_value(model_name) if session else None,
+                default_model,
+            )
         )
         resolved_base_url = (
             base_url
             if base_url is not None
             else to_string(
-                session.get_value("ASR_BASE_URL") if session else None,
-                _DEFAULT_BASE_URL,
+                session.get_value(base_url_name) if session else None,
+                default_base_url,
             )
         ).rstrip("/")
         return resolved_api_key, resolved_model, resolved_base_url

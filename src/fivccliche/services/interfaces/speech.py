@@ -57,6 +57,18 @@ class SpeechRecognizeOptions(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
+class SpeechSynthesisOptions(BaseModel):
+    """Optional synthesis parameters captured when the synthesizer is created."""
+
+    voice: str
+    format: str = "mp3"
+    sample_rate: int = 22050
+    volume: int = Field(default=50, ge=0, le=100)
+    speech_rate: float = Field(default=1.0, ge=0.5, le=2.0)
+    pitch_rate: float = Field(default=1.0, ge=0.5, le=2.0)
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
 class SpeechEvent(BaseModel):
     """One recognition event. ``text`` is set for partial/final; ``message`` for error."""
 
@@ -91,6 +103,26 @@ class ISpeechRecognizer(ABC):
         yield SpeechEvent(type="final")
 
 
+class ISpeechSynthesizer(ABC):
+    """One synthesis turn. Created by ``ISpeechProvider.get_synthesizer``."""
+
+    @abstractmethod
+    async def __aenter__(self) -> Self:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def __aexit__(self, *exc: object) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def stream_async(
+        self,
+        text: str | AsyncIterator[str],
+    ) -> AsyncIterator[bytes]:
+        """Yield encoded audio for one text or streamed-text turn."""
+        yield b""
+
+
 class ISpeechProvider(IComponent):
     """Factory for speech recognizers (and later synthesizers)."""
 
@@ -110,3 +142,15 @@ class ISpeechProvider(IComponent):
         not ``None``. Realtime implementations open the vendor session in
         ``__aenter__``.
         """
+
+    @abstractmethod
+    async def get_synthesizer(
+        self,
+        options: SpeechSynthesisOptions | None = None,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        **kwargs: Any,
+    ) -> ISpeechSynthesizer:
+        """Create a synthesizer when the provider supports TTS."""
