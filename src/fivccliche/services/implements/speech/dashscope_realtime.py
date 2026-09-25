@@ -60,19 +60,14 @@ def _websocket_url(base_url: str) -> str:
     raise SpeechRequestError(f"Unsupported DashScope base URL: {base_url}")
 
 
-def _websocket_headers(base_url: str, api_key: str) -> dict[str, str]:
+def _websocket_headers(api_key: str) -> dict[str, str]:
     resolved_api_key = api_key.strip()
     if resolved_api_key.casefold().startswith("bearer "):
         resolved_api_key = resolved_api_key[7:].strip()
     if not resolved_api_key:
         raise SpeechRequestError("DashScope API key is empty")
 
-    headers = {"Authorization": f"Bearer {resolved_api_key}"}
-    hostname = urlsplit(base_url).hostname or ""
-    labels = hostname.split(".")
-    if hostname.endswith(".maas.aliyuncs.com") and len(labels) >= 4:
-        headers["X-DashScope-WorkSpace"] = labels[0]
-    return headers
+    return {"Authorization": f"Bearer {resolved_api_key}"}
 
 
 def _handshake_detail(exc: InvalidStatus) -> str:
@@ -531,7 +526,7 @@ class _DashScopeRealtimeRecognizer(ISpeechRecognizer):
         self._socket = _DashScopeRecognitionSocket(
             url=self._ws_url,
             model=self._model,
-            headers=_websocket_headers(self._ws_url, self._api_key),
+            headers=_websocket_headers(self._api_key),
             options=self._options,
             connect=self._connect,
         )
@@ -601,7 +596,7 @@ class _DashScopeTTSSynthesizer(ISpeechSynthesizer):
         self._socket = _DashScopeTTSSocket(
             url=self._ws_url,
             model=self._model,
-            headers=_websocket_headers(self._ws_url, self._api_key),
+            headers=_websocket_headers(self._api_key),
             options=self._options,
             connect=self._connect,
         )

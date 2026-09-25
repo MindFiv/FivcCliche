@@ -380,7 +380,7 @@ class TestWebSocketUrl:
 
 class TestWebSocketHandshake:
     @pytest.mark.asyncio
-    async def test_realtime_sends_maas_workspace_and_clean_api_key(self):
+    async def test_realtime_sends_clean_api_key_only(self):
         fake_ws = _FakeDashScopeWs()
         connections: list[tuple[str, dict[str, str]]] = []
 
@@ -402,15 +402,12 @@ class TestWebSocketHandshake:
         assert connections == [
             (
                 "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference",
-                {
-                    "Authorization": "Bearer sk-test",
-                    "X-DashScope-WorkSpace": "llm-pbm19qg9671grxpg",
-                },
+                {"Authorization": "Bearer sk-test"},
             )
         ]
 
     @pytest.mark.asyncio
-    async def test_synthesizer_sends_maas_workspace_and_clean_api_key(self):
+    async def test_synthesizer_sends_clean_api_key_only(self):
         fake_ws = _FakeDashScopeTtsWs()
         connections: list[tuple[str, dict[str, str]]] = []
 
@@ -432,15 +429,12 @@ class TestWebSocketHandshake:
         assert connections == [
             (
                 "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference",
-                {
-                    "Authorization": "Bearer sk-test",
-                    "X-DashScope-WorkSpace": "llm-pbm19qg9671grxpg",
-                },
+                {"Authorization": "Bearer sk-test"},
             )
         ]
 
-    def test_public_dashscope_url_has_no_workspace_header(self):
-        headers = _websocket_headers("wss://dashscope.aliyuncs.com/api-ws/v1/inference", "sk-test")
+    def test_headers_contain_authorization_only(self):
+        headers = _websocket_headers("sk-test")
         assert headers == {"Authorization": "Bearer sk-test"}
 
     @pytest.mark.asyncio

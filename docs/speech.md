@@ -124,14 +124,14 @@ data: {"event": "error", "info": {"message": "..."}}
 Missing config is 404; missing provider is 503. Recognition failures after the
 stream starts are SSE `error` events (HTTP 200), not 400.
 
-DashScope WebSocket requests send one instance-specific Bearer API key. For a
-MaaS host shaped `<workspace>.<region>.maas.aliyuncs.com`, they also send
-`X-DashScope-WorkSpace: <workspace>`. The public `dashscope.aliyuncs.com`
-endpoint does not receive a workspace header. Handshake failures include the
-DashScope response body when the gateway supplies one; API keys are never
-included. A 403 normally means the key was recognized but the workspace, model,
-or region is not authorized—verify those account settings before changing the
-URL.
+DashScope WebSocket requests send only an instance-specific Bearer API key.
+For a MaaS host, the workspace is encoded in the host itself as
+`<workspace>.<region>.maas.aliyuncs.com`; do not send
+`X-DashScope-WorkSpace`. Handshake failures include the DashScope response
+body when the gateway supplies one; API keys are never included. A 403 with
+`Endpoint.AccessDenied` means the workspace endpoint rejected the key or its
+model access—verify the workspace ID in the host, key membership, and model
+authorization.
 
 `dashscope_tts` uses the DashScope TTS WebSocket protocol and defaults to
 `qwen-audio-3.1-tts-flash`. It converts an HTTP base URL to
