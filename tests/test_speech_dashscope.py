@@ -16,6 +16,7 @@ from fivccliche.services.implements.speech.dashscope import (
     DashScopeSpeechProvider,
 )
 from fivccliche.services.implements.speech.dashscope_realtime import (
+    _websocket_url,
     _DashScopeRealtimeRecognizer,
     DashScopeRealtimeSpeechProvider,
 )
@@ -291,7 +292,7 @@ class _FakeDashScopeWs:
                 json.dumps(
                     {
                         "header": {
-                            "action": "task-started",
+                            "event": "task-started",
                             "task_id": message["header"]["task_id"],
                         },
                         "payload": {"input": {}},
@@ -312,7 +313,7 @@ class _FakeDashScopeWs:
                 json.dumps(
                     {
                         "header": {
-                            "action": "result-generated",
+                            "event": "result-generated",
                             "task_id": task_id,
                         },
                         "payload": {"output": {"sentence": sentence}},
@@ -322,7 +323,7 @@ class _FakeDashScopeWs:
         await self._incoming.put(
             json.dumps(
                 {
-                    "header": {"action": "task-finished", "task_id": task_id},
+                    "header": {"event": "task-finished", "task_id": task_id},
                     "payload": {"output": {}},
                 }
             )
@@ -334,7 +335,7 @@ class _FakeDashScopeWs:
             json.dumps(
                 {
                     "header": {
-                        "action": "task-failed",
+                        "event": "task-failed",
                         "task_id": task_id,
                         "error_code": code,
                         "error_message": message,
@@ -349,6 +350,25 @@ class _FakeDashScopeWs:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class TestWebSocketUrl:
+    @pytest.mark.parametrize(
+        ("base_url", "expected_url"),
+        [
+            (
+                "https://dashscope.aliyuncs.com",
+                "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+            ),
+            ("https://host/compatible-mode/v1", "wss://host/api-ws/v1/inference"),
+            ("wss://host", "wss://host/api-ws/v1/inference"),
+            ("wss://host/", "wss://host/api-ws/v1/inference"),
+            ("wss://host/api-ws/v1/inference", "wss://host/api-ws/v1/inference"),
+            ("wss://host/custom/path?model=x", "wss://host/custom/path?model=x"),
+        ],
+    )
+    def test_normalizes_dashscope_base_url(self, base_url: str, expected_url: str):
+        assert _websocket_url(base_url) == expected_url
 
 
 def _sentence(text: str, *, end_time: int | None = None) -> dict:
@@ -373,7 +393,7 @@ class _FakeDashScopeTtsWs:
         self.messages.append(message)
         action = message["header"]["action"]
         if action == "run-task":
-            await self._incoming.put(json.dumps({"header": {"action": "task-started"}}))
+            await self._incoming.put(json.dumps({"header": {"event": "task-started"}}))
         elif action == "continue-task":
             self.texts.append(message["payload"]["input"]["text"])
             if not self.audio_sent:
@@ -382,7 +402,7 @@ class _FakeDashScopeTtsWs:
                     await self._incoming.put(chunk)
         elif action == "finish-task":
             self.finish_sent = True
-            await self._incoming.put(json.dumps({"header": {"action": "task-finished"}}))
+            await self._incoming.put(json.dumps({"header": {"event": "task-finished"}}))
 
     async def recv(self) -> str | bytes:
         return await self._incoming.get()
@@ -392,7 +412,7 @@ class _FakeDashScopeTtsWs:
             json.dumps(
                 {
                     "header": {
-                        "action": "task-failed",
+                        "event": "task-failed",
                         "error_code": code,
                         "error_message": message,
                     }
@@ -707,6 +727,31 @@ class TestDashScopeRealtimeSpeechProvider:
             "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com" "/api-ws/v1/inference"
         )
 
+    @pytest.mark.asyncio
+    async def test_recognizer_and_synthesizer_share_maas_origin_url(self):
+        base_url = "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com/"
+        with (
+            patch(
+                "fivccliche.services.implements.speech.dashscope_realtime.query_component",
+                return_value=_speech_config({}),
+            ),
+            patch(
+                "fivccliche.services.implements.speech.dashscope_realtime._DashScopeRealtimeRecognizer"
+            ) as recognizer_cls,
+            patch(
+                "fivccliche.services.implements.speech.dashscope_realtime._DashScopeTTSSynthesizer"
+            ) as synthesizer_cls,
+        ):
+            provider = DashScopeRealtimeSpeechProvider(MagicMock())
+            await provider.get_recognizer(base_url=base_url)
+            await provider.get_synthesizer(
+                SpeechSynthesisOptions(voice="Cherry"), base_url=base_url
+            )
+
+        expected_url = "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference"
+        assert recognizer_cls.call_args.kwargs["ws_url"] == expected_url
+        assert synthesizer_cls.call_args.kwargs["ws_url"] == expected_url
+
 
 class TestDashScopeTTS:
     @pytest.mark.asyncio
@@ -853,16 +898,22 @@ class TestDashScopeTTS:
 
     @pytest.mark.asyncio
     async def test_wraps_connection_failure(self):
-        async def connect(url: str, headers: dict[str, str]) -> None:
-            raise RuntimeError("connection refused")
-
         synthesizer = _DashScopeTTSSynthesizer(
             api_key="sk-test",
             model="qwen-audio-3.1-tts-flash",
             options=SpeechSynthesisOptions(voice="Cherry"),
-            connect=connect,
         )
-        with pytest.raises(SpeechRequestError, match="connection refused"):
+        with (
+            patch(
+                "websockets.connect",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("connection refused"),
+            ),
+            pytest.raises(
+                SpeechRequestError,
+                match=r"Failed to connect to DashScope \(wss://[^)]+\): connection refused",
+            ),
+        ):
             await synthesizer.__aenter__()
 
     @pytest.mark.asyncio

@@ -10,6 +10,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from typing import Any, Literal, Self
+from urllib.parse import urlsplit, urlunsplit
 
 from fivcglue import IComponentSite, query_component
 from fivcglue.interfaces import configs
@@ -30,7 +31,8 @@ from fivccliche.utils.types import to_string
 _logger = logging.getLogger(__name__)
 
 _DEFAULT_HTTP_ORIGIN = "https://dashscope.aliyuncs.com"
-_DEFAULT_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
+_INFERENCE_PATH = "/api-ws/v1/inference"
+_DEFAULT_WS_URL = "wss://dashscope.aliyuncs.com" + _INFERENCE_PATH
 _DEFAULT_BASE_URL = _DEFAULT_HTTP_ORIGIN
 _DEFAULT_MODEL = "qwen-audio-3.1-asr-flash-streaming"
 _TTS_DEFAULT_MODEL = "qwen-audio-3.1-tts-flash"
@@ -42,13 +44,19 @@ _ConnectFn = Callable[[str, dict[str, str]], Awaitable[Any]]
 
 def _websocket_url(base_url: str) -> str:
     """Resolve an HTTP or WebSocket origin to the DashScope inference URL."""
-    if base_url == _DEFAULT_HTTP_ORIGIN:
-        return _DEFAULT_WS_URL
-    if base_url.startswith(("ws://", "wss://")):
-        return base_url.rstrip("/")
+    parsed = urlsplit(base_url)
+    if parsed.scheme in {"ws", "wss"}:
+        if parsed.path in {"", "/"} and not parsed.query:
+            return urlunsplit((parsed.scheme, parsed.netloc, _INFERENCE_PATH, "", ""))
+        return base_url
 
-    ws_base = base_url.replace("https://", "wss://").replace("http://", "ws://")
-    return f"{ws_base}/api-ws/v1/inference"
+    if parsed.scheme in {"http", "https"}:
+        scheme = "ws" if parsed.scheme == "http" else "wss"
+        if parsed.path.rstrip("/") == _INFERENCE_PATH:
+            return urlunsplit((scheme, parsed.netloc, parsed.path, parsed.query, ""))
+        return urlunsplit((scheme, parsed.netloc, _INFERENCE_PATH, "", ""))
+
+    raise SpeechRequestError(f"Unsupported DashScope base URL: {base_url}")
 
 
 async def _connect_websockets(url: str, headers: dict[str, str]) -> Any:
@@ -60,7 +68,7 @@ async def _connect_websockets(url: str, headers: dict[str, str]) -> Any:
         except TypeError:
             return await websockets.connect(url, extra_headers=headers)
     except Exception as exc:
-        raise SpeechRequestError(f"Failed to connect to DashScope: {exc}") from exc
+        raise SpeechRequestError(f"Failed to connect to DashScope ({url}): {exc}") from exc
 
 
 def _tts_error_message(message: Any) -> str:
@@ -176,13 +184,13 @@ def _finish_frame(task_id: str) -> dict[str, Any]:
     }
 
 
-def _message_action(message: dict[str, Any]) -> str | None:
+def _message_discriminator(message: dict[str, Any]) -> str | None:
     header = message.get("header")
-    return header.get("action") if isinstance(header, dict) else None
+    return header.get("event") if isinstance(header, dict) else None
 
 
-def _message_event(message: dict[str, Any], action: str | None) -> SpeechEvent | None:
-    if action == "result-generated":
+def _message_event(message: dict[str, Any], discriminator: str | None) -> SpeechEvent | None:
+    if discriminator == "result-generated":
         payload = message.get("payload") or {}
         sentence = (payload.get("output") or {}).get("sentence") or {}
         if not isinstance(sentence, dict):
@@ -190,7 +198,7 @@ def _message_event(message: dict[str, Any], action: str | None) -> SpeechEvent |
         event_type: SpeechEventType = "final" if sentence.get("end_time") is not None else "partial"
         return SpeechEvent(type=event_type, text=str(sentence.get("text") or ""))
 
-    if action == "task-failed":
+    if discriminator == "task-failed":
         header = message.get("header") or {}
         code = header.get("error_code") or "task-failed"
         detail = header.get("error_message")
@@ -267,15 +275,17 @@ class _DashScopeRecognitionSocket:
             await self._send_json(_start_frame(self._model, self._options, self._task_id))
             while True:
                 message = await asyncio.wait_for(self._recv_json(), timeout=10)
-                action = _message_action(message)
-                if action == "task-started":
+                discriminator = _message_discriminator(message)
+                if discriminator == "task-started":
                     self._started = True
                     return
-                if action == "task-failed":
-                    event = _message_event(message, action)
+                if discriminator == "task-failed":
+                    event = _message_event(message, discriminator)
                     raise SpeechRequestError(event.message if event else "ASR task failed")
-                if action != "result-generated":
-                    raise SpeechRequestError(f"Unexpected ASR frame: {action or 'missing action'}")
+                if discriminator != "result-generated":
+                    raise SpeechRequestError(
+                        f"Unexpected ASR frame: {discriminator or 'missing event'}"
+                    )
         except Exception as exc:
             await self.close_async()
             if isinstance(exc, SpeechRequestError):
@@ -304,17 +314,19 @@ class _DashScopeRecognitionSocket:
                     return
                 raise
 
-            action = _message_action(message)
-            if action not in {"result-generated", "task-finished", "task-failed"}:
-                raise SpeechRequestError(f"Unexpected ASR frame: {action or 'missing action'}")
+            discriminator = _message_discriminator(message)
+            if discriminator not in {"result-generated", "task-finished", "task-failed"}:
+                raise SpeechRequestError(
+                    f"Unexpected ASR frame: {discriminator or 'missing event'}"
+                )
 
-            event = _message_event(message, action)
+            event = _message_event(message, discriminator)
             if event is not None:
                 saw_final = saw_final or event.type == "final"
                 yield event
-            if action == "task-failed":
+            if discriminator == "task-failed":
                 return
-            if action == "task-finished":
+            if discriminator == "task-finished":
                 if not saw_final:
                     yield SpeechEvent(type="final")
                 return
@@ -381,14 +393,16 @@ class _DashScopeTTSSocket:
             await self._send_json(_tts_start_frame(self._model, self._options, self._task_id))
             while True:
                 message = await asyncio.wait_for(self._recv_json(), timeout=10)
-                action = _message_action(message)
-                if action == "task-started":
+                discriminator = _message_discriminator(message)
+                if discriminator == "task-started":
                     self._started = True
                     return
-                if action == "task-failed":
+                if discriminator == "task-failed":
                     self._failed = True
                     raise SpeechRequestError(_tts_error_message(message))
-                raise SpeechRequestError(f"Unexpected TTS frame: {action or 'missing action'}")
+                raise SpeechRequestError(
+                    f"Unexpected TTS frame: {discriminator or 'missing event'}"
+                )
         except Exception as exc:
             await self.close_async()
             if isinstance(exc, SpeechRequestError):
@@ -570,15 +584,15 @@ class _DashScopeTTSSynthesizer(ISpeechSynthesizer):
                     message = json.loads(raw)
                     if not isinstance(message, dict):
                         raise SpeechRequestError("DashScope TTS received a non-object frame")
-                    action = _message_action(message)
-                    if action == "task-finished":
+                    discriminator = _message_discriminator(message)
+                    if discriminator == "task-finished":
                         return
-                    if action == "task-failed":
+                    if discriminator == "task-failed":
                         await socket.close_async(failed=True)
                         raise SpeechRequestError(_tts_error_message(message))
-                    if action not in {"result-generated", "task-started"}:
+                    if discriminator not in {"result-generated", "task-started"}:
                         raise SpeechRequestError(
-                            f"Unexpected TTS frame: {action or 'missing action'}"
+                            f"Unexpected TTS frame: {discriminator or 'missing event'}"
                         )
             finally:
                 if send_task is not None:
