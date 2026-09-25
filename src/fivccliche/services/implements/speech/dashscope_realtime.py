@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from typing import Any, Literal, Self
 from urllib.parse import urlsplit, urlunsplit
+from websockets.exceptions import InvalidStatus
 
 from fivcglue import IComponentSite, query_component
 from fivcglue.interfaces import configs
@@ -36,7 +37,7 @@ _DEFAULT_WS_URL = "wss://dashscope.aliyuncs.com" + _INFERENCE_PATH
 _DEFAULT_BASE_URL = _DEFAULT_HTTP_ORIGIN
 _DEFAULT_MODEL = "qwen-audio-3.1-asr-flash-streaming"
 _TTS_DEFAULT_MODEL = "qwen-audio-3.1-tts-flash"
-_TTS_DEFAULT_VOICE = "Cherry"
+_TTS_DEFAULT_VOICE = "longanhuan_v3.1"
 _AUDIO_CHUNK_SIZE = 12800
 
 _ConnectFn = Callable[[str, dict[str, str]], Awaitable[Any]]
@@ -59,6 +60,45 @@ def _websocket_url(base_url: str) -> str:
     raise SpeechRequestError(f"Unsupported DashScope base URL: {base_url}")
 
 
+def _websocket_headers(base_url: str, api_key: str) -> dict[str, str]:
+    resolved_api_key = api_key.strip()
+    if resolved_api_key.casefold().startswith("bearer "):
+        resolved_api_key = resolved_api_key[7:].strip()
+    if not resolved_api_key:
+        raise SpeechRequestError("DashScope API key is empty")
+
+    headers = {"Authorization": f"Bearer {resolved_api_key}"}
+    hostname = urlsplit(base_url).hostname or ""
+    labels = hostname.split(".")
+    if hostname.endswith(".maas.aliyuncs.com") and len(labels) >= 4:
+        headers["X-DashScope-WorkSpace"] = labels[0]
+    return headers
+
+
+def _handshake_detail(exc: InvalidStatus) -> str:
+    response = exc.response
+    body = getattr(response, "body", b"")
+    detail = bytes(body).decode("utf-8", errors="replace").strip() if body else ""
+    parsed: Any = None
+    if detail:
+        try:
+            parsed = json.loads(detail)
+        except json.JSONDecodeError:
+            pass
+
+    if isinstance(parsed, dict):
+        code = parsed.get("code") or parsed.get("error_code")
+        message = parsed.get("message") or parsed.get("error_message")
+        if code and message:
+            return f"HTTP {response.status_code} {code}: {message}"
+        if message:
+            return f"HTTP {response.status_code}: {message}"
+
+    reason = getattr(response, "reason_phrase", "")
+    suffix = detail or reason or str(exc)
+    return f"HTTP {response.status_code}: {suffix}"
+
+
 async def _connect_websockets(url: str, headers: dict[str, str]) -> Any:
     import websockets
 
@@ -67,6 +107,10 @@ async def _connect_websockets(url: str, headers: dict[str, str]) -> Any:
             return await websockets.connect(url, additional_headers=headers)
         except TypeError:
             return await websockets.connect(url, extra_headers=headers)
+    except InvalidStatus as exc:
+        raise SpeechRequestError(
+            f"Failed to connect to DashScope ({url}): {_handshake_detail(exc)}"
+        ) from exc
     except Exception as exc:
         raise SpeechRequestError(f"Failed to connect to DashScope ({url}): {exc}") from exc
 
@@ -487,7 +531,7 @@ class _DashScopeRealtimeRecognizer(ISpeechRecognizer):
         self._socket = _DashScopeRecognitionSocket(
             url=self._ws_url,
             model=self._model,
-            headers={"Authorization": f"Bearer {self._api_key}"},
+            headers=_websocket_headers(self._ws_url, self._api_key),
             options=self._options,
             connect=self._connect,
         )
@@ -549,10 +593,15 @@ class _DashScopeTTSSynthesizer(ISpeechSynthesizer):
         self._stream_lock = asyncio.Lock()
 
     async def __aenter__(self) -> Self:
+        voice = self._options.voice
+        if self._model.startswith("qwen-audio-3.1-tts-") and voice == "Cherry":
+            raise SpeechRequestError(
+                f"voice {voice} is not supported by {self._model}; " f"use {_TTS_DEFAULT_VOICE}"
+            )
         self._socket = _DashScopeTTSSocket(
             url=self._ws_url,
             model=self._model,
-            headers={"Authorization": f"Bearer {self._api_key}"},
+            headers=_websocket_headers(self._ws_url, self._api_key),
             options=self._options,
             connect=self._connect,
         )

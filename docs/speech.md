@@ -124,18 +124,30 @@ data: {"event": "error", "info": {"message": "..."}}
 Missing config is 404; missing provider is 503. Recognition failures after the
 stream starts are SSE `error` events (HTTP 200), not 400.
 
+DashScope WebSocket requests send one instance-specific Bearer API key. For a
+MaaS host shaped `<workspace>.<region>.maas.aliyuncs.com`, they also send
+`X-DashScope-WorkSpace: <workspace>`. The public `dashscope.aliyuncs.com`
+endpoint does not receive a workspace header. Handshake failures include the
+DashScope response body when the gateway supplies one; API keys are never
+included. A 403 normally means the key was recognized but the workspace, model,
+or region is not authorized—verify those account settings before changing the
+URL.
+
 `dashscope_tts` uses the DashScope TTS WebSocket protocol and defaults to
 `qwen-audio-3.1-tts-flash`. It converts an HTTP base URL to
 `wss://.../api-ws/v1/inference` using the same rule as realtime ASR. A complete
 string is submitted in one synthesis turn; string chunks are streamed and
 finished with `finish-task`.
+`qwen-audio-3.1-tts-flash` defaults to `longanhuan_v3.1`; `Cherry` is not
+compatible with this model and is rejected before opening a synthesis task.
 
 TTS is exposed through [`UserTTS`](../src/fivccliche/modules/agent_configs/models.py)
 (`POST /api/configs/tts/`). Persisted fields are `id`, `description`, `model`,
 `base_url`, `api_key`, and `model_type`; `model_type` is always
 `dashscope_tts` in this phase. Voice and audio-quality parameters stay in the
-probe request. `POST /api/configs/tts/{config_uuid}/probe/` accepts `text`,
-`voice`, and optional audio options, then emits Base64 audio chunks as SSE:
+probe request. `POST /api/configs/tts/{config_uuid}/probe/` accepts `text` and
+optional `voice` / audio options; voice defaults to `longanhuan_v3.1`. Probe
+audio is emitted as Base64 SSE:
 
 ```
 data: {"event": "audio", "info": {"data_b64": "..."}}

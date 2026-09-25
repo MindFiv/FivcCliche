@@ -862,7 +862,7 @@ class TestTTSConfigAPI:
             response = client.post(
                 f"/configs/tts/{config_uuid}/probe/",
                 headers=headers,
-                json={"text": "你好", "voice": "Cherry", "volume": 70},
+                json={"text": "你好", "volume": 70},
             )
 
         assert response.status_code == 200
@@ -876,9 +876,9 @@ class TestTTSConfigAPI:
         assert captured["kwargs"]["api_key"] == "sk-probe"
         assert captured["kwargs"]["model"] == "qwen-audio-3.1-tts-flash"
         assert captured["kwargs"]["base_url"] == "https://dashscope.aliyuncs.com"
-        assert captured["options"] == SpeechSynthesisOptions(voice="Cherry", volume=70)
+        assert captured["options"] == SpeechSynthesisOptions(voice="longanhuan_v3.1", volume=70)
 
-    def test_probe_tts_config_requires_text_and_voice(
+    def test_probe_tts_config_requires_text(
         self,
         client: TestClient,
         auth_token: str,
@@ -897,15 +897,9 @@ class TestTTSConfigAPI:
         missing = client.post(
             f"/configs/tts/{config_uuid}/probe/",
             headers=headers,
-            json={"voice": "Cherry"},
-        )
-        no_voice = client.post(
-            f"/configs/tts/{config_uuid}/probe/",
-            headers=headers,
-            json={"text": "hello"},
+            json={"voice": "longanhuan_v3.1"},
         )
         assert missing.status_code == 422
-        assert no_voice.status_code == 422
 
     def test_probe_tts_config_not_found_and_provider_missing(
         self,
@@ -916,7 +910,7 @@ class TestTTSConfigAPI:
         response = client.post(
             "/configs/tts/missing/probe/",
             headers=headers,
-            json={"text": "hello", "voice": "Cherry"},
+            json={"text": "hello", "voice": "longanhuan_v3.1"},
         )
         assert response.status_code == 404
 
@@ -937,7 +931,7 @@ class TestTTSConfigAPI:
             response = client.post(
                 f"/configs/tts/{config_uuid}/probe/",
                 headers=headers,
-                json={"text": "hello", "voice": "Cherry"},
+                json={"text": "hello", "voice": "longanhuan_v3.1"},
             )
         assert response.status_code == 503
 
@@ -975,7 +969,7 @@ class TestTTSConfigAPI:
             response = client.post(
                 f"/configs/tts/{config_uuid}/probe/",
                 headers=headers,
-                json={"text": "hello", "voice": "Cherry"},
+                json={"text": "hello", "voice": "longanhuan_v3.1"},
             )
 
         assert response.status_code == 200

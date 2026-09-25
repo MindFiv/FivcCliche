@@ -126,7 +126,10 @@ class UserTTSProbeRequest(BaseModel):
     """Request body for synthesizing a short probe with a TTS config."""
 
     text: str = Field(..., min_length=1, description="Text to synthesize")
-    voice: str = Field(..., description="Vendor voice name")
+    voice: str = Field(
+        default="longanhuan_v3.1",
+        description="Vendor voice name compatible with the selected model",
+    )
     format: str = Field(default="mp3", description="Audio encoding, such as mp3, wav, or pcm")
     sample_rate: int = Field(default=22050, ge=8000, le=48000, description="Audio sample rate")
     volume: int = Field(default=50, ge=0, le=100, description="Volume")

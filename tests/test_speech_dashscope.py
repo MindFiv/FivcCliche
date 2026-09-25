@@ -8,6 +8,10 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from websockets.datastructures import Headers
+from websockets.exceptions import InvalidStatus
+from websockets.http11 import Response
+
 import pytest
 
 from fivccliche.services.implements.speech.dashscope import (
@@ -16,7 +20,10 @@ from fivccliche.services.implements.speech.dashscope import (
     DashScopeSpeechProvider,
 )
 from fivccliche.services.implements.speech.dashscope_realtime import (
+    _connect_websockets,
+    _tts_start_frame,
     _websocket_url,
+    _websocket_headers,
     _DashScopeRealtimeRecognizer,
     DashScopeRealtimeSpeechProvider,
 )
@@ -369,6 +376,100 @@ class TestWebSocketUrl:
     )
     def test_normalizes_dashscope_base_url(self, base_url: str, expected_url: str):
         assert _websocket_url(base_url) == expected_url
+
+
+class TestWebSocketHandshake:
+    @pytest.mark.asyncio
+    async def test_realtime_sends_maas_workspace_and_clean_api_key(self):
+        fake_ws = _FakeDashScopeWs()
+        connections: list[tuple[str, dict[str, str]]] = []
+
+        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeWs:
+            connections.append((url, headers))
+            return fake_ws
+
+        recognizer = _DashScopeRealtimeRecognizer(
+            api_key=" Bearer sk-test \n",
+            ws_url=(
+                "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com" "/api-ws/v1/inference"
+            ),
+            connect=connect,
+            options=SpeechRecognizeOptions(format="pcm"),
+        )
+        async with recognizer:
+            pass
+
+        assert connections == [
+            (
+                "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference",
+                {
+                    "Authorization": "Bearer sk-test",
+                    "X-DashScope-WorkSpace": "llm-pbm19qg9671grxpg",
+                },
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_synthesizer_sends_maas_workspace_and_clean_api_key(self):
+        fake_ws = _FakeDashScopeTtsWs()
+        connections: list[tuple[str, dict[str, str]]] = []
+
+        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeTtsWs:
+            connections.append((url, headers))
+            return fake_ws
+
+        synthesizer = _DashScopeTTSSynthesizer(
+            api_key=" Bearer sk-test \n",
+            ws_url=(
+                "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com" "/api-ws/v1/inference"
+            ),
+            options=SpeechSynthesisOptions(voice="longanhuan_v3.1"),
+            connect=connect,
+        )
+        async with synthesizer:
+            pass
+
+        assert connections == [
+            (
+                "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference",
+                {
+                    "Authorization": "Bearer sk-test",
+                    "X-DashScope-WorkSpace": "llm-pbm19qg9671grxpg",
+                },
+            )
+        ]
+
+    def test_public_dashscope_url_has_no_workspace_header(self):
+        headers = _websocket_headers("wss://dashscope.aliyuncs.com/api-ws/v1/inference", "sk-test")
+        assert headers == {"Authorization": "Bearer sk-test"}
+
+    @pytest.mark.asyncio
+    async def test_connection_failure_includes_dashscope_response_body(self):
+        response = Response(
+            403,
+            "Forbidden",
+            Headers(),
+            body=(
+                b'{"code":"AccessDenied","message":"The model is not authorized.",'
+                b'"request_id":"req-403"}'
+            ),
+        )
+        url = "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com" "/api-ws/v1/inference"
+        with (
+            patch(
+                "websockets.connect",
+                new_callable=AsyncMock,
+                side_effect=InvalidStatus(response),
+            ),
+            pytest.raises(
+                SpeechRequestError,
+                match=(
+                    rf"Failed to connect to DashScope \({url}\): "
+                    r"HTTP 403 AccessDenied: The model is not authorized."
+                ),
+            ),
+        ):
+            await _connect_websockets(url, {"Authorization": "Bearer sk-test"})
 
 
 def _sentence(text: str, *, end_time: int | None = None) -> dict:
@@ -745,7 +846,7 @@ class TestDashScopeRealtimeSpeechProvider:
             provider = DashScopeRealtimeSpeechProvider(MagicMock())
             await provider.get_recognizer(base_url=base_url)
             await provider.get_synthesizer(
-                SpeechSynthesisOptions(voice="Cherry"), base_url=base_url
+                SpeechSynthesisOptions(voice="longanhuan_v3.1"), base_url=base_url
             )
 
         expected_url = "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference"
@@ -771,6 +872,48 @@ class TestDashScopeTTS:
         assert synthesizer_cls.call_args.kwargs["options"] is None
 
     @pytest.mark.asyncio
+    async def test_synthesizer_defaults_to_compatible_voice(self):
+        fake_ws = _FakeDashScopeTtsWs()
+
+        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeTtsWs:
+            return fake_ws
+
+        synthesizer = _DashScopeTTSSynthesizer(
+            api_key="sk-test",
+            model="qwen-audio-3.1-tts-flash",
+            options=None,
+            connect=connect,
+        )
+        async with synthesizer:
+            assert synthesizer._options.voice == "longanhuan_v3.1"
+
+    def test_default_voice_is_compatible_with_qwen_audio_tts(self):
+        options = SpeechSynthesisOptions(voice="longanhuan_v3.1")
+        frame = _tts_start_frame("qwen-audio-3.1-tts-flash", options, "task-id")
+
+        assert frame["payload"]["parameters"]["voice"] == "longanhuan_v3.1"
+
+    @pytest.mark.asyncio
+    async def test_rejects_cherry_for_qwen_audio_tts_without_connecting(self):
+        async def connect(url: str, headers: dict[str, str]) -> None:
+            raise AssertionError("incompatible voice must not open a WebSocket")
+
+        synthesizer = _DashScopeTTSSynthesizer(
+            api_key="sk-test",
+            model="qwen-audio-3.1-tts-flash",
+            options=SpeechSynthesisOptions(voice="Cherry"),
+            connect=connect,
+        )
+        with pytest.raises(
+            SpeechRequestError,
+            match=(
+                r"voice Cherry is not supported by qwen-audio-3\.1-tts-flash; "
+                r"use longanhuan_v3\.1"
+            ),
+        ):
+            await synthesizer.__aenter__()
+
+    @pytest.mark.asyncio
     async def test_starts_native_websocket_tts_task(self):
         fake_ws = _FakeDashScopeTtsWs()
 
@@ -780,7 +923,7 @@ class TestDashScopeTTS:
             return fake_ws
 
         options = SpeechSynthesisOptions(
-            voice="Cherry",
+            voice="longanhuan_v3.1",
             format="wav",
             sample_rate=24000,
             volume=70,
@@ -807,7 +950,7 @@ class TestDashScopeTTS:
         assert start["payload"]["function"] == "SpeechSynthesizer"
         assert start["payload"]["input"] == {}
         assert start["payload"]["parameters"] == {
-            "voice": "Cherry",
+            "voice": "longanhuan_v3.1",
             "volume": 70,
             "text_type": "PlainText",
             "sample_rate": 24000,
@@ -834,7 +977,7 @@ class TestDashScopeTTS:
             api_key="sk-test",
             model="qwen-audio-3.1-tts-flash",
             ws_url="wss://dashscope.aliyuncs.com/api-ws/v1/inference",
-            options=SpeechSynthesisOptions(voice="Cherry"),
+            options=SpeechSynthesisOptions(voice="longanhuan_v3.1"),
             connect=connect,
         )
 
@@ -862,7 +1005,7 @@ class TestDashScopeTTS:
         synthesizer = _DashScopeTTSSynthesizer(
             api_key="sk-test",
             model="qwen-audio-3.1-tts-flash",
-            options=SpeechSynthesisOptions(voice="Cherry"),
+            options=SpeechSynthesisOptions(voice="longanhuan_v3.1"),
             connect=connect,
         )
 
@@ -887,7 +1030,7 @@ class TestDashScopeTTS:
         synthesizer = _DashScopeTTSSynthesizer(
             api_key="sk-test",
             model="qwen-audio-3.1-tts-flash",
-            options=SpeechSynthesisOptions(voice="Cherry"),
+            options=SpeechSynthesisOptions(voice="longanhuan_v3.1"),
             connect=connect,
         )
         async with synthesizer:
@@ -901,7 +1044,7 @@ class TestDashScopeTTS:
         synthesizer = _DashScopeTTSSynthesizer(
             api_key="sk-test",
             model="qwen-audio-3.1-tts-flash",
-            options=SpeechSynthesisOptions(voice="Cherry"),
+            options=SpeechSynthesisOptions(voice="longanhuan_v3.1"),
         )
         with (
             patch(
@@ -918,7 +1061,7 @@ class TestDashScopeTTS:
 
     @pytest.mark.asyncio
     async def test_get_synthesizer_uses_tts_defaults_and_overrides(self):
-        options = SpeechSynthesisOptions(voice="Cherry")
+        options = SpeechSynthesisOptions(voice="longanhuan_v3.1")
         with (
             patch(
                 "fivccliche.services.implements.speech.dashscope_realtime.query_component",
@@ -1130,7 +1273,7 @@ class TestDashScopeConcurrency:
 
             return _DashScopeTTSSynthesizer(
                 api_key=api_key,
-                options=SpeechSynthesisOptions(voice="Cherry"),
+                options=SpeechSynthesisOptions(voice="longanhuan_v3.1"),
                 connect=connect,
             )
 
