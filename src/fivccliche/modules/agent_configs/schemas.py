@@ -127,11 +127,11 @@ class UserTTSProbeRequest(BaseModel):
 
     text: str = Field(..., min_length=1, description="Text to synthesize")
     voice: str = Field(
-        default="longanhuan_v3.1",
+        default="Cherry",
         description="Vendor voice name compatible with the selected model",
     )
-    format: str = Field(default="mp3", description="Audio encoding, such as mp3, wav, or pcm")
-    sample_rate: int = Field(default=22050, ge=8000, le=48000, description="Audio sample rate")
+    format: str = Field(default="pcm", description="Audio encoding, such as pcm, wav, or mp3")
+    sample_rate: int = Field(default=24000, ge=8000, le=48000, description="Audio sample rate")
     volume: int = Field(default=50, ge=0, le=100, description="Volume")
     speech_rate: float = Field(default=1.0, ge=0.5, le=2.0, description="Speech rate")
     pitch_rate: float = Field(default=1.0, ge=0.5, le=2.0, description="Pitch rate")

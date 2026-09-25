@@ -21,7 +21,7 @@ The synchronous `dashscope` provider supports:
 
 - `qwen3-asr-flash` using DashScope multimodal `asr_options`
 - `qwen-audio-3.0-asr-flash` using its native `input_audio` request and
-  `parameters.format`; context, hotwords, language, and ITN options are not
+  `parameters.format` / `parameters.sample_rate`; context, hotwords, language, and ITN options are not
   sent for this protocol
 
 The `dashscope_realtime` provider currently supports the DashScope Recognition
@@ -133,21 +133,28 @@ body when the gateway supplies one; API keys are never included. A 403 with
 model access—verify the workspace ID in the host, key membership, and model
 authorization.
 
-`dashscope_tts` uses the DashScope TTS WebSocket protocol and defaults to
-`qwen-audio-3.1-tts-flash`. It converts an HTTP base URL to
-`wss://.../api-ws/v1/inference` using the same rule as realtime ASR. A complete
-string is submitted in one synthesis turn; string chunks are streamed and
-finished with `finish-task`.
-`qwen-audio-3.1-tts-flash` defaults to `longanhuan_v3.1`; `Cherry` is not
-compatible with this model and is rejected before opening a synthesis task.
+`dashscope_tts` defaults to `qwen-tts-realtime`, which uses DashScope's
+Qwen-TTS Realtime event protocol at `wss://.../api-ws/v1/realtime`. The
+provider adds `?model=<model>` to an HTTP origin or origin-only WebSocket URL,
+keeps a model already present in a complete URL, and sends `session.update`,
+`input_text_buffer.append`, `input_text_buffer.commit`, and `session.finish`.
+Qwen-TTS Realtime has no MaaS inference endpoint; a MaaS base URL is routed to
+the fixed public DashScope endpoint.
+Its supported output formats are `pcm`, `wav`, `mp3`, and `opus`; PCM is the
+default and the sample rate must be 24000. The default voice is `Cherry`.
+
+Other DashScope models such as `qwen-audio-3.1-tts-flash` continue to use the
+`wss://.../api-ws/v1/inference` task protocol and `finish-task`. That model
+requires `longanhuan_v3.1`; `Cherry` is rejected before opening a synthesis
+task.
 
 TTS is exposed through [`UserTTS`](../src/fivccliche/modules/agent_configs/models.py)
 (`POST /api/configs/tts/`). Persisted fields are `id`, `description`, `model`,
 `base_url`, `api_key`, and `model_type`; `model_type` is always
 `dashscope_tts` in this phase. Voice and audio-quality parameters stay in the
 probe request. `POST /api/configs/tts/{config_uuid}/probe/` accepts `text` and
-optional `voice` / audio options; voice defaults to `longanhuan_v3.1`. Probe
-audio is emitted as Base64 SSE:
+optional `voice` / audio options; defaults are `Cherry`, PCM, and 24000 Hz.
+Probe audio is emitted as Base64 SSE:
 
 ```
 data: {"event": "audio", "info": {"data_b64": "..."}}
@@ -184,7 +191,7 @@ supply an override:
 {
   "SPEECH": {
     "TTS_API_KEY": "sk-...",
-    "TTS_MODEL": "qwen-audio-3.1-tts-flash",
+    "TTS_MODEL": "qwen-tts-realtime",
     "TTS_BASE_URL": "https://dashscope.aliyuncs.com"
   }
 }
@@ -193,8 +200,8 @@ supply an override:
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `TTS_API_KEY` | empty | DashScope API key |
-| `TTS_MODEL` | `qwen-audio-3.1-tts-flash` | DashScope TTS model id |
-| `TTS_BASE_URL` | `https://dashscope.aliyuncs.com` | HTTP origin or complete `ws://` / `wss://` inference endpoint; an HTTP origin derives `wss://.../api-ws/v1/inference` |
+| `TTS_MODEL` | `qwen-tts-realtime` | DashScope TTS model id |
+| `TTS_BASE_URL` | `https://dashscope.aliyuncs.com` | HTTP origin or complete `ws://` / `wss://` endpoint; Qwen-TTS Realtime derives `wss://.../api-ws/v1/realtime`, while other models derive `wss://.../api-ws/v1/inference` |
 
 For tests, instantiate `FakeSpeechProvider(transcript="...")` directly.
 

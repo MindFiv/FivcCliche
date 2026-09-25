@@ -127,7 +127,7 @@ def _qwen_audio_request(model: str, audio: SpeechAudioInput) -> dict[str, Any]:
                 }
             ]
         },
-        "parameters": {"format": audio.format.lower()},
+        "parameters": {"format": audio.format.lower(), "sample_rate": audio.sample_rate},
     }
 
 
@@ -191,6 +191,7 @@ class _DashScopeMultimodalRecognizer(ISpeechRecognizer):
             SpeechAudioInput(
                 data_b64=base64.b64encode(bytes(buffer)).decode("ascii"),
                 format=audio_format,
+                sample_rate=self._options.sample_rate if self._options is not None else 16000,
             )
         )
 

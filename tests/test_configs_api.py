@@ -876,7 +876,12 @@ class TestTTSConfigAPI:
         assert captured["kwargs"]["api_key"] == "sk-probe"
         assert captured["kwargs"]["model"] == "qwen-audio-3.1-tts-flash"
         assert captured["kwargs"]["base_url"] == "https://dashscope.aliyuncs.com"
-        assert captured["options"] == SpeechSynthesisOptions(voice="longanhuan_v3.1", volume=70)
+        assert captured["options"] == SpeechSynthesisOptions(
+            voice="Cherry",
+            format="pcm",
+            sample_rate=24000,
+            volume=70,
+        )
 
     def test_probe_tts_config_requires_text(
         self,
