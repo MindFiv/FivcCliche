@@ -108,9 +108,9 @@ class UserTTSSchema(BaseModel):
     model: str = Field(..., description="TTS model name")
     base_url: str | None = Field(default=None, description="TTS base URL")
     api_key: str | None = Field(default=None, exclude=True)
-    model_type: Literal["dashscope_tts"] = Field(
-        default="dashscope_tts",
-        description="ISpeechProvider name (dashscope_tts)",
+    model_type: Literal["dashscope", "dashscope_realtime"] = Field(
+        default="dashscope",
+        description="ISpeechProvider name (dashscope or dashscope_realtime)",
     )
     uuid: str | None = Field(default=None, description="TTS config UUID (globally unique)")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
@@ -126,10 +126,7 @@ class UserTTSProbeRequest(BaseModel):
     """Request body for synthesizing a short probe with a TTS config."""
 
     text: str = Field(..., min_length=1, description="Text to synthesize")
-    voice: str = Field(
-        default="Cherry",
-        description="Vendor voice name compatible with the selected model",
-    )
+    voice: str = Field(default="", description="Vendor voice name; empty selects a model default")
     format: str = Field(default="pcm", description="Audio encoding, such as pcm, wav, or mp3")
     sample_rate: int = Field(default=24000, ge=8000, le=48000, description="Audio sample rate")
     volume: int = Field(default=50, ge=0, le=100, description="Volume")

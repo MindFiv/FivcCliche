@@ -51,7 +51,7 @@ Key interfaces (in `src/fivccliche/services/interfaces/`):
 - `IUserConfigProvider` → `UserConfigProviderImpl` — LLM/embedding/tool/agent config repos
 - `IUserChatProvider` → `UserChatProviderImpl` — conversation repos and chat context
 - `IUserMemoryProvider` → optional `UserMemoryProviderImpl` (Hindsight; requires separate `hindsight-client`)
-- `ISpeechProvider` → named DashScope providers `dashscope` (Flash), `dashscope_realtime`, and `dashscope_tts` (`get_speech_provider_async(name=...)` → recognizer/synthesizer). Chat audio uses `UserASR.model_type` as `name`; TTS probes use `UserTTS.model_type`.
+- `ISpeechProvider` → named DashScope providers `dashscope` (native HTTP) and `dashscope_realtime` (`get_speech_provider_async(name=...)` → recognizer/synthesizer). Chat audio uses `UserASR.model_type` as `name`; TTS probes use `UserTTS.model_type`.
 - `IModule` / `IModuleSite` → module registration and FastAPI app mounting
 
 ### Module Pattern

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import cast
 
 import typer
+from sqlalchemy import text
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -39,6 +40,10 @@ jobs_cli = typer.Typer(
 cli.add_typer(jobs_cli, name="jobs")
 
 console = Console()
+
+_LEGACY_TTS_PROVIDER_SQL = text(
+    "UPDATE user_tts SET model_type = 'dashscope_realtime' WHERE model_type = 'dashscope_tts'"
+)
 
 modules = query_component(cast(IComponentSite, service_site), IModuleSite)
 
@@ -235,6 +240,7 @@ async def _migrate_async() -> None:
         # Create all database tables
         async with db_service.get_engine().begin() as conn:
             await conn.run_sync(db_service.get_metadata().create_all)
+            await conn.execute(_LEGACY_TTS_PROVIDER_SQL)
 
         console.print("\n" + "=" * 60)
         console.print("[bold green]✅ Database tables created successfully![/bold green]")

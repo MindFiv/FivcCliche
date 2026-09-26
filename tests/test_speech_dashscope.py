@@ -17,7 +17,14 @@ import pytest
 
 from fivccliche.services.implements.speech.dashscope import (
     _DEFAULT_GENERATION_URL,
+    _QWEN_AUDIO_TTS_MODELS,
+    _QWEN_AUDIO_TTS_PATH,
     _DashScopeMultimodalRecognizer,
+    _DashScopeQwenAudioTTSSynthesizer,
+    _qwen_audio_tts_request,
+    _qwen_audio_tts_url,
+    _qwen_audio_tts_voice,
+    _TTS_DEFAULT_MODEL,
     DashScopeSpeechProvider,
 )
 from fivccliche.services.implements.speech.dashscope_realtime import (
@@ -304,6 +311,195 @@ class TestDashScopeQwenAudioRecognizer:
         payload = http_client.post.call_args.kwargs["json"]
         assert payload["parameters"] == {"format": "pcm", "sample_rate": 24000}
         assert events == [SpeechEvent(type="final", text="audio", language=None)]
+
+
+def _json_response(payload: Any | None = None, *, status_code: int = 200) -> MagicMock:
+    response = MagicMock()
+    response.is_success = status_code < 400
+    response.status_code = status_code
+    response.text = "vendor-error"
+    if payload is None:
+        response.json.side_effect = ValueError("invalid json")
+    else:
+        response.json.return_value = payload
+    return response
+
+
+class TestDashScopeQwenAudioTTS:
+    @pytest.mark.parametrize(
+        ("base_url", "expected_url"),
+        [
+            (
+                "https://dashscope.aliyuncs.com",
+                "https://dashscope.aliyuncs.com" + _QWEN_AUDIO_TTS_PATH,
+            ),
+            (
+                "https://dashscope.aliyuncs.com" + _QWEN_AUDIO_TTS_PATH,
+                "https://dashscope.aliyuncs.com" + _QWEN_AUDIO_TTS_PATH,
+            ),
+            (
+                "wss://llm-workspace.cn-beijing.maas.aliyuncs.com/",
+                "https://llm-workspace.cn-beijing.maas.aliyuncs.com" + _QWEN_AUDIO_TTS_PATH,
+            ),
+        ],
+    )
+    def test_normalizes_http_tts_url(self, base_url: str, expected_url: str):
+        assert _qwen_audio_tts_url(base_url) == expected_url
+
+    @pytest.mark.parametrize(
+        ("model", "expected_voice"),
+        [
+            ("qwen-audio-3.1-tts-flash", "longanhuan_v3.1"),
+            ("qwen-audio-3.0-tts-flash", "longanhuan_v3.6"),
+            ("qwen-audio-3.0-tts-plus", "longanhuan_v3.6"),
+        ],
+    )
+    def test_selects_model_family_voice(self, model: str, expected_voice: str):
+        assert _qwen_audio_tts_voice(model, "") == expected_voice
+        assert _qwen_audio_tts_voice(model, "custom-voice") == "custom-voice"
+
+    def test_builds_qwen_audio_tts_request(self):
+        options = SpeechSynthesisOptions(
+            voice="custom-voice",
+            format="WAV",
+            sample_rate=24000,
+            volume=70,
+            speech_rate=1.2,
+            pitch_rate=0.9,
+            extra={"seed": 7},
+        )
+        assert _qwen_audio_tts_request("qwen-audio-3.0-tts-flash", "你好", options) == {
+            "model": "qwen-audio-3.0-tts-flash",
+            "input": {
+                "seed": 7,
+                "text": "你好",
+                "voice": "custom-voice",
+                "format": "wav",
+                "sample_rate": 24000,
+                "volume": 70,
+                "rate": 1.2,
+                "pitch": 0.9,
+            },
+        }
+
+    def test_rejects_models_outside_qwen_audio_http_family(self):
+        for model in {
+            "qwen-tts-realtime",
+            "cosyvoice-v2",
+            "qwen3-tts-flash-realtime",
+        } - _QWEN_AUDIO_TTS_MODELS:
+            with pytest.raises(SpeechRequestError, match="not supported"):
+                _DashScopeQwenAudioTTSSynthesizer(api_key="sk-test", model=model)
+
+    @pytest.mark.asyncio
+    async def test_synthesizes_and_downloads_audio_in_chunks(self):
+        audio = b"a" * 12800 + b"end"
+        http_client = MagicMock()
+        http_client.post = AsyncMock(
+            return_value=_json_response({"output": {"audio": {"url": "https://audio/a.wav"}}})
+        )
+        audio_response = MagicMock()
+        audio_response.is_success = True
+        audio_response.content = audio
+        http_client.get = AsyncMock(return_value=audio_response)
+        synthesizer = _DashScopeQwenAudioTTSSynthesizer(
+            api_key="sk-test",
+            model="qwen-audio-3.0-tts-flash",
+            base_url=_qwen_audio_tts_url("https://example.com"),
+            http_client=http_client,
+            options=SpeechSynthesisOptions(voice="", format="wav", sample_rate=24000),
+        )
+
+        async with synthesizer:
+            chunks = await _collect_bytes(synthesizer, "你好")
+
+        assert chunks == [b"a" * 12800, b"end"]
+        args, kwargs = http_client.post.call_args
+        assert args[0] == "https://example.com" + _QWEN_AUDIO_TTS_PATH
+        assert kwargs["headers"]["Authorization"] == "Bearer sk-test"
+        assert kwargs["json"]["input"]["voice"] == "longanhuan_v3.6"
+        http_client.get.assert_awaited_once_with("https://audio/a.wav")
+
+    @pytest.mark.asyncio
+    async def test_synthesizes_streamed_text(self):
+        http_client = MagicMock()
+        http_client.post = AsyncMock(
+            return_value=_json_response({"output": {"audio": {"url": "https://audio/a.wav"}}})
+        )
+        audio_response = MagicMock()
+        audio_response.is_success = True
+        audio_response.content = b"audio"
+        http_client.get = AsyncMock(return_value=audio_response)
+        synthesizer = _DashScopeQwenAudioTTSSynthesizer(
+            api_key="sk-test",
+            http_client=http_client,
+            options=SpeechSynthesisOptions(voice="voice"),
+        )
+
+        async def text():
+            yield "你好"
+            yield "世界"
+
+        async with synthesizer:
+            chunks = await _collect_bytes(synthesizer, text())
+
+        assert chunks == [b"audio"]
+        assert http_client.post.call_args.kwargs["json"]["input"]["text"] == "你好世界"
+
+    @pytest.mark.asyncio
+    async def test_wraps_http_json_and_download_failures(self):
+        audio_response = MagicMock()
+        audio_response.is_success = False
+        audio_response.status_code = 403
+
+        cases = [
+            ("request failed", RuntimeError("connection refused"), None),
+            ("TTS HTTP 401", _json_response(status_code=401), None),
+            ("invalid JSON", _json_response(), None),
+            ("missing audio URL", _json_response({"output": {}}), None),
+            (
+                "Failed to download DashScope TTS audio: dns",
+                _json_response({"output": {"audio": {"url": "https://audio/a.wav"}}}),
+                RuntimeError("dns"),
+            ),
+            (
+                "download DashScope TTS audio HTTP 403",
+                _json_response({"output": {"audio": {"url": "https://audio/a.wav"}}}),
+                audio_response,
+            ),
+        ]
+        for message, post_response, download_response in cases:
+            http_client = MagicMock()
+            http_client.post = (
+                AsyncMock(side_effect=post_response)
+                if isinstance(post_response, Exception)
+                else AsyncMock(return_value=post_response)
+            )
+            if download_response is not None:
+                http_client.get = (
+                    AsyncMock(side_effect=download_response)
+                    if isinstance(download_response, Exception)
+                    else AsyncMock(return_value=download_response)
+                )
+            synthesizer = _DashScopeQwenAudioTTSSynthesizer(
+                api_key="sk-test",
+                http_client=http_client,
+                options=SpeechSynthesisOptions(voice="voice"),
+            )
+            async with synthesizer:
+                with pytest.raises(SpeechRequestError, match=message.replace("?", "\\?")):
+                    await _collect_bytes(synthesizer, "hello")
+
+    @pytest.mark.asyncio
+    async def test_owned_http_client_closes_on_exit(self):
+        synthesizer = _DashScopeQwenAudioTTSSynthesizer(
+            api_key="sk-test",
+            options=SpeechSynthesisOptions(voice="voice"),
+        )
+        async with synthesizer:
+            assert synthesizer._http_client is not None
+            owned_client = synthesizer._http_client
+        assert owned_client.is_closed
 
 
 class _FakeDashScopeWs:
@@ -834,6 +1030,51 @@ class TestDashScopeSpeechProvider:
             await provider.get_recognizer(api_key="")
 
         assert clip_cls.call_args.kwargs["api_key"] == ""
+
+    @pytest.mark.asyncio
+    async def test_get_synthesizer_uses_tts_defaults_and_overrides(self):
+        options = SpeechSynthesisOptions(voice="", format="wav", sample_rate=24000)
+        with (
+            patch(
+                "fivccliche.services.implements.speech.dashscope.query_component",
+                return_value=_speech_config({"TTS_API_KEY": "sk-x"}),
+            ),
+            patch(
+                "fivccliche.services.implements.speech.dashscope._DashScopeQwenAudioTTSSynthesizer",
+            ) as synthesizer_cls,
+        ):
+            provider = DashScopeSpeechProvider(MagicMock())
+            await provider.get_synthesizer(options)
+
+        assert synthesizer_cls.call_args.kwargs["api_key"] == "sk-x"
+        assert synthesizer_cls.call_args.kwargs["model"] == _TTS_DEFAULT_MODEL
+        assert synthesizer_cls.call_args.kwargs["base_url"] == (
+            "https://dashscope.aliyuncs.com" + _QWEN_AUDIO_TTS_PATH
+        )
+        assert synthesizer_cls.call_args.kwargs["options"] is options
+
+        with (
+            patch(
+                "fivccliche.services.implements.speech.dashscope.query_component",
+                return_value=_speech_config({}),
+            ),
+            patch(
+                "fivccliche.services.implements.speech.dashscope._DashScopeQwenAudioTTSSynthesizer",
+            ) as synthesizer_cls,
+        ):
+            provider = DashScopeSpeechProvider(MagicMock())
+            await provider.get_synthesizer(
+                options,
+                api_key="sk-override",
+                model="qwen-audio-3.1-tts-flash",
+                base_url="wss://example.com/",
+            )
+
+        assert synthesizer_cls.call_args.kwargs["api_key"] == "sk-override"
+        assert synthesizer_cls.call_args.kwargs["model"] == "qwen-audio-3.1-tts-flash"
+        assert synthesizer_cls.call_args.kwargs["base_url"] == (
+            "https://example.com" + _QWEN_AUDIO_TTS_PATH
+        )
 
 
 class TestDashScopeRealtimeSpeechProvider:
@@ -1470,3 +1711,43 @@ class TestDashScopeConcurrency:
         assert fake_wss[1].texts == ["second"]
         assert all(fake_ws.finish_sent for fake_ws in fake_wss)
         assert all(fake_ws.closed for fake_ws in fake_wss)
+
+    @pytest.mark.asyncio
+    async def test_http_tts_synthesizers_are_isolated(self):
+        barrier = asyncio.Barrier(2)
+
+        def build_client(index: int) -> MagicMock:
+            client = MagicMock()
+
+            async def post(url: str, json: dict[str, Any], headers: dict[str, str]):
+                await barrier.wait()
+                return _json_response({"output": {"audio": {"url": f"https://audio/{index}.wav"}}})
+
+            async def get(url: str):
+                response = MagicMock()
+                response.is_success = True
+                response.content = f"audio-{index}".encode()
+                return response
+
+            client.post = post
+            client.get = get
+            return client
+
+        synthesizers = [
+            _DashScopeQwenAudioTTSSynthesizer(
+                api_key=f"sk-{index}",
+                model="qwen-audio-3.0-tts-flash",
+                base_url=_qwen_audio_tts_url("https://example.com"),
+                http_client=build_client(index),
+                options=SpeechSynthesisOptions(voice="voice"),
+            )
+            for index in range(2)
+        ]
+
+        async def synthesize(index: int) -> list[bytes]:
+            async with synthesizers[index]:
+                return await _collect_bytes(synthesizers[index], f"text-{index}")
+
+        results = await asyncio.gather(synthesize(0), synthesize(1))
+
+        assert results == [[b"audio-0"], [b"audio-1"]]

@@ -3,6 +3,7 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fivccliche.cli import _LEGACY_TTS_PROVIDER_SQL
 from fivccliche.modules.agent_configs import models, utils as methods
 from fivccliche.modules.agent_configs.filters import UserScopedReadableFilterSet
 from fivccliche.modules.users.models import User
@@ -40,7 +41,7 @@ CONFIG_MODELS = [
             "id": "tts",
             "model": "qwen-audio-3.1-tts-flash",
             "api_key": "k",
-            "model_type": "dashscope_tts",
+            "model_type": "dashscope",
         },
         id="tts",
     ),
@@ -69,6 +70,23 @@ CONFIG_MODELS = [
 
 def _readable(model, user_uuid: str) -> UserScopedReadableFilterSet:
     return UserScopedReadableFilterSet(model.user_uuid, user_uuid, is_superuser=False)
+
+
+async def test_migrate_maps_legacy_tts_provider(session: AsyncSession, owner: User):
+    config = models.UserTTS(
+        id="legacy-tts",
+        model="qwen-audio-3.1-tts-flash",
+        api_key="k",
+        model_type="dashscope_tts",
+        user_uuid=owner.uuid,
+    )
+    session.add(config)
+    await session.commit()
+
+    await session.execute(_LEGACY_TTS_PROVIDER_SQL)
+    await session.refresh(config)
+
+    assert config.model_type == "dashscope_realtime"
 
 
 @pytest.fixture

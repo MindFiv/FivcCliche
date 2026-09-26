@@ -3,30 +3,35 @@
 FivcCliche exposes an implementation-agnostic speech contract so chat and tools
 can transcribe audio without depending on a vendor SDK. `ISpeechProvider` is a
 factory; recognition runs on `ISpeechRecognizer` and one-shot synthesis runs on
-`ISpeechSynthesizer`. Default YAML registers DashScope Flash, Flash-Realtime,
-and DashScope TTS under distinct names. Continuous duplex voice and automatic
-TTS for chat replies are out of scope for this phase.
+`ISpeechSynthesizer`. Default YAML registers two DashScope providers:
+`dashscope` for native HTTP and `dashscope_realtime` for WebSocket protocols.
+Both providers expose recognizers and synthesizers. Continuous duplex voice and
+automatic TTS for chat replies remain out of scope.
 
 ## Status
 
 - Interface + optional `ISpeechProvider` (DI + `get_speech_provider_async`)
 - Fake provider for tests (`FakeSpeechProvider`)
-- DashScope Flash and Realtime providers (each file is one implementation)
+- DashScope HTTP and Realtime providers (each file is one implementation)
 - Message WebSocket can accept one audio clip or one streamed utterance, then
   runs the existing text `ChatQueryJob`
 - Function tool `SpeechTranscribe` for later `transport=function` wiring
 - DashScope TTS and `UserTTS` probe configuration
 
-The synchronous `dashscope` provider supports:
+The native HTTP `dashscope` provider supports:
 
 - `qwen3-asr-flash` using DashScope multimodal `asr_options`
 - `qwen-audio-3.0-asr-flash` using its native `input_audio` request and
   `parameters.format` / `parameters.sample_rate`; context, hotwords, language, and ITN options are not
   sent for this protocol
+- Qwen-Audio HTTP TTS with `qwen-audio-3.0-tts-plus`,
+  `qwen-audio-3.1-tts-flash`, and `qwen-audio-3.0-tts-flash`. Other TTS model
+  families are rejected by this provider.
 
 The `dashscope_realtime` provider currently supports the DashScope Recognition
-WebSocket protocol with `qwen-audio-3.1-asr-flash-streaming` and the DashScope
-TTS WebSocket protocol. Fun-ASR realtime,
+WebSocket protocol with `qwen-audio-3.1-asr-flash-streaming` and two TTS
+protocols: Qwen-TTS Realtime and the DashScope SpeechSynthesizer task protocol.
+Fun-ASR realtime,
 Paraformer realtime, and asynchronous file transcription are not integrated
 yet. Recognition currently sends only audio format, sample rate, and
 `SpeechRecognizeOptions.extra`; language, ITN, hotwords, and context are not
@@ -80,7 +85,7 @@ async with await speech_provider.get_synthesizer(options) as synthesizer:
 ## Configuration
 
 Default [`services.yml`](../src/fivccliche/settings/services.yml) registers the
-DashScope providers under distinct names:
+two DashScope providers:
 
 ```yaml
 - entries:
@@ -93,16 +98,11 @@ DashScope providers under distinct names:
       name: dashscope_realtime
   class: fivccliche.services.implements.speech.dashscope_realtime.DashScopeRealtimeSpeechProvider
 
-- entries:
-    - interface: fivccliche.services.interfaces.speech.ISpeechProvider
-      name: dashscope_tts
-  class: fivccliche.services.implements.speech.dashscope_realtime.DashScopeRealtimeSpeechProvider
 ```
 
 `get_speech_provider_async(name)` looks up a named DashScope implementation.
-`dashscope_realtime` and `dashscope_tts` are compatibility-oriented registration
-names backed by the same realtime provider class; their defaults remain
-separated into `ASR_*` and `TTS_*` settings.
+Each provider keeps ASR and TTS defaults separate in `ASR_*` and `TTS_*`
+settings.
 Chat WebSocket ASR, `SpeechTranscribe`, and ASR probe do **not** use the default
 name directly: they load a [`UserASR`](../src/fivccliche/modules/agent_configs/models.py)
 row (`POST /api/configs/asrs/`) and pass `model_type` as `name`. If that row or
@@ -133,27 +133,34 @@ body when the gateway supplies one; API keys are never included. A 403 with
 model access—verify the workspace ID in the host, key membership, and model
 authorization.
 
-`dashscope_tts` defaults to `qwen-tts-realtime`, which uses DashScope's
+`dashscope_realtime` defaults to `qwen-tts-realtime`, which uses DashScope's
 Qwen-TTS Realtime event protocol at `wss://.../api-ws/v1/realtime`. The
-provider adds `?model=<model>` to an HTTP origin or origin-only WebSocket URL,
-keeps a model already present in a complete URL, and sends `session.update`,
-`input_text_buffer.append`, `input_text_buffer.commit`, and `session.finish`.
-Qwen-TTS Realtime has no MaaS inference endpoint; a MaaS base URL is routed to
-the fixed public DashScope endpoint.
+provider adds `?model=<model>` to an HTTP origin or origin-only WebSocket URL
+and keeps a model already present in a complete URL.
 Its supported output formats are `pcm`, `wav`, `mp3`, and `opus`; PCM is the
 default and the sample rate must be 24000. The default voice is `Cherry`.
 
-Other DashScope models such as `qwen-audio-3.1-tts-flash` continue to use the
+Other realtime models such as `qwen-audio-3.1-tts-flash` continue to use the
 `wss://.../api-ws/v1/inference` task protocol and `finish-task`. That model
-requires `longanhuan_v3.1`; `Cherry` is rejected before opening a synthesis
+defaults to `longanhuan_v3.1`; `Cherry` is rejected before opening a synthesis
 task.
+
+`dashscope` defaults to `qwen-audio-3.0-tts-flash` and POSTs to
+`/api/v1/services/audio/tts/SpeechSynthesizer`. It uses a non-streaming task
+response, downloads `output.audio.url`, and yields the downloaded audio in
+12800-byte chunks. An empty voice selects `longanhuan_v3.1` for
+`qwen-audio-3.1-*` and `longanhuan_v3.6` for `qwen-audio-3.0-*`.
 
 TTS is exposed through [`UserTTS`](../src/fivccliche/modules/agent_configs/models.py)
 (`POST /api/configs/tts/`). Persisted fields are `id`, `description`, `model`,
 `base_url`, `api_key`, and `model_type`; `model_type` is always
-`dashscope_tts` in this phase. Voice and audio-quality parameters stay in the
-probe request. `POST /api/configs/tts/{config_uuid}/probe/` accepts `text` and
-optional `voice` / audio options; defaults are `Cherry`, PCM, and 24000 Hz.
+`dashscope` or `dashscope_realtime`. Deployments migrating from the former
+standalone `dashscope_tts` registration must run `fivccliche migrate`; it
+changes that legacy value to `dashscope_realtime`. Voice and audio-quality
+parameters stay in the probe request. `POST
+/api/configs/tts/{config_uuid}/probe/` accepts `text` and optional `voice` /
+audio options; an empty voice lets the provider select a model-compatible
+default. Other probe defaults are PCM and 24000 Hz.
 Probe audio is emitted as Base64 SSE:
 
 ```
@@ -191,7 +198,7 @@ supply an override:
 {
   "SPEECH": {
     "TTS_API_KEY": "sk-...",
-    "TTS_MODEL": "qwen-tts-realtime",
+    "TTS_MODEL": "qwen-audio-3.0-tts-flash",
     "TTS_BASE_URL": "https://dashscope.aliyuncs.com"
   }
 }
@@ -200,8 +207,8 @@ supply an override:
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `TTS_API_KEY` | empty | DashScope API key |
-| `TTS_MODEL` | `qwen-tts-realtime` | DashScope TTS model id |
-| `TTS_BASE_URL` | `https://dashscope.aliyuncs.com` | HTTP origin or complete `ws://` / `wss://` endpoint; Qwen-TTS Realtime derives `wss://.../api-ws/v1/realtime`, while other models derive `wss://.../api-ws/v1/inference` |
+| `TTS_MODEL` | HTTP: `qwen-audio-3.0-tts-flash`; Realtime: `qwen-tts-realtime` | Model id for that provider |
+| `TTS_BASE_URL` | `https://dashscope.aliyuncs.com` | HTTP origin or complete `ws://` / `wss://` endpoint; HTTP TTS derives the SpeechSynthesizer URL, Qwen-TTS Realtime derives `wss://.../api-ws/v1/realtime`, while other realtime models derive `wss://.../api-ws/v1/inference` |
 
 For tests, instantiate `FakeSpeechProvider(transcript="...")` directly.
 

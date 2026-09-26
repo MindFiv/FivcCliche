@@ -276,9 +276,9 @@ class UserTTS(SQLModel, table=True):
         description="TTS base URL.",
     )
     model_type: str = Field(
-        default="dashscope_tts",
+        default="dashscope",
         max_length=64,
-        description="ISpeechProvider name (dashscope_tts).",
+        description="ISpeechProvider name (dashscope or dashscope_realtime).",
     )
     user_uuid: str | None = Field(
         default=None,

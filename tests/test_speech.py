@@ -166,14 +166,3 @@ class TestGetSpeechProviderAsync:
 class TestSpeechProviderSynthesisContract:
     def test_get_synthesizer_is_abstract(self):
         assert ISpeechProvider.get_synthesizer.__isabstractmethod__
-
-    @pytest.mark.asyncio
-    async def test_multimodal_provider_rejects_synthesis(self):
-        from fivccliche.services.implements.speech.dashscope import (
-            DashScopeSpeechProvider,
-        )
-        from fivccliche.services.interfaces.speech import SpeechRequestError
-
-        provider = DashScopeSpeechProvider(MagicMock())
-        with pytest.raises(SpeechRequestError, match="does not support TTS"):
-            await provider.get_synthesizer()

@@ -5,7 +5,8 @@ from __future__ import annotations
 import base64
 import logging
 from collections.abc import AsyncIterator
-from typing import Any, Self
+from typing import Any, Literal, Self
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fivcglue import IComponentSite, query_component
@@ -30,6 +31,16 @@ _DEFAULT_MODEL = "qwen3-asr-flash"
 _QWEN_AUDIO_MODEL = "qwen-audio-3.0-asr-flash"
 _GENERATION_PATH = "/api/v1/services/aigc/multimodal-generation/generation"
 _DEFAULT_GENERATION_URL = _DEFAULT_BASE_URL + _GENERATION_PATH
+_TTS_DEFAULT_MODEL = "qwen-audio-3.0-tts-flash"
+_QWEN_AUDIO_TTS_MODELS = {
+    "qwen-audio-3.0-tts-plus",
+    "qwen-audio-3.1-tts-flash",
+    "qwen-audio-3.0-tts-flash",
+}
+_QWEN_AUDIO_TTS_PATH = "/api/v1/services/audio/tts/SpeechSynthesizer"
+_QWEN_AUDIO_31_TTS_VOICE = "longanhuan_v3.1"
+_QWEN_AUDIO_30_TTS_VOICE = "longanhuan_v3.6"
+_AUDIO_CHUNK_SIZE = 12800
 
 _AUDIO_MIME_TYPES = {
     "wav": "audio/wav",
@@ -142,6 +153,49 @@ def _qwen_audio_event(output: Any) -> SpeechEvent:
     return SpeechEvent(type="final", text=str(text), language=None)
 
 
+def _qwen_audio_tts_url(base_url: str) -> str:
+    """Resolve an HTTP origin or compatible WebSocket origin to the TTS endpoint."""
+    parsed = urlsplit(base_url)
+    if parsed.scheme in {"http", "https"}:
+        return urlunsplit((parsed.scheme, parsed.netloc, _QWEN_AUDIO_TTS_PATH, "", ""))
+
+    if parsed.scheme in {"ws", "wss"}:
+        scheme = "http" if parsed.scheme == "ws" else "https"
+        return urlunsplit((scheme, parsed.netloc, _QWEN_AUDIO_TTS_PATH, "", ""))
+
+    raise SpeechRequestError(f"Unsupported DashScope base URL: {base_url}")
+
+
+def _qwen_audio_tts_voice(model: str, voice: str) -> str:
+    if voice:
+        return voice
+    return (
+        _QWEN_AUDIO_31_TTS_VOICE
+        if model.startswith("qwen-audio-3.1-")
+        else _QWEN_AUDIO_30_TTS_VOICE
+    )
+
+
+def _qwen_audio_tts_request(
+    model: str,
+    text: str,
+    options: SpeechSynthesisOptions,
+) -> dict[str, Any]:
+    input_data: dict[str, Any] = dict(options.extra)
+    input_data.update(
+        {
+            "text": text,
+            "voice": _qwen_audio_tts_voice(model, options.voice),
+            "format": options.format.lower(),
+            "sample_rate": options.sample_rate,
+            "volume": options.volume,
+            "rate": options.speech_rate,
+            "pitch": options.pitch_rate,
+        }
+    )
+    return {"model": model, "input": input_data}
+
+
 class _DashScopeMultimodalRecognizer(ISpeechRecognizer):
     """Clip ASR using DashScope synchronous multimodal generation."""
 
@@ -235,8 +289,94 @@ class _DashScopeMultimodalRecognizer(ISpeechRecognizer):
         return event_parser(response_payload.get("output"))
 
 
+class _DashScopeQwenAudioTTSSynthesizer(ISpeechSynthesizer):
+    """Non-realtime Qwen-Audio TTS using DashScope's HTTP task API."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str = _TTS_DEFAULT_MODEL,
+        base_url: str = _DEFAULT_BASE_URL,
+        http_client: httpx.AsyncClient | None = None,
+        options: SpeechSynthesisOptions | None = None,
+    ) -> None:
+        if model not in _QWEN_AUDIO_TTS_MODELS:
+            raise SpeechRequestError(
+                f"TTS model {model} is not supported by the dashscope provider; "
+                f"supported models: {', '.join(sorted(_QWEN_AUDIO_TTS_MODELS))}"
+            )
+        self._api_key = api_key
+        self._model = model
+        self._base_url = base_url
+        self._http_client = http_client
+        self._owns_http_client = http_client is None
+        self._options = options or SpeechSynthesisOptions(
+            voice="",
+            format="wav",
+            sample_rate=24000,
+        )
+
+    async def __aenter__(self) -> Self:
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=60.0)
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        if self._owns_http_client and self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
+
+    async def stream_async(self, text: str | AsyncIterator[str]) -> AsyncIterator[bytes]:
+        if isinstance(text, str):
+            synthesis_text = text
+        else:
+            buffer = bytearray()
+            async for chunk in text:
+                buffer.extend(chunk.encode("utf-8"))
+            synthesis_text = buffer.decode("utf-8")
+
+        client = self._http_client
+        if client is None:
+            raise SpeechRequestError("TTS client is not started")
+
+        try:
+            response = await client.post(
+                self._base_url,
+                json=_qwen_audio_tts_request(self._model, synthesis_text, self._options),
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+        except Exception as exc:
+            raise SpeechRequestError(f"DashScope TTS request failed: {exc}") from exc
+
+        if not response.is_success:
+            raise SpeechRequestError(f"DashScope TTS HTTP {response.status_code}: {response.text}")
+        try:
+            response_payload = response.json()
+        except ValueError as exc:
+            raise SpeechRequestError(f"DashScope TTS returned invalid JSON: {exc}") from exc
+
+        audio_url = (response_payload.get("output") or {}).get("audio", {}).get("url")
+        if not audio_url:
+            raise SpeechRequestError("DashScope TTS response is missing audio URL")
+
+        try:
+            audio_response = await client.get(audio_url)
+        except Exception as exc:
+            raise SpeechRequestError(f"Failed to download DashScope TTS audio: {exc}") from exc
+        if not audio_response.is_success:
+            raise SpeechRequestError(
+                f"Failed to download DashScope TTS audio HTTP {audio_response.status_code}"
+            )
+        for offset in range(0, len(audio_response.content), _AUDIO_CHUNK_SIZE):
+            yield audio_response.content[offset : offset + _AUDIO_CHUNK_SIZE]
+
+
 class DashScopeSpeechProvider(ISpeechProvider):
-    """ISpeechProvider that creates DashScope clip recognizers."""
+    """ISpeechProvider that creates DashScope HTTP ASR and Qwen-Audio TTS sessions."""
 
     def __init__(self, component_site: IComponentSite, **_kwargs: Any) -> None:
         self._component_site = component_site
@@ -251,7 +391,7 @@ class DashScopeSpeechProvider(ISpeechProvider):
         **_kwargs: Any,
     ) -> ISpeechRecognizer:
         api_key, model, base_url = self._credentials(
-            api_key=api_key, model=model, base_url=base_url
+            capability="asr", api_key=api_key, model=model, base_url=base_url
         )
         return _DashScopeMultimodalRecognizer(
             api_key=api_key,
@@ -269,31 +409,42 @@ class DashScopeSpeechProvider(ISpeechProvider):
         base_url: str | None = None,
         **_kwargs: Any,
     ) -> ISpeechSynthesizer:
-        raise SpeechRequestError("DashScope ASR provider does not support TTS")
+        api_key, model, base_url = self._credentials(
+            capability="tts", api_key=api_key, model=model, base_url=base_url
+        )
+        return _DashScopeQwenAudioTTSSynthesizer(
+            api_key=api_key,
+            model=model,
+            base_url=_qwen_audio_tts_url(base_url),
+            options=options,
+        )
 
     def _credentials(
         self,
         *,
+        capability: Literal["asr", "tts"],
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
     ) -> tuple[str, str, str]:
+        prefix = "ASR" if capability == "asr" else "TTS"
+        default_model = _DEFAULT_MODEL if capability == "asr" else _TTS_DEFAULT_MODEL
         session = _speech_config_session(self._component_site)
         resolved_api_key = (
             api_key
             if api_key is not None
-            else to_string(session.get_value("ASR_API_KEY") if session else None, "")
+            else to_string(session.get_value(f"{prefix}_API_KEY") if session else None, "")
         )
         resolved_model = (
             model
             if model is not None
-            else to_string(session.get_value("ASR_MODEL") if session else None, _DEFAULT_MODEL)
+            else to_string(session.get_value(f"{prefix}_MODEL") if session else None, default_model)
         )
         resolved_base_url = (
             base_url
             if base_url is not None
             else to_string(
-                session.get_value("ASR_BASE_URL") if session else None,
+                session.get_value(f"{prefix}_BASE_URL") if session else None,
                 _DEFAULT_BASE_URL,
             )
         ).rstrip("/")

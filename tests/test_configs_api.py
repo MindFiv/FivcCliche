@@ -812,7 +812,7 @@ class TestTTSConfigAPI:
         assert response.status_code == 201
         data = response.json()
         assert data["id"] == "tts"
-        assert data["model_type"] == "dashscope_tts"
+        assert data["model_type"] == "dashscope"
         assert "api_key" not in data
         config_uuid = data["uuid"]
 
@@ -872,12 +872,12 @@ class TestTTSConfigAPI:
             {"event": "audio", "info": {"data_b64": "ZGVm"}},
             {"event": "complete", "info": {}},
         ]
-        get_provider.assert_awaited_once_with("dashscope_tts")
+        get_provider.assert_awaited_once_with("dashscope")
         assert captured["kwargs"]["api_key"] == "sk-probe"
         assert captured["kwargs"]["model"] == "qwen-audio-3.1-tts-flash"
         assert captured["kwargs"]["base_url"] == "https://dashscope.aliyuncs.com"
         assert captured["options"] == SpeechSynthesisOptions(
-            voice="Cherry",
+            voice="",
             format="pcm",
             sample_rate=24000,
             volume=70,
