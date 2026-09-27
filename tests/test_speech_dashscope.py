@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -507,10 +507,18 @@ class _FakeDashScopeWs:
         self.result_sentences = result_sentences or []
         self.messages: list[dict] = []
         self.audio_frames: list[bytes] = []
+        self.send_audio: Callable[[bytes], Awaitable[None]] | None = None
         self._incoming: asyncio.Queue[str | bytes] = asyncio.Queue()
         self.closed = False
 
-    async def send(self, data: str) -> None:
+    async def send(self, data: str | bytes) -> None:
+        if isinstance(data, bytes):
+            if self.send_audio is None:
+                self.audio_frames.append(data)
+            else:
+                await self.send_audio(data)
+            return
+
         message = json.loads(data)
         self.messages.append(message)
         action = message["header"]["action"]
@@ -529,9 +537,6 @@ class _FakeDashScopeWs:
             return
         if action == "finish-task":
             await self._emit_results()
-
-    async def send_bytes(self, data: bytes) -> None:
-        self.audio_frames.append(data)
 
     async def _emit_results(self) -> None:
         task_id = self.messages[0]["header"]["task_id"]
@@ -894,12 +899,11 @@ class TestDashScopeRealtimeRecognizer:
         async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeWs:
             return fake_ws
 
-        async def original_send_bytes(data: bytes) -> None:
+        async def original_send_audio(data: bytes) -> None:
             fake_ws.audio_frames.append(data)
-            if data == b"first":
-                first_sent.set()
+            first_sent.set()
 
-        fake_ws.send_bytes = original_send_bytes
+        fake_ws.send_audio = original_send_audio
         recognizer = _DashScopeRealtimeRecognizer(
             api_key="sk-test",
             connect=connect,
@@ -926,10 +930,10 @@ class TestDashScopeRealtimeRecognizer:
         async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeWs:
             return fake_ws
 
-        async def failing_send_bytes(_data: bytes) -> None:
+        async def failing_send_audio(_data: bytes) -> None:
             raise RuntimeError("audio upload failed")
 
-        fake_ws.send_bytes = failing_send_bytes
+        fake_ws.send_audio = failing_send_audio
         recognizer = _DashScopeRealtimeRecognizer(
             api_key="sk-test",
             connect=connect,

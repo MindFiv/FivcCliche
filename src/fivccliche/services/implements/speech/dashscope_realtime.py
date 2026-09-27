@@ -384,7 +384,7 @@ class _DashScopeRecognitionSocket:
     async def send_audio_async(self, chunk: bytes) -> None:
         if self._ws is None:
             raise SpeechRequestError("Realtime ASR session is not started")
-        await self._ws.send_bytes(chunk)
+        await self._ws.send(chunk)
 
     async def commit_async(self) -> None:
         if not self._finish_sent:
