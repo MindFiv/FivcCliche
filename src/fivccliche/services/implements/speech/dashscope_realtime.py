@@ -325,13 +325,12 @@ async def _audio_chunks(
 ) -> AsyncIterator[bytes]:
     if isinstance(audio, SpeechAudioInput):
         data = await _audio_data(audio, http_client)
-    else:
-        data = bytearray()
-        async for chunk in audio:
-            data.extend(chunk)
+        for offset in range(0, len(data), _AUDIO_CHUNK_SIZE):
+            yield bytes(data[offset : offset + _AUDIO_CHUNK_SIZE])
+        return
 
-    for offset in range(0, len(data), _AUDIO_CHUNK_SIZE):
-        yield bytes(data[offset : offset + _AUDIO_CHUNK_SIZE])
+    async for chunk in audio:
+        yield chunk
 
 
 class _DashScopeRecognitionSocket:
@@ -703,24 +702,43 @@ class _DashScopeRealtimeRecognizer(ISpeechRecognizer):
         if socket is None:
             raise SpeechRequestError("Realtime ASR session is not started")
 
-        send_task: asyncio.Task[None] | None = None
-        try:
+        events: asyncio.Queue[SpeechEvent | Exception | None] = asyncio.Queue()
 
-            async def _pump_in() -> None:
+        async def _pump_in() -> None:
+            try:
                 async for chunk in _audio_chunks(audio, self._http_client):
                     await socket.send_audio_async(chunk)
                 await socket.commit_async()
+            except SpeechRequestError as exc:
+                await events.put(exc)
+            except Exception as exc:
+                await events.put(SpeechRequestError(f"Failed to upload audio: {exc}"))
 
-            send_task = asyncio.create_task(_pump_in())
-            async for event in socket.events():
-                yield event
-                if event.type == "error":
+        async def _pump_out() -> None:
+            try:
+                async for event in socket.events():
+                    await events.put(event)
+            except Exception as exc:
+                await events.put(exc)
+            finally:
+                await events.put(None)
+
+        send_task = asyncio.create_task(_pump_in())
+        receive_task = asyncio.create_task(_pump_out())
+        try:
+            while True:
+                item = await events.get()
+                if item is None:
+                    return
+                if isinstance(item, Exception):
+                    raise item
+                yield item
+                if item.type == "error":
                     return
         finally:
-            if send_task is not None:
-                send_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await send_task
+            for task in (send_task, receive_task):
+                task.cancel()
+            await asyncio.gather(send_task, receive_task, return_exceptions=True)
 
 
 class _DashScopeTTSSynthesizer(ISpeechSynthesizer):

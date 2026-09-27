@@ -1,10 +1,12 @@
 """Integration tests for configs API endpoints."""
 
 import json
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from fivccliche.services.implements.speech.fake import FakeSpeechProvider
 from fivccliche.services.interfaces.speech import (
@@ -475,6 +477,46 @@ class TestLLMConfigAPI:
 class TestASRConfigAPI:
     """Test cases for ASR Config API endpoints."""
 
+    @staticmethod
+    def _sse_events(response):
+        events = []
+        for line in response.text.splitlines():
+            if line.startswith("data: "):
+                events.append(json.loads(line[6:]))
+        return events
+
+    @staticmethod
+    def _create_asr(client: TestClient, auth_token: str, *, model_type: str = "dashscope"):
+        response = client.post(
+            "/configs/asrs/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": f"asr-{model_type}",
+                "model": "streaming-model",
+                "api_key": "sk-probe",
+                "model_type": model_type,
+            },
+        )
+        assert response.status_code == 201
+        return response.json()["uuid"]
+
+    @staticmethod
+    def _start_realtime_probe(client: TestClient, config_uuid: str, auth_token: str):
+        return client.websocket_connect(f"/configs/asrs/{config_uuid}/probe/")
+
+    @staticmethod
+    def _start_realtime_probe_session(websocket, auth_token: str):
+        websocket.send_json({"type": "auth", "access_token": auth_token})
+        websocket.send_json(
+            {
+                "type": "start",
+                "format": "pcm",
+                "sample_rate": 16000,
+                "language": "zh",
+            }
+        )
+        return websocket
+
     def test_create_asr_config_unauthorized(self, client: TestClient):
         response = client.post(
             "/configs/asrs/",
@@ -616,14 +658,6 @@ class TestASRConfigAPI:
             json={"url": "https://example.com/a.wav"},
         )
         assert response.status_code == 401
-
-    @staticmethod
-    def _sse_events(response):
-        events = []
-        for line in response.text.splitlines():
-            if line.startswith("data: "):
-                events.append(json.loads(line[6:]))
-        return events
 
     def test_probe_asr_config(self, client: TestClient, auth_token: str):
         create_response = client.post(
@@ -772,6 +806,158 @@ class TestASRConfigAPI:
         assert self._sse_events(response) == [
             {"event": "error", "info": {"message": "boom"}},
         ]
+
+    def test_realtime_probe_websocket_streams_audio_and_events(
+        self, client: TestClient, auth_token: str
+    ):
+        config_uuid = self._create_asr(client, auth_token, model_type="dashscope_realtime")
+        captured: dict = {}
+
+        class Recognizer:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def stream_async(self, audio):
+                captured["chunks"] = [chunk async for chunk in audio]
+                yield SpeechEvent(type="partial", text="北", language="zh")
+                yield SpeechEvent(type="final", text="北京。", language="zh")
+
+        async def get_recognizer(options=None, **kwargs):
+            captured["options"] = options
+            captured["kwargs"] = kwargs
+            return Recognizer()
+
+        provider = MagicMock()
+        provider.get_recognizer = get_recognizer
+        with patch(
+            "fivccliche.modules.agent_configs.routers.get_speech_provider_async",
+            new=AsyncMock(return_value=provider),
+        ):
+            websocket = self._start_realtime_probe(client, config_uuid, auth_token)
+            with websocket:
+                self._start_realtime_probe_session(websocket, auth_token)
+                websocket.send_bytes(b"first")
+                websocket.send_bytes(b"second")
+                websocket.send_json({"type": "audio_commit"})
+
+                assert websocket.receive_json() == {"event": "ready", "info": {}}
+                assert websocket.receive_json() == {
+                    "event": "partial",
+                    "info": {"text": "北", "language": "zh"},
+                }
+                assert websocket.receive_json() == {
+                    "event": "final",
+                    "info": {"text": "北京。", "language": "zh"},
+                }
+                assert websocket.receive_json() == {
+                    "event": "complete",
+                    "info": {"text": "北京。"},
+                }
+
+        assert captured["chunks"] == [b"first", b"second"]
+        assert captured["options"].format == "pcm"
+        assert captured["options"].sample_rate == 16000
+        assert captured["options"].language == "zh"
+        assert captured["kwargs"]["api_key"] == "sk-probe"
+        assert captured["kwargs"]["model"] == "streaming-model"
+
+    def test_realtime_probe_websocket_rejects_clip_provider(
+        self, client: TestClient, auth_token: str
+    ):
+        config_uuid = self._create_asr(client, auth_token)
+        websocket = self._start_realtime_probe(client, config_uuid, auth_token)
+        with websocket:
+            self._start_realtime_probe_session(websocket, auth_token)
+            assert websocket.receive_json() == {
+                "event": "error",
+                "info": {"code": "invalid_model_type", "message": "Realtime ASR is required"},
+            }
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                websocket.receive_json()
+            assert exc_info.value.code == 1003
+
+    def test_realtime_probe_websocket_closes_recognizer_on_disconnect(
+        self, client: TestClient, auth_token: str
+    ):
+        config_uuid = self._create_asr(client, auth_token, model_type="dashscope_realtime")
+        captured: dict = {}
+
+        class Recognizer:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                captured["closed"] = True
+
+            async def stream_async(self, audio):
+                async for chunk in audio:
+                    captured.setdefault("chunks", []).append(chunk)
+                return
+                yield SpeechEvent(type="final")
+
+        provider = MagicMock()
+        provider.get_recognizer = AsyncMock(return_value=Recognizer())
+        with patch(
+            "fivccliche.modules.agent_configs.routers.get_speech_provider_async",
+            new=AsyncMock(return_value=provider),
+        ):
+            websocket = self._start_realtime_probe(client, config_uuid, auth_token)
+            with websocket:
+                self._start_realtime_probe_session(websocket, auth_token)
+                websocket.send_bytes(b"first")
+                websocket.close()
+                time.sleep(0.1)
+
+        assert captured.get("closed") is True
+        assert captured.get("chunks") == [b"first"]
+
+    def test_realtime_probe_websocket_maps_recognition_error(
+        self, client: TestClient, auth_token: str
+    ):
+        config_uuid = self._create_asr(client, auth_token, model_type="dashscope_realtime")
+
+        class Recognizer:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def stream_async(self, _audio):
+                yield SpeechEvent(type="error", message="vendor failed")
+
+        provider = MagicMock()
+        provider.get_recognizer = AsyncMock(return_value=Recognizer())
+        with patch(
+            "fivccliche.modules.agent_configs.routers.get_speech_provider_async",
+            new=AsyncMock(return_value=provider),
+        ):
+            websocket = self._start_realtime_probe(client, config_uuid, auth_token)
+            with websocket:
+                self._start_realtime_probe_session(websocket, auth_token)
+                websocket.send_json({"type": "audio_commit"})
+                assert websocket.receive_json() == {"event": "ready", "info": {}}
+                assert websocket.receive_json() == {
+                    "event": "error",
+                    "info": {"code": "recognition_failed", "message": "vendor failed"},
+                }
+                with pytest.raises(WebSocketDisconnect) as exc_info:
+                    websocket.receive_json()
+                assert exc_info.value.code == 1011
+
+    def test_realtime_probe_websocket_rejects_unknown_config(
+        self, client: TestClient, auth_token: str
+    ):
+        websocket = self._start_realtime_probe(client, "missing", auth_token)
+        with websocket:
+            self._start_realtime_probe_session(websocket, auth_token)
+            assert websocket.receive_json() == {
+                "event": "error",
+                "info": {"code": "asr_not_found", "message": "ASR config not found"},
+            }
 
 
 class TestTTSConfigAPI:

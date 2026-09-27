@@ -1,8 +1,19 @@
+import asyncio
 import base64
 import json
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, responses, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    responses,
+    status,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic_strict_partial import create_partial_model
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,10 +29,12 @@ from fivccliche.services.interfaces.speech import (
 from fivccliche.utils.deps import (
     IUser,
     get_authenticated_user_async,
+    get_authenticator_async,
     get_config_provider_async,
     get_db_session_async,
     get_speech_provider_async,
 )
+from fivccliche.utils import deps
 from fivccliche.utils.schemas import PaginatedResponse
 
 from . import models, schemas, utils
@@ -459,6 +472,183 @@ async def probe_asr_config_async(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router_asrs.websocket(
+    "/{config_uuid}/probe/",
+)
+async def probe_realtime_asr_config_async(
+    config_uuid: str,
+    websocket: WebSocket,
+) -> None:
+    from fivccliche.utils.chats import ChatWSHandler
+
+    chat_ws = ChatWSHandler(websocket)
+    authenticator = await get_authenticator_async()
+    user = await chat_ws.authenticate(authenticator)
+    if user is None:
+        return
+
+    async with deps.get_db_session_context_async() as session:
+        filters = UserScopedReadableFilterSet(
+            models.UserASR.user_uuid, user.uuid, is_superuser=user.is_superuser
+        )
+        config = await utils.get_user_scoped_async(
+            session, models.UserASR, filters=filters, config_uuid=config_uuid
+        )
+        model_type = config.model_type if config else None
+        api_key = config.api_key if config else None
+        asr_model = config.model if config else None
+        base_url = config.base_url if config else None
+
+    if config is None:
+        await chat_ws.fail(
+            code="asr_not_found",
+            message="ASR config not found",
+            close_code=4404,
+        )
+        return
+    if model_type != "dashscope_realtime":
+        await chat_ws.fail(
+            code="invalid_model_type",
+            message="Realtime ASR is required",
+            close_code=1003,
+        )
+        return
+
+    start_frame = await chat_ws.receive(
+        expected_type="start",
+        invalid_code="invalid_start",
+    )
+    if start_frame is None:
+        return
+    if not isinstance(start_frame, dict):
+        return
+    if start_frame.get("format") != "pcm" or start_frame.get("sample_rate") != 16000:
+        await chat_ws.fail(
+            code="invalid_start",
+            message="PCM audio at 16000 Hz is required",
+            close_code=1003,
+        )
+        return
+
+    speech_provider = await get_speech_provider_async(model_type)
+    if speech_provider is None:
+        await chat_ws.fail(
+            code="provider_unmounted",
+            message="Speech provider is not mounted",
+            close_code=1013,
+        )
+        return
+
+    options = SpeechRecognizeOptions(
+        language=start_frame.get("language"),
+        hotwords=start_frame.get("hotwords"),
+        context=start_frame.get("context"),
+        format="pcm",
+        sample_rate=16000,
+    )
+    try:
+        recognizer = await speech_provider.get_recognizer(
+            options,
+            api_key=api_key,
+            model=asr_model,
+            base_url=base_url,
+        )
+    except SpeechRequestError as exc:
+        await chat_ws.fail(
+            code="recognition_failed",
+            message=str(exc) or "Speech recognition failed",
+            close_code=1011,
+        )
+        return
+
+    audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+    output_queue: asyncio.Queue[dict | None] = asyncio.Queue()
+
+    async def _read_audio() -> None:
+        while True:
+            frame = await chat_ws.receive()
+            if frame is None:
+                break
+            if isinstance(frame, bytes):
+                await audio_queue.put(frame)
+                continue
+            if frame.get("type") != "audio_commit":
+                await chat_ws.fail(
+                    code="invalid_frame",
+                    message="Binary PCM or audio_commit is required",
+                    close_code=1003,
+                )
+                break
+            break
+        await audio_queue.put(None)
+
+    async def _recognize() -> None:
+        async def _audio() -> AsyncIterator[bytes]:
+            while True:
+                chunk = await audio_queue.get()
+                if chunk is None:
+                    return
+                yield chunk
+
+        try:
+            async with recognizer:
+                await websocket.send_json({"event": "ready", "info": {}})
+                final_parts: list[str] = []
+                async for event in recognizer.stream_async(_audio()):
+                    payload = {"text": event.text, "language": event.language}
+                    if event.type == "error":
+                        await output_queue.put(
+                            {
+                                "event": "error",
+                                "info": {
+                                    "code": "recognition_failed",
+                                    "message": event.message or "Speech recognition failed",
+                                },
+                            }
+                        )
+                        return
+                    await output_queue.put({"event": event.type, "info": payload})
+                    if event.type == "final":
+                        final_parts.append(event.text)
+                await output_queue.put(
+                    {"event": "complete", "info": {"text": "".join(final_parts)}}
+                )
+        except Exception as exc:
+            message = (
+                str(exc) if isinstance(exc, SpeechRequestError) else "Speech recognition failed"
+            )
+            await output_queue.put(
+                {
+                    "event": "error",
+                    "info": {"code": "recognition_failed", "message": message},
+                }
+            )
+        finally:
+            await output_queue.put(None)
+
+    audio_task = asyncio.create_task(_read_audio())
+    recognition_task = asyncio.create_task(_recognize())
+    try:
+        while True:
+            item = await output_queue.get()
+            if item is None:
+                await websocket.close(code=1000)
+                return
+            await websocket.send_json(item)
+            if item.get("event") == "error":
+                await websocket.close(code=1011)
+                return
+            if item.get("event") == "complete":
+                await websocket.close(code=1000)
+                return
+    except (RuntimeError, WebSocketDisconnect):
+        return
+    finally:
+        audio_task.cancel()
+        recognition_task.cancel()
+        await asyncio.gather(audio_task, recognition_task, return_exceptions=True)
 
 
 @router_asrs.get(

@@ -887,6 +887,64 @@ class TestDashScopeRealtimeRecognizer:
         assert fake_ws.closed is True
 
     @pytest.mark.asyncio
+    async def test_streams_source_chunks_without_buffering(self):
+        fake_ws = _FakeDashScopeWs()
+        first_sent = asyncio.Event()
+
+        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeWs:
+            return fake_ws
+
+        async def original_send_bytes(data: bytes) -> None:
+            fake_ws.audio_frames.append(data)
+            if data == b"first":
+                first_sent.set()
+
+        fake_ws.send_bytes = original_send_bytes
+        recognizer = _DashScopeRealtimeRecognizer(
+            api_key="sk-test",
+            connect=connect,
+            options=SpeechRecognizeOptions(format="pcm"),
+        )
+
+        async def chunks():
+            yield b"first"
+            try:
+                await asyncio.wait_for(first_sent.wait(), timeout=0.1)
+            except TimeoutError as exc:
+                raise AssertionError("first audio chunk was buffered") from exc
+            yield b"second"
+
+        async with recognizer:
+            await asyncio.wait_for(_collect(recognizer, chunks()), timeout=2)
+
+        assert fake_ws.audio_frames == [b"first", b"second"]
+
+    @pytest.mark.asyncio
+    async def test_source_error_is_not_hidden_by_event_wait(self):
+        fake_ws = _FakeDashScopeWs()
+
+        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeWs:
+            return fake_ws
+
+        async def failing_send_bytes(_data: bytes) -> None:
+            raise RuntimeError("audio upload failed")
+
+        fake_ws.send_bytes = failing_send_bytes
+        recognizer = _DashScopeRealtimeRecognizer(
+            api_key="sk-test",
+            connect=connect,
+            options=SpeechRecognizeOptions(format="pcm"),
+        )
+
+        async def chunks():
+            yield b"first"
+            yield b"second"
+
+        async with recognizer:
+            with pytest.raises(SpeechRequestError, match="audio upload failed"):
+                await asyncio.wait_for(_collect(recognizer, chunks()), timeout=2)
+
+    @pytest.mark.asyncio
     async def test_finish_without_result_yields_empty_final(self):
         fake_ws = _FakeDashScopeWs(result_sentences=[])
 
@@ -918,7 +976,10 @@ class TestDashScopeRealtimeRecognizer:
         async with recognizer:
             await fake_ws.fail("InvalidParameter", "format is invalid")
             events = await asyncio.wait_for(
-                _collect(recognizer, SpeechAudioInput(data_b64="abc", format="wav")),
+                _collect(
+                    recognizer,
+                    SpeechAudioInput(data_b64="Y2h1bms=", format="wav"),
+                ),
                 timeout=2,
             )
         assert len(events) == 1
