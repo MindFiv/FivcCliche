@@ -30,6 +30,7 @@ from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator
 from fivccliche.services.interfaces.speech import (
     ISpeechProvider,
     SpeechRecognizeOptions,
+    SpeechRequestError,
     SpeechSynthesisOptions,
 )
 from fivccliche.utils.chats import ChatEventHandler, ChatWSHandler
@@ -449,7 +450,7 @@ class VoiceChatSession:
                     self._send_json({"event": "audio_end", "info": {}})
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.exception("Voice TTS failed chat_uuid=%s", self._chat.uuid)
                 self._send_json(
                     {
@@ -457,6 +458,11 @@ class VoiceChatSession:
                         "info": {
                             "code": "tts_failed",
                             "message": "Speech synthesis failed",
+                            "detail": (
+                                str(exc)
+                                if isinstance(exc, SpeechRequestError)
+                                else type(exc).__name__
+                            ),
                         },
                     }
                 )

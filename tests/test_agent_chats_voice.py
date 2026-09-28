@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import asyncio
 import pytest
 from fivcplayground.agents import AgentRunEvent
+from fivccliche.services.interfaces.speech import SpeechRequestError
 
 from fivccliche.utils.voice import (
     _INPUT_SAMPLE_RATE,
@@ -184,6 +185,7 @@ async def test_voice_session_recognizes_streams_and_synthesizes():
             mutex=None,
             start_frame={},
         )
+
         await session.run()
 
         events = [item["event"] for item in websocket.sent if isinstance(item, dict)]
@@ -210,3 +212,140 @@ def test_voice_ws_handler_is_public_entrypoint():
     )
 
     assert isinstance(handler, VoiceChatWSHandler)
+
+
+@pytest.mark.asyncio
+async def test_voice_session_reports_tts_vendor_detail():
+    websocket = FakeVoiceWebSocket(
+        [
+            {"type": "websocket.receive", "text": '{"type":"vad","event":"speech_end"}'},
+        ]
+    )
+
+    class FakeRecognizer:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def stream_async(self, audio):
+            async for _ in audio:
+                pass
+            yield MagicMock(type="final", text="你好")
+
+    class FailingSynthesizer:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def stream_async(self, text):
+            raise SpeechRequestError("InvalidParameter: Request voice is invalid!")
+            yield b""
+
+    finish_run = MagicMock(id="run-1", delta=None, reply=MagicMock(text="你好"))
+    finish_run.model_dump.return_value = {"id": "run-1", "reply": {"text": "你好"}}
+
+    class FakeJob:
+        async def run_async(self, *_args, **kwargs):
+            kwargs["event_callback"](AgentRunEvent.FINISH, finish_run)
+
+    with patch("fivccliche.utils.voice.ChatQueryJob", return_value=FakeJob()):
+        session = VoiceChatSession(
+            websocket,
+            chat=MagicMock(),
+            user=MagicMock(),
+            asr=MagicMock(),
+            tts=MagicMock(),
+            asr_provider=MagicMock(get_recognizer=AsyncMock(return_value=FakeRecognizer())),
+            tts_provider=MagicMock(get_synthesizer=AsyncMock(return_value=FailingSynthesizer())),
+            mutex=None,
+            start_frame={},
+        )
+        await session.run()
+
+    errors = [
+        item["info"]
+        for item in websocket.sent
+        if isinstance(item, dict) and item.get("event") == "error"
+    ]
+    assert {
+        "code": "tts_failed",
+        "message": "Speech synthesis failed",
+        "detail": "InvalidParameter: Request voice is invalid!",
+    } in errors
+
+
+@pytest.mark.asyncio
+async def test_voice_session_streams_tts_while_agent_is_running():
+    websocket = FakeVoiceWebSocket(
+        [
+            {"type": "websocket.receive", "text": '{"type":"vad","event":"speech_end"}'},
+        ]
+    )
+    first_text_seen = asyncio.Event()
+    tts_chunks: list[str] = []
+
+    class FakeRecognizer:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def stream_async(self, audio):
+            async for _ in audio:
+                pass
+            yield MagicMock(type="final", text="你好")
+
+    class StreamingSynthesizer:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def stream_async(self, text):
+            async for chunk in text:
+                tts_chunks.append(chunk)
+                if len(tts_chunks) == 1:
+                    first_text_seen.set()
+                    yield b"tts-pcm"
+                else:
+                    yield b"unexpected"
+
+    stream_run = MagicMock(id="run-1", delta=MagicMock(text="你好。"))
+    stream_run.model_dump.return_value = {"id": "run-1", "delta": {"text": "你好。"}}
+    finish_run = MagicMock(id="run-1", delta=None, reply=MagicMock(text="你好"))
+    finish_run.model_dump.return_value = {"id": "run-1", "reply": {"text": "你好"}}
+
+    class FakeJob:
+        async def run_async(self, *_args, **kwargs):
+            callback = kwargs["event_callback"]
+            callback(AgentRunEvent.START, MagicMock(id="run-1", delta=None))
+            callback(AgentRunEvent.STREAM, stream_run)
+            await first_text_seen.wait()
+            callback(AgentRunEvent.FINISH, finish_run)
+
+    with patch("fivccliche.utils.voice.ChatQueryJob", return_value=FakeJob()):
+        session = VoiceChatSession(
+            websocket,
+            chat=MagicMock(),
+            user=MagicMock(),
+            asr=MagicMock(),
+            tts=MagicMock(),
+            asr_provider=MagicMock(get_recognizer=AsyncMock(return_value=FakeRecognizer())),
+            tts_provider=MagicMock(get_synthesizer=AsyncMock(return_value=StreamingSynthesizer())),
+            mutex=None,
+            start_frame={},
+        )
+        await session.run()
+
+    assert tts_chunks == ["你好。"]
+    indexes = {
+        item["event"]: index for index, item in enumerate(websocket.sent) if isinstance(item, dict)
+    }
+    audio_index = websocket.sent.index(b"tts-pcm")
+    assert audio_index < indexes["finish"] < indexes["turn_completed"]

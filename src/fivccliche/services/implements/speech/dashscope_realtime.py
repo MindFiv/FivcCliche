@@ -40,6 +40,7 @@ _DEFAULT_MODEL = "qwen-audio-3.1-asr-flash-streaming"
 _TTS_DEFAULT_MODEL = "qwen-tts-realtime"
 _TTS_DEFAULT_VOICE = "Cherry"
 _QWEN_AUDIO_TTS_VOICE = "longanhuan_v3.1"
+_QWEN_AUDIO_30_TTS_VOICE = "longanhuan_v3.6"
 _QWEN_TTS_SAMPLE_RATE = 24000
 _AUDIO_CHUNK_SIZE = 12800
 
@@ -86,6 +87,23 @@ def _qwen_tts_websocket_url(base_url: str, model: str) -> str:
 
 def _is_qwen_tts_realtime_model(model: str) -> bool:
     return model.startswith(("qwen-tts-", "qwen3-tts-"))
+
+
+def _tts_options_with_default_voice(
+    model: str,
+    options: SpeechSynthesisOptions,
+) -> SpeechSynthesisOptions:
+    if options.voice:
+        return options
+    if _is_qwen_tts_realtime_model(model):
+        return options.model_copy(update={"voice": _TTS_DEFAULT_VOICE})
+    if model.startswith("qwen-audio-3.1-tts-"):
+        return options.model_copy(update={"voice": _QWEN_AUDIO_TTS_VOICE})
+    if model.startswith("qwen-audio-3.0-tts-"):
+        return options.model_copy(update={"voice": _QWEN_AUDIO_30_TTS_VOICE})
+    raise SpeechRequestError(
+        f"TTS model {model} requires a voice; use a qwen-tts or qwen-audio model"
+    )
 
 
 def _websocket_headers(api_key: str) -> dict[str, str]:
@@ -757,7 +775,7 @@ class _DashScopeTTSSynthesizer(ISpeechSynthesizer):
         self._model = model
         self._ws_url = ws_url
         if options is not None:
-            self._options = options
+            self._options = _tts_options_with_default_voice(model, options)
         elif _is_qwen_tts_realtime_model(model):
             self._options = SpeechSynthesisOptions(
                 voice=_TTS_DEFAULT_VOICE,

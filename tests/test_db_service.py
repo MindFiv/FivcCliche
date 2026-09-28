@@ -80,6 +80,16 @@ class TestDatabaseImplPoolConfig:
         assert "pool_size" not in kwargs
         assert "max_overflow" not in kwargs
 
+    def test_non_sqlite_enables_pool_pre_ping(self):
+        db = _make_db({"DB_URL": "postgresql+asyncpg://user:pass@localhost/dbname"})
+        with patch(
+            "fivccliche.services.implements.db.create_async_engine",
+            return_value=MagicMock(),
+        ) as mock_create:
+            db.get_engine()
+
+        assert mock_create.call_args.kwargs["pool_pre_ping"] is True
+
     def test_non_sqlite_ignores_invalid_pool_settings(self):
         db = _make_db(
             {

@@ -96,6 +96,7 @@ class DatabaseImpl(IDatabase):
             return create_async_engine(
                 self.parsed_url.render_as_string(hide_password=False),
                 echo=False,
+                pool_pre_ping=True,
                 **pool_kwargs,
             )
 

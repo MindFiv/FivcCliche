@@ -1300,6 +1300,63 @@ class TestDashScopeTTS:
         async with synthesizer:
             assert synthesizer._options.voice == "longanhuan_v3.1"
 
+    @pytest.mark.parametrize(
+        ("model", "expected_voice"),
+        [
+            ("qwen-tts-realtime", "Cherry"),
+            ("qwen-audio-3.1-tts-flash", "longanhuan_v3.1"),
+            ("qwen-audio-3.0-tts-flash", "longanhuan_v3.6"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_supplied_empty_voice_uses_model_family_default(
+        self, model: str, expected_voice: str
+    ):
+        if _is_qwen_tts_realtime_model(model):
+            fake_ws = _FakeQwenTtsWs()
+            ws_url = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+        else:
+            fake_ws = _FakeDashScopeTtsWs()
+            ws_url = "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
+
+        async def connect(url: str, headers: dict[str, str]):
+            return fake_ws
+
+        synthesizer = _DashScopeTTSSynthesizer(
+            api_key="sk-test",
+            model=model,
+            ws_url=ws_url,
+            options=SpeechSynthesisOptions(
+                voice="",
+                format="pcm",
+                sample_rate=24000,
+            ),
+            connect=connect,
+        )
+        async with synthesizer:
+            if _is_qwen_tts_realtime_model(model):
+                session = fake_ws.messages[0]["session"]
+                assert session["voice"] == expected_voice
+            else:
+                start = fake_ws.messages[0]
+                assert start["payload"]["parameters"]["voice"] == expected_voice
+
+    @pytest.mark.asyncio
+    async def test_unknown_model_requires_voice_without_connecting(self):
+        async def connect(url: str, headers: dict[str, str]) -> None:
+            raise AssertionError("empty voice must not open a WebSocket")
+
+        with pytest.raises(
+            SpeechRequestError,
+            match=r"TTS model custom-tts requires a voice; use a qwen-tts or qwen-audio model",
+        ):
+            _DashScopeTTSSynthesizer(
+                api_key="sk-test",
+                model="custom-tts",
+                options=SpeechSynthesisOptions(voice=""),
+                connect=connect,
+            )
+
     def test_default_voice_is_compatible_with_qwen_audio_tts(self):
         options = SpeechSynthesisOptions(voice="longanhuan_v3.1")
         frame = _tts_start_frame("qwen-audio-3.1-tts-flash", options, "task-id")
