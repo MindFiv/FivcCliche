@@ -14,6 +14,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from pydantic import ValidationError
 from pydantic_strict_partial import create_partial_model
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -846,6 +847,107 @@ async def probe_tts_config_async(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router_tts.websocket("/{config_uuid}/probe/")
+async def probe_realtime_tts_config_async(
+    config_uuid: str,
+    websocket: WebSocket,
+) -> None:
+    """Stream one synthesis probe over the realtime provider WebSocket protocol."""
+    from fivccliche.utils.chats import ChatWSHandler
+
+    chat_ws = ChatWSHandler(websocket)
+    authenticator = await get_authenticator_async()
+    user = await chat_ws.authenticate(authenticator)
+    if user is None:
+        return
+
+    async with deps.get_db_session_context_async() as session:
+        filters = UserScopedReadableFilterSet(
+            models.UserTTS.user_uuid, user.uuid, is_superuser=user.is_superuser
+        )
+        config = await utils.get_user_scoped_async(
+            session, models.UserTTS, filters=filters, config_uuid=config_uuid
+        )
+        model_type = config.model_type if config else None
+        api_key = config.api_key if config else None
+        tts_model = config.model if config else None
+        base_url = config.base_url if config else None
+
+    if config is None:
+        await chat_ws.fail(
+            code="tts_not_found",
+            message="TTS config not found",
+            close_code=4404,
+        )
+        return
+    if model_type != "dashscope_realtime":
+        await chat_ws.fail(
+            code="invalid_model_type",
+            message="Realtime TTS is required",
+            close_code=1003,
+        )
+        return
+
+    start_frame = await chat_ws.receive(
+        expected_type="start",
+        invalid_code="invalid_start",
+    )
+    if start_frame is None or not isinstance(start_frame, dict):
+        return
+    try:
+        probe = schemas.UserTTSProbeRequest.model_validate(start_frame)
+    except ValidationError:
+        await chat_ws.fail(
+            code="invalid_start",
+            message="Invalid TTS probe parameters",
+            close_code=1003,
+        )
+        return
+
+    speech_provider = await get_speech_provider_async(model_type)
+    if speech_provider is None:
+        await chat_ws.fail(
+            code="provider_unmounted",
+            message="Speech provider is not mounted",
+            close_code=1013,
+        )
+        return
+
+    options = SpeechSynthesisOptions(
+        voice=probe.voice,
+        format=probe.format,
+        sample_rate=probe.sample_rate,
+        volume=probe.volume,
+        speech_rate=probe.speech_rate,
+        pitch_rate=probe.pitch_rate,
+    )
+    try:
+        synthesizer = await speech_provider.get_synthesizer(
+            options,
+            api_key=api_key,
+            model=tts_model,
+            base_url=base_url,
+        )
+        async with synthesizer:
+            await websocket.send_json({"event": "ready", "info": {}})
+            async for audio in synthesizer.stream_async(probe.text):
+                encoded = base64.b64encode(audio).decode("ascii")
+                await websocket.send_json({"event": "audio", "info": {"data_b64": encoded}})
+        await websocket.send_json({"event": "complete", "info": {}})
+        await websocket.close(code=1000)
+    except WebSocketDisconnect:
+        return
+    except RuntimeError:
+        return
+    except SpeechRequestError as exc:
+        await chat_ws.fail(
+            code="synthesis_failed",
+            message=str(exc) or "Speech synthesis failed",
+            close_code=1011,
+        )
+        return
 
 
 @router_tts.get(

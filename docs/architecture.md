@@ -25,6 +25,7 @@ Modules: `users`, `agent_configs`, `agent_chats`, `agent_memories`. All mounted 
 - `POST /configs/tools/{config_uuid}/probe/` — probe a tool config
 - `POST /configs/asrs/{config_uuid}/probe/` — SSE probe of an ASR config with a clip (`url` or `data_b64`); each `SpeechEvent` is one `data:` line (`partial` / `final` / `error`)
 - `POST /configs/tts/{config_uuid}/probe/` — SSE probe of a TTS config with request-level voice/audio parameters; audio chunks are Base64 `audio` events followed by `complete` or `error`
+- `WEBSOCKET /configs/tts/{config_uuid}/probe/` — realtime-only probe with first-frame JWT authentication; emits `ready`, Base64 `audio`, and `complete` or `error`
 
 Frozen agents: `_reject_frozen_agent_update` / `_reject_frozen_agent_delete` in [`agent_configs/routers.py`](../src/fivccliche/modules/agent_configs/routers.py), called from the agent PATCH and DELETE handlers. A frozen agent cannot be deleted. Updates may only set `is_frozen`; any other field in the PATCH body is 403.
 

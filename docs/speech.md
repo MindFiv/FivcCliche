@@ -172,6 +172,22 @@ data: {"event": "complete", "info": {}}
 Missing config is 404, missing provider is 503, and synthesis failures after
 the stream starts are SSE `error` events.
 
+`dashscope_realtime` configs can also probe through
+`WEBSOCKET /api/configs/tts/{config_uuid}/probe/`. After first-frame JWT
+authentication, send one `start` JSON frame with the same request fields as the
+SSE probe:
+
+```json
+{"type":"start","text":"你好","voice":"","format":"pcm","sample_rate":24000,"volume":50,"speech_rate":1.0,"pitch_rate":1.0}
+```
+
+The server emits JSON `{event, info}` events in the same envelope as the
+realtime ASR probe: `ready`, Base64 `audio`, then `complete`; it closes with
+`1000` on success. It closes `4404` for a missing config, `1003` for a
+non-realtime config or invalid start frame, `1013` when the provider is not
+mounted, and `1011` for synthesis failure. Errors use
+`{"event":"error","info":{"code":"...","message":"..."}}`.
+
 User ASR configs (`model`, `base_url`, `api_key`, `model_type`) override the
 shared `.env.json` session `SPEECH` when passed to `get_recognizer`:
 

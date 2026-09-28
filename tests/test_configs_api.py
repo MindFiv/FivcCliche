@@ -971,6 +971,48 @@ class TestTTSConfigAPI:
                 events.append(json.loads(line[6:]))
         return events
 
+    @staticmethod
+    def _create_realtime_tts(client: TestClient, token: str) -> str:
+        response = client.post(
+            "/configs/tts/",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "id": "realtime-tts",
+                "model": "qwen-tts-realtime",
+                "api_key": "sk-probe",
+                "base_url": "wss://dashscope.example.com",
+                "model_type": "dashscope_realtime",
+            },
+        )
+        assert response.status_code == 201
+        return response.json()["uuid"]
+
+    @staticmethod
+    def _open_realtime_tts_probe(
+        client: TestClient,
+        config_uuid: str,
+        auth_token: str,
+    ):
+        websocket = client.websocket_connect(f"/configs/tts/{config_uuid}/probe/")
+        return websocket
+
+    @staticmethod
+    def _start_realtime_tts_probe_session(websocket, auth_token: str):
+        websocket.send_json({"type": "auth", "access_token": auth_token})
+        websocket.send_json(
+            {
+                "type": "start",
+                "text": "你好",
+                "voice": "",
+                "format": "pcm",
+                "sample_rate": 24000,
+                "volume": 70,
+                "speech_rate": 1.0,
+                "pitch_rate": 1.0,
+            }
+        )
+        return websocket
+
     def test_create_tts_config_unauthorized(self, client: TestClient):
         response = client.post(
             "/configs/tts/",
@@ -1165,6 +1207,217 @@ class TestTTSConfigAPI:
 
         assert response.status_code == 200
         assert self._sse_events(response) == [{"event": "error", "info": {"message": "boom"}}]
+
+    def test_realtime_probe_tts_config(self, client: TestClient, auth_token: str):
+        config_uuid = self._create_realtime_tts(client, auth_token)
+        captured: dict = {}
+        provider = FakeSpeechProvider(audio=(b"abc", b"def"))
+        original = provider.get_synthesizer
+
+        async def get_synthesizer(options, **kwargs):
+            captured["options"] = options
+            captured["kwargs"] = kwargs
+            return await original(options, **kwargs)
+
+        provider.get_synthesizer = get_synthesizer  # type: ignore[method-assign]
+        with patch(
+            "fivccliche.modules.agent_configs.routers.get_speech_provider_async",
+            new=AsyncMock(return_value=provider),
+        ) as get_provider:
+            websocket = self._open_realtime_tts_probe(client, config_uuid, auth_token)
+            with websocket:
+                self._start_realtime_tts_probe_session(websocket, auth_token)
+                assert websocket.receive_json() == {"event": "ready", "info": {}}
+                assert websocket.receive_json() == {
+                    "event": "audio",
+                    "info": {"data_b64": "YWJj"},
+                }
+                assert websocket.receive_json() == {
+                    "event": "audio",
+                    "info": {"data_b64": "ZGVm"},
+                }
+                assert websocket.receive_json() == {"event": "complete", "info": {}}
+                with pytest.raises(WebSocketDisconnect) as exc_info:
+                    websocket.receive_json()
+                assert exc_info.value.code == 1000
+
+        get_provider.assert_awaited_once_with("dashscope_realtime")
+        assert captured["kwargs"]["api_key"] == "sk-probe"
+        assert captured["kwargs"]["model"] == "qwen-tts-realtime"
+        assert captured["kwargs"]["base_url"] == "wss://dashscope.example.com"
+        assert captured["options"] == SpeechSynthesisOptions(
+            voice="",
+            format="pcm",
+            sample_rate=24000,
+            volume=70,
+            speech_rate=1.0,
+            pitch_rate=1.0,
+        )
+
+    def test_realtime_probe_tts_config_requires_realtime(
+        self,
+        client: TestClient,
+        auth_token: str,
+    ):
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        response = client.post(
+            "/configs/tts/",
+            headers=headers,
+            json={
+                "id": "http-tts",
+                "model": "qwen-audio-3.1-tts-flash",
+                "api_key": "sk-probe",
+                "model_type": "dashscope",
+            },
+        )
+        config_uuid = response.json()["uuid"]
+        websocket = self._open_realtime_tts_probe(client, config_uuid, auth_token)
+        with websocket:
+            self._start_realtime_tts_probe_session(websocket, auth_token)
+            assert websocket.receive_json() == {
+                "event": "error",
+                "info": {
+                    "code": "invalid_model_type",
+                    "message": "Realtime TTS is required",
+                },
+            }
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                websocket.receive_json()
+            assert exc_info.value.code == 1003
+
+    def test_realtime_probe_tts_config_rejects_invalid_start(
+        self,
+        client: TestClient,
+        auth_token: str,
+    ):
+        config_uuid = self._create_realtime_tts(client, auth_token)
+        websocket = client.websocket_connect(f"/configs/tts/{config_uuid}/probe/")
+        with websocket:
+            websocket.send_json({"type": "auth", "access_token": auth_token})
+            websocket.send_json({"type": "start"})
+            assert websocket.receive_json() == {
+                "event": "error",
+                "info": {
+                    "code": "invalid_start",
+                    "message": "Invalid TTS probe parameters",
+                },
+            }
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                websocket.receive_json()
+            assert exc_info.value.code == 1003
+
+    def test_realtime_probe_tts_config_not_found(
+        self,
+        client: TestClient,
+        auth_token: str,
+    ):
+        websocket = self._open_realtime_tts_probe(client, "missing", auth_token)
+        with websocket:
+            self._start_realtime_tts_probe_session(websocket, auth_token)
+            assert websocket.receive_json() == {
+                "event": "error",
+                "info": {
+                    "code": "tts_not_found",
+                    "message": "TTS config not found",
+                },
+            }
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                websocket.receive_json()
+            assert exc_info.value.code == 4404
+
+    def test_realtime_probe_tts_config_provider_missing(
+        self,
+        client: TestClient,
+        auth_token: str,
+    ):
+        config_uuid = self._create_realtime_tts(client, auth_token)
+        with patch(
+            "fivccliche.modules.agent_configs.routers.get_speech_provider_async",
+            new=AsyncMock(return_value=None),
+        ):
+            websocket = self._open_realtime_tts_probe(client, config_uuid, auth_token)
+            with websocket:
+                self._start_realtime_tts_probe_session(websocket, auth_token)
+                assert websocket.receive_json() == {
+                    "event": "error",
+                    "info": {
+                        "code": "provider_unmounted",
+                        "message": "Speech provider is not mounted",
+                    },
+                }
+                with pytest.raises(WebSocketDisconnect) as exc_info:
+                    websocket.receive_json()
+                assert exc_info.value.code == 1013
+
+    def test_realtime_probe_tts_config_synthesis_error(
+        self,
+        client: TestClient,
+        auth_token: str,
+    ):
+        config_uuid = self._create_realtime_tts(client, auth_token)
+
+        async def stream_async(_text):
+            raise SpeechRequestError("vendor failed")
+            yield b""
+
+        synthesizer = MagicMock()
+        synthesizer.stream_async = stream_async
+        synthesizer.__aenter__ = AsyncMock(return_value=synthesizer)
+        synthesizer.__aexit__ = AsyncMock(return_value=None)
+
+        async def get_synthesizer(_options, **_kwargs):
+            return synthesizer
+
+        provider = MagicMock()
+        provider.get_synthesizer = get_synthesizer
+        with patch(
+            "fivccliche.modules.agent_configs.routers.get_speech_provider_async",
+            new=AsyncMock(return_value=provider),
+        ):
+            websocket = self._open_realtime_tts_probe(client, config_uuid, auth_token)
+            with websocket:
+                self._start_realtime_tts_probe_session(websocket, auth_token)
+                assert websocket.receive_json() == {"event": "ready", "info": {}}
+                assert websocket.receive_json() == {
+                    "event": "error",
+                    "info": {
+                        "code": "synthesis_failed",
+                        "message": "vendor failed",
+                    },
+                }
+                with pytest.raises(WebSocketDisconnect) as exc_info:
+                    websocket.receive_json()
+                assert exc_info.value.code == 1011
+
+    def test_normal_user_can_probe_global_tts_config(
+        self,
+        client: TestClient,
+        admin_token: str,
+        auth_token: str,
+    ):
+        config_uuid = self._create_realtime_tts(client, admin_token)
+        member_view = client.get(
+            "/configs/tts/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert member_view.status_code == 200
+        assert member_view.json()["total"] == 1
+        assert member_view.json()["results"][0]["uuid"] == config_uuid
+
+        provider = FakeSpeechProvider(audio=(b"abc",))
+        with patch(
+            "fivccliche.modules.agent_configs.routers.get_speech_provider_async",
+            new=AsyncMock(return_value=provider),
+        ):
+            websocket = self._open_realtime_tts_probe(client, config_uuid, auth_token)
+            with websocket:
+                self._start_realtime_tts_probe_session(websocket, auth_token)
+                assert websocket.receive_json() == {"event": "ready", "info": {}}
+                assert websocket.receive_json() == {
+                    "event": "audio",
+                    "info": {"data_b64": "YWJj"},
+                }
+                assert websocket.receive_json() == {"event": "complete", "info": {}}
 
 
 class TestAgentConfigAPI:
