@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from fivccliche.services.implements import service_site
-from fivccliche.utils.chats import ChatEventHandler, ChatWSHandler, ChatWSQuery
+from fivccliche.utils.chats import ChatEventHandler, ChatWSHandler
 from fivccliche.utils.deps import (
     IUser,
     get_authenticator_async,
@@ -32,6 +32,7 @@ from fivccliche.utils.deps import (
 )
 from fivccliche.utils.filters import FilterError
 from fivccliche.utils.schemas import PaginatedResponse
+from fivccliche.utils.voice import VoiceChatWSHandler
 
 from . import models, schemas, utils
 from .filters import ChatEditableFilterSet, ChatFilterSet
@@ -219,6 +220,24 @@ async def delete_chat_async(
     await session.commit()
 
 
+@router_chats.websocket("/{chat_uuid}/")
+async def create_chat_voice_ws_async(
+    websocket: WebSocket,
+    chat_uuid: str,
+    auth: IUserAuthenticator = Depends(get_authenticator_async),
+    session: AsyncSession = Depends(get_db_session_async),
+    mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
+) -> None:
+    """Run a full-duplex realtime voice session for one chat."""
+    await VoiceChatWSHandler(
+        websocket,
+        chat_uuid=chat_uuid,
+        authenticator=auth,
+        session=session,
+        mutex=mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None,
+    ).run()
+
+
 # ============================================================================
 # Chat Message Endpoints
 # ============================================================================
@@ -314,22 +333,47 @@ async def create_chat_messages_async(
     )
 
 
-@router_messages.websocket("/{chat_uuid}/messages/ws/")
-async def create_chat_messages_ws_async(
+async def _run_text_messages_websocket_async(
     websocket: WebSocket,
     chat_uuid: str,
-    auth: IUserAuthenticator = Depends(get_authenticator_async),
-    session: AsyncSession = Depends(get_db_session_async),
-    mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
+    *,
+    auth: IUserAuthenticator,
+    session: AsyncSession,
+    mutex_site: IMutexSite | None,
 ) -> None:
-    """Stream one chat turn over WebSocket after first-frame authentication."""
+    """Authenticate and stream one text-only chat turn."""
     chat_ws = ChatWSHandler(websocket, auth_timeout=CHAT_MESSAGE_AUTH_TIMEOUT)
     user = await chat_ws.authenticate(auth)
     if user is None:
         return
 
-    message_frame = await chat_ws.receive(expected_type="message", invalid_code="invalid_message")
-    if message_frame is None or not isinstance(message_frame, dict):
+    message_frame = await chat_ws.receive()
+    if message_frame is None:
+        return
+    if isinstance(message_frame, bytes):
+        await chat_ws.fail(
+            code="voice_endpoint_moved",
+            message="Use WEBSOCKET /api/chats/{chat_uuid}/",
+            close_code=1003,
+        )
+        return
+    if not isinstance(message_frame, dict):
+        await chat_ws.fail(
+            code="invalid_frame",
+            message="Invalid JSON frame",
+            close_code=1003,
+        )
+        return
+    if (
+        "audio" in message_frame
+        or "audio_stream" in message_frame
+        or message_frame.get("type") == "audio_commit"
+    ):
+        await chat_ws.fail(
+            code="voice_endpoint_moved",
+            message="Use WEBSOCKET /api/chats/{chat_uuid}/",
+            close_code=1003,
+        )
         return
 
     chat = await utils.get_chat_async(
@@ -346,16 +390,16 @@ async def create_chat_messages_ws_async(
         )
         return
 
-    query = await ChatWSQuery(chat_ws, websocket).resolve(
-        message_frame,
-        user=user,
-        session=session,
-        chat_context=chat.context,
-    )
-    await session.close()
-    if query is None:
+    query = str(message_frame.get("query") or "").strip()
+    if message_frame.get("type") != "message" or not query:
+        await chat_ws.fail(
+            code="invalid_message",
+            message="A non-empty query is required",
+            close_code=1003,
+        )
         return
 
+    await session.close()
     chat_mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
     if chat_mutex and not await chat_mutex.acquire_async(
         expire=CHAT_MESSAGE_LOCK_EXPIRE,
@@ -411,6 +455,42 @@ async def create_chat_messages_ws_async(
         await completion_task
     else:
         await websocket.close(code=1000)
+
+
+@router_messages.websocket("/{chat_uuid}/messages/")
+async def create_chat_messages_ws_async(
+    websocket: WebSocket,
+    chat_uuid: str,
+    auth: IUserAuthenticator = Depends(get_authenticator_async),
+    session: AsyncSession = Depends(get_db_session_async),
+    mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
+) -> None:
+    """Stream one text chat turn over the canonical WebSocket route."""
+    await _run_text_messages_websocket_async(
+        websocket,
+        chat_uuid,
+        auth=auth,
+        session=session,
+        mutex_site=mutex_site,
+    )
+
+
+@router_messages.websocket("/{chat_uuid}/messages/ws/")
+async def create_chat_messages_ws_compat_async(
+    websocket: WebSocket,
+    chat_uuid: str,
+    auth: IUserAuthenticator = Depends(get_authenticator_async),
+    session: AsyncSession = Depends(get_db_session_async),
+    mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
+) -> None:
+    """Legacy text-only alias for the canonical message WebSocket."""
+    await _run_text_messages_websocket_async(
+        websocket,
+        chat_uuid,
+        auth=auth,
+        session=session,
+        mutex_site=mutex_site,
+    )
 
 
 @router_messages.get(
