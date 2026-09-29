@@ -1022,31 +1022,52 @@ class TestDashScopeRealtimeRecognizer:
             await _collect(recognizer, SpeechAudioInput(data_b64="abc"))
 
 
-def _speech_config(values: dict) -> MagicMock:
-    session = MagicMock()
-    session.get_value.side_effect = lambda key: values.get(key)
-    config = MagicMock()
-    config.get_session.return_value = session
-    return config
-
-
 class TestDashScopeSpeechProvider:
+    @pytest.mark.asyncio
+    async def test_get_recognizer_ignores_global_speech_config(self):
+        component_site = MagicMock()
+        component_site.query_component.return_value = MagicMock()
+        with patch(
+            "fivccliche.services.implements.speech.dashscope._DashScopeMultimodalRecognizer",
+        ) as clip_cls:
+            provider = DashScopeSpeechProvider(component_site)
+            await provider.get_recognizer()
+
+        component_site.query_component.assert_not_called()
+        assert clip_cls.call_args.kwargs["api_key"] == ""
+        assert clip_cls.call_args.kwargs["model"] == "qwen3-asr-flash"
+        assert clip_cls.call_args.kwargs["base_url"] == "https://dashscope.aliyuncs.com"
+
+    @pytest.mark.asyncio
+    async def test_get_synthesizer_ignores_global_speech_config(self):
+        component_site = MagicMock()
+        component_site.query_component.return_value = MagicMock()
+        options = SpeechSynthesisOptions(voice="", format="wav", sample_rate=24000)
+        with patch(
+            "fivccliche.services.implements.speech.dashscope._DashScopeQwenAudioTTSSynthesizer",
+        ) as synthesizer_cls:
+            provider = DashScopeSpeechProvider(component_site)
+            await provider.get_synthesizer(options)
+
+        component_site.query_component.assert_not_called()
+        assert synthesizer_cls.call_args.kwargs["api_key"] == ""
+        assert synthesizer_cls.call_args.kwargs["model"] == _TTS_DEFAULT_MODEL
+        assert synthesizer_cls.call_args.kwargs["base_url"] == (
+            "https://dashscope.aliyuncs.com" + _QWEN_AUDIO_TTS_PATH
+        )
+
     @pytest.mark.asyncio
     async def test_get_recognizer_builds_flash(self):
         options = SpeechRecognizeOptions(language="zh")
-        with (
-            patch(
-                "fivccliche.services.implements.speech.dashscope.query_component",
-                return_value=_speech_config(
-                    {"ASR_API_KEY": "sk-x", "ASR_MODEL": "qwen3-asr-flash"}
-                ),
-            ),
-            patch(
-                "fivccliche.services.implements.speech.dashscope._DashScopeMultimodalRecognizer",
-            ) as clip_cls,
-        ):
+        with patch(
+            "fivccliche.services.implements.speech.dashscope._DashScopeMultimodalRecognizer",
+        ) as clip_cls:
             provider = DashScopeSpeechProvider(MagicMock())
-            recognizer = await provider.get_recognizer(options)
+            recognizer = await provider.get_recognizer(
+                options,
+                api_key="sk-x",
+                model="qwen3-asr-flash",
+            )
 
         clip_cls.assert_called_once()
         assert recognizer is clip_cls.return_value
@@ -1057,17 +1078,9 @@ class TestDashScopeSpeechProvider:
     @pytest.mark.asyncio
     async def test_get_recognizer_overrides_credentials(self):
         options = SpeechRecognizeOptions(language="zh")
-        with (
-            patch(
-                "fivccliche.services.implements.speech.dashscope.query_component",
-                return_value=_speech_config(
-                    {"ASR_API_KEY": "sk-x", "ASR_MODEL": "qwen3-asr-flash"}
-                ),
-            ),
-            patch(
-                "fivccliche.services.implements.speech.dashscope._DashScopeMultimodalRecognizer",
-            ) as clip_cls,
-        ):
+        with patch(
+            "fivccliche.services.implements.speech.dashscope._DashScopeMultimodalRecognizer",
+        ) as clip_cls:
             provider = DashScopeSpeechProvider(MagicMock())
             await provider.get_recognizer(
                 options,
@@ -1082,15 +1095,9 @@ class TestDashScopeSpeechProvider:
 
     @pytest.mark.asyncio
     async def test_get_recognizer_empty_api_key_is_explicit(self):
-        with (
-            patch(
-                "fivccliche.services.implements.speech.dashscope.query_component",
-                return_value=_speech_config({"ASR_API_KEY": "sk-x"}),
-            ),
-            patch(
-                "fivccliche.services.implements.speech.dashscope._DashScopeMultimodalRecognizer",
-            ) as clip_cls,
-        ):
+        with patch(
+            "fivccliche.services.implements.speech.dashscope._DashScopeMultimodalRecognizer",
+        ) as clip_cls:
             provider = DashScopeSpeechProvider(MagicMock())
             await provider.get_recognizer(api_key="")
 
@@ -1099,35 +1106,11 @@ class TestDashScopeSpeechProvider:
     @pytest.mark.asyncio
     async def test_get_synthesizer_uses_tts_defaults_and_overrides(self):
         options = SpeechSynthesisOptions(voice="", format="wav", sample_rate=24000)
-        with (
-            patch(
-                "fivccliche.services.implements.speech.dashscope.query_component",
-                return_value=_speech_config({"TTS_API_KEY": "sk-x"}),
-            ),
-            patch(
-                "fivccliche.services.implements.speech.dashscope._DashScopeQwenAudioTTSSynthesizer",
-            ) as synthesizer_cls,
-        ):
+        with patch(
+            "fivccliche.services.implements.speech.dashscope._DashScopeQwenAudioTTSSynthesizer",
+        ) as synthesizer_cls:
             provider = DashScopeSpeechProvider(MagicMock())
             await provider.get_synthesizer(options)
-
-        assert synthesizer_cls.call_args.kwargs["api_key"] == "sk-x"
-        assert synthesizer_cls.call_args.kwargs["model"] == _TTS_DEFAULT_MODEL
-        assert synthesizer_cls.call_args.kwargs["base_url"] == (
-            "https://dashscope.aliyuncs.com" + _QWEN_AUDIO_TTS_PATH
-        )
-        assert synthesizer_cls.call_args.kwargs["options"] is options
-
-        with (
-            patch(
-                "fivccliche.services.implements.speech.dashscope.query_component",
-                return_value=_speech_config({}),
-            ),
-            patch(
-                "fivccliche.services.implements.speech.dashscope._DashScopeQwenAudioTTSSynthesizer",
-            ) as synthesizer_cls,
-        ):
-            provider = DashScopeSpeechProvider(MagicMock())
             await provider.get_synthesizer(
                 options,
                 api_key="sk-override",
@@ -1135,14 +1118,56 @@ class TestDashScopeSpeechProvider:
                 base_url="wss://example.com/",
             )
 
-        assert synthesizer_cls.call_args.kwargs["api_key"] == "sk-override"
-        assert synthesizer_cls.call_args.kwargs["model"] == "qwen-audio-3.1-tts-flash"
-        assert synthesizer_cls.call_args.kwargs["base_url"] == (
-            "https://example.com" + _QWEN_AUDIO_TTS_PATH
+        default_call, override_call = synthesizer_cls.call_args_list
+
+        assert default_call.kwargs["api_key"] == ""
+        assert default_call.kwargs["model"] == _TTS_DEFAULT_MODEL
+        assert default_call.kwargs["base_url"] == (
+            "https://dashscope.aliyuncs.com" + _QWEN_AUDIO_TTS_PATH
         )
+        assert default_call.kwargs["options"] is options
+
+        assert override_call.kwargs["api_key"] == "sk-override"
+        assert override_call.kwargs["model"] == "qwen-audio-3.1-tts-flash"
+        assert override_call.kwargs["base_url"] == ("https://example.com" + _QWEN_AUDIO_TTS_PATH)
 
 
 class TestDashScopeRealtimeSpeechProvider:
+    @pytest.mark.asyncio
+    async def test_get_recognizer_ignores_global_speech_config(self):
+        component_site = MagicMock()
+        component_site.query_component.return_value = MagicMock()
+        with patch(
+            "fivccliche.services.implements.speech.dashscope_realtime._DashScopeRealtimeRecognizer",
+        ) as stream_cls:
+            provider = DashScopeRealtimeSpeechProvider(component_site)
+            await provider.get_recognizer()
+
+        component_site.query_component.assert_not_called()
+        assert stream_cls.call_args.kwargs["api_key"] == ""
+        assert stream_cls.call_args.kwargs["model"] == ("qwen-audio-3.1-asr-flash-streaming")
+        assert stream_cls.call_args.kwargs["ws_url"] == (
+            "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_synthesizer_ignores_global_speech_config(self):
+        component_site = MagicMock()
+        component_site.query_component.return_value = MagicMock()
+        options = SpeechSynthesisOptions(voice="Cherry")
+        with patch(
+            "fivccliche.services.implements.speech.dashscope_realtime._DashScopeTTSSynthesizer",
+        ) as synthesizer_cls:
+            provider = DashScopeRealtimeSpeechProvider(component_site)
+            await provider.get_synthesizer(options)
+
+        component_site.query_component.assert_not_called()
+        assert synthesizer_cls.call_args.kwargs["api_key"] == ""
+        assert synthesizer_cls.call_args.kwargs["model"] == "qwen-tts-realtime"
+        assert synthesizer_cls.call_args.kwargs["ws_url"] == (
+            "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen-tts-realtime"
+        )
+
     @pytest.mark.asyncio
     async def test_get_recognizer_only_constructs(self):
         stream = MagicMock()
@@ -1150,23 +1175,16 @@ class TestDashScopeRealtimeSpeechProvider:
         stream.__aenter__ = AsyncMock(return_value=stream)
         stream.__aexit__ = AsyncMock(return_value=None)
         options = SpeechRecognizeOptions(format="pcm")
-        with (
-            patch(
-                "fivccliche.services.implements.speech.dashscope_realtime.query_component",
-                return_value=_speech_config(
-                    {
-                        "ASR_API_KEY": "sk-x",
-                        "ASR_MODEL": "qwen-audio-3.1-asr-flash-streaming",
-                    }
-                ),
-            ),
-            patch(
-                "fivccliche.services.implements.speech.dashscope_realtime._DashScopeRealtimeRecognizer",
-                return_value=stream,
-            ) as stream_cls,
-        ):
+        with patch(
+            "fivccliche.services.implements.speech.dashscope_realtime._DashScopeRealtimeRecognizer",
+            return_value=stream,
+        ) as stream_cls:
             provider = DashScopeRealtimeSpeechProvider(MagicMock())
-            recognizer = await provider.get_recognizer(options)
+            recognizer = await provider.get_recognizer(
+                options,
+                api_key="sk-x",
+                model="qwen-audio-3.1-asr-flash-streaming",
+            )
 
         stream_cls.assert_called_once()
         assert recognizer is stream
@@ -1187,21 +1205,10 @@ class TestDashScopeRealtimeSpeechProvider:
     async def test_get_recognizer_overrides_credentials(self):
         stream = MagicMock()
         options = SpeechRecognizeOptions(format="pcm")
-        with (
-            patch(
-                "fivccliche.services.implements.speech.dashscope_realtime.query_component",
-                return_value=_speech_config(
-                    {
-                        "ASR_API_KEY": "sk-x",
-                        "ASR_MODEL": "qwen-audio-3.1-asr-flash-streaming",
-                    }
-                ),
-            ),
-            patch(
-                "fivccliche.services.implements.speech.dashscope_realtime._DashScopeRealtimeRecognizer",
-                return_value=stream,
-            ) as stream_cls,
-        ):
+        with patch(
+            "fivccliche.services.implements.speech.dashscope_realtime._DashScopeRealtimeRecognizer",
+            return_value=stream,
+        ) as stream_cls:
             provider = DashScopeRealtimeSpeechProvider(MagicMock())
             await provider.get_recognizer(
                 options,
@@ -1218,16 +1225,10 @@ class TestDashScopeRealtimeSpeechProvider:
     @pytest.mark.asyncio
     async def test_get_recognizer_accepts_websocket_base_url(self):
         stream = MagicMock()
-        with (
-            patch(
-                "fivccliche.services.implements.speech.dashscope_realtime.query_component",
-                return_value=_speech_config({}),
-            ),
-            patch(
-                "fivccliche.services.implements.speech.dashscope_realtime._DashScopeRealtimeRecognizer",
-                return_value=stream,
-            ) as stream_cls,
-        ):
+        with patch(
+            "fivccliche.services.implements.speech.dashscope_realtime._DashScopeRealtimeRecognizer",
+            return_value=stream,
+        ) as stream_cls:
             provider = DashScopeRealtimeSpeechProvider(MagicMock())
             await provider.get_recognizer(
                 base_url=(
@@ -1243,10 +1244,6 @@ class TestDashScopeRealtimeSpeechProvider:
     async def test_recognizer_and_synthesizer_share_maas_origin_url(self):
         base_url = "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com/"
         with (
-            patch(
-                "fivccliche.services.implements.speech.dashscope_realtime.query_component",
-                return_value=_speech_config({}),
-            ),
             patch(
                 "fivccliche.services.implements.speech.dashscope_realtime._DashScopeRealtimeRecognizer"
             ) as recognizer_cls,
@@ -1270,15 +1267,9 @@ class TestDashScopeRealtimeSpeechProvider:
 class TestDashScopeTTS:
     @pytest.mark.asyncio
     async def test_get_synthesizer_defaults_without_options(self):
-        with (
-            patch(
-                "fivccliche.services.implements.speech.dashscope_realtime.query_component",
-                return_value=_speech_config({}),
-            ),
-            patch(
-                "fivccliche.services.implements.speech.dashscope_realtime._DashScopeTTSSynthesizer",
-            ) as synthesizer_cls,
-        ):
+        with patch(
+            "fivccliche.services.implements.speech.dashscope_realtime._DashScopeTTSSynthesizer",
+        ) as synthesizer_cls:
             provider = DashScopeRealtimeSpeechProvider(MagicMock())
             await provider.get_synthesizer()
 
@@ -1595,35 +1586,11 @@ class TestDashScopeTTS:
     @pytest.mark.asyncio
     async def test_get_synthesizer_uses_tts_defaults_and_overrides(self):
         options = SpeechSynthesisOptions(voice="longanhuan_v3.1")
-        with (
-            patch(
-                "fivccliche.services.implements.speech.dashscope_realtime.query_component",
-                return_value=_speech_config({"TTS_API_KEY": "sk-x"}),
-            ),
-            patch(
-                "fivccliche.services.implements.speech.dashscope_realtime._DashScopeTTSSynthesizer",
-            ) as synthesizer_cls,
-        ):
+        with patch(
+            "fivccliche.services.implements.speech.dashscope_realtime._DashScopeTTSSynthesizer",
+        ) as synthesizer_cls:
             provider = DashScopeRealtimeSpeechProvider(MagicMock())
             await provider.get_synthesizer(options)
-
-        assert synthesizer_cls.call_args.kwargs["api_key"] == "sk-x"
-        assert synthesizer_cls.call_args.kwargs["model"] == "qwen-tts-realtime"
-        assert synthesizer_cls.call_args.kwargs["ws_url"] == (
-            "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen-tts-realtime"
-        )
-        assert synthesizer_cls.call_args.kwargs["options"] is options
-
-        with (
-            patch(
-                "fivccliche.services.implements.speech.dashscope_realtime.query_component",
-                return_value=_speech_config({}),
-            ),
-            patch(
-                "fivccliche.services.implements.speech.dashscope_realtime._DashScopeTTSSynthesizer",
-            ) as synthesizer_cls,
-        ):
-            provider = DashScopeRealtimeSpeechProvider(MagicMock())
             await provider.get_synthesizer(
                 options,
                 api_key="sk-override",
@@ -1631,11 +1598,18 @@ class TestDashScopeTTS:
                 base_url="https://example.com",
             )
 
-        assert synthesizer_cls.call_args.kwargs["api_key"] == "sk-override"
-        assert synthesizer_cls.call_args.kwargs["model"] == "custom-tts"
-        assert synthesizer_cls.call_args.kwargs["ws_url"] == (
-            "wss://example.com/api-ws/v1/inference"
+        default_call, override_call = synthesizer_cls.call_args_list
+
+        assert default_call.kwargs["api_key"] == ""
+        assert default_call.kwargs["model"] == "qwen-tts-realtime"
+        assert default_call.kwargs["ws_url"] == (
+            "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen-tts-realtime"
         )
+        assert default_call.kwargs["options"] is options
+
+        assert override_call.kwargs["api_key"] == "sk-override"
+        assert override_call.kwargs["model"] == "custom-tts"
+        assert override_call.kwargs["ws_url"] == ("wss://example.com/api-ws/v1/inference")
 
 
 class TestDashScopeConcurrency:

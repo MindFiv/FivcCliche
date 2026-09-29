@@ -138,9 +138,9 @@ class ISpeechProvider(IComponent):
     ) -> ISpeechRecognizer:
         """Create a recognizer.
 
-        ``api_key``, ``model``, and ``base_url`` override SPEECH config when
-        not ``None``. Realtime implementations open the vendor session in
-        ``__aenter__``.
+        ``api_key``, ``model``, and ``base_url`` are caller-supplied values,
+        typically loaded from a database config row. Realtime implementations
+        open the vendor session in ``__aenter__``.
         """
 
     @abstractmethod

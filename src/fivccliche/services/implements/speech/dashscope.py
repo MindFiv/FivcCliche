@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import base64
-import logging
 from collections.abc import AsyncIterator
 from typing import Any, Literal, Self
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
-from fivcglue import IComponentSite, query_component
-from fivcglue.interfaces import configs
+from fivcglue import IComponentSite
 
 from fivccliche.services.interfaces.speech import (
     ISpeechProvider,
@@ -22,9 +20,6 @@ from fivccliche.services.interfaces.speech import (
     SpeechRequestError,
     SpeechSynthesisOptions,
 )
-from fivccliche.utils.types import to_string
-
-_logger = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com"
 _DEFAULT_MODEL = "qwen3-asr-flash"
@@ -378,8 +373,8 @@ class _DashScopeQwenAudioTTSSynthesizer(ISpeechSynthesizer):
 class DashScopeSpeechProvider(ISpeechProvider):
     """ISpeechProvider that creates DashScope HTTP ASR and Qwen-Audio TTS sessions."""
 
-    def __init__(self, component_site: IComponentSite, **_kwargs: Any) -> None:
-        self._component_site = component_site
+    def __init__(self, _component_site: IComponentSite, **_kwargs: Any) -> None:
+        """Accept component-site construction while using caller-supplied credentials."""
 
     async def get_recognizer(
         self,
@@ -427,37 +422,8 @@ class DashScopeSpeechProvider(ISpeechProvider):
         model: str | None = None,
         base_url: str | None = None,
     ) -> tuple[str, str, str]:
-        prefix = "ASR" if capability == "asr" else "TTS"
         default_model = _DEFAULT_MODEL if capability == "asr" else _TTS_DEFAULT_MODEL
-        session = _speech_config_session(self._component_site)
-        resolved_api_key = (
-            api_key
-            if api_key is not None
-            else to_string(session.get_value(f"{prefix}_API_KEY") if session else None, "")
-        )
-        resolved_model = (
-            model
-            if model is not None
-            else to_string(session.get_value(f"{prefix}_MODEL") if session else None, default_model)
-        )
-        resolved_base_url = (
-            base_url
-            if base_url is not None
-            else to_string(
-                session.get_value(f"{prefix}_BASE_URL") if session else None,
-                _DEFAULT_BASE_URL,
-            )
-        ).rstrip("/")
+        resolved_api_key = api_key if api_key is not None else ""
+        resolved_model = model if model is not None else default_model
+        resolved_base_url = (base_url if base_url is not None else _DEFAULT_BASE_URL).rstrip("/")
         return resolved_api_key, resolved_model, resolved_base_url
-
-
-def _speech_config_session(component_site: IComponentSite) -> configs.IConfigSession | None:
-    config = query_component(component_site, configs.IConfig)
-    if config is None:
-        _logger.warning("IConfig component not registered; using speech defaults")
-        return None
-
-    session = config.get_session("SPEECH")
-    if session is None:
-        _logger.warning("Config session 'SPEECH' not found; using speech defaults")
-    return session

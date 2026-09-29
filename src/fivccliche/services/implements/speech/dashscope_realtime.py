@@ -13,8 +13,7 @@ from typing import Any, Literal, Self
 from urllib.parse import quote, urlsplit, urlunsplit
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-from fivcglue import IComponentSite, query_component
-from fivcglue.interfaces import configs
+from fivcglue import IComponentSite
 
 from fivccliche.services.interfaces.speech import (
     ISpeechProvider,
@@ -27,7 +26,6 @@ from fivccliche.services.interfaces.speech import (
     SpeechEventType,
     SpeechSynthesisOptions,
 )
-from fivccliche.utils.types import to_string
 
 _logger = logging.getLogger(__name__)
 
@@ -919,8 +917,8 @@ class _DashScopeTTSSynthesizer(ISpeechSynthesizer):
 class DashScopeRealtimeSpeechProvider(ISpeechProvider):
     """ISpeechProvider that creates DashScope realtime ASR and TTS sessions."""
 
-    def __init__(self, component_site: IComponentSite, **_kwargs: Any) -> None:
-        self._component_site = component_site
+    def __init__(self, _component_site: IComponentSite, **_kwargs: Any) -> None:
+        """Accept component-site construction while using caller-supplied credentials."""
 
     async def get_recognizer(
         self,
@@ -973,44 +971,11 @@ class DashScopeRealtimeSpeechProvider(ISpeechProvider):
         model: str | None = None,
         base_url: str | None = None,
     ) -> tuple[str, str, str]:
-        config = query_component(self._component_site, configs.IConfig)
-        session: configs.IConfigSession | None = None
-        if config is None:
-            _logger.warning("IConfig component not registered; using speech defaults")
-        else:
-            session = config.get_session("SPEECH")
-            if session is None:
-                _logger.warning("Config session 'SPEECH' not found; using speech defaults")
-
         is_tts = capability == "tts"
-        api_key_name = "TTS_API_KEY" if is_tts else "ASR_API_KEY"
-        model_name = "TTS_MODEL" if is_tts else "ASR_MODEL"
-        base_url_name = "TTS_BASE_URL" if is_tts else "ASR_BASE_URL"
         default_model = _TTS_DEFAULT_MODEL if is_tts else _DEFAULT_MODEL
         default_base_url = _DEFAULT_HTTP_ORIGIN if is_tts else _DEFAULT_BASE_URL
 
-        resolved_api_key = (
-            api_key
-            if api_key is not None
-            else to_string(
-                session.get_value(api_key_name) if session else None,
-                "",
-            )
-        )
-        resolved_model = (
-            model
-            if model is not None
-            else to_string(
-                session.get_value(model_name) if session else None,
-                default_model,
-            )
-        )
-        resolved_base_url = (
-            base_url
-            if base_url is not None
-            else to_string(
-                session.get_value(base_url_name) if session else None,
-                default_base_url,
-            )
-        ).rstrip("/")
+        resolved_api_key = api_key if api_key is not None else ""
+        resolved_model = model if model is not None else default_model
+        resolved_base_url = (base_url if base_url is not None else default_base_url).rstrip("/")
         return resolved_api_key, resolved_model, resolved_base_url

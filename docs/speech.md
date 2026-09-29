@@ -42,8 +42,8 @@ sent for this protocol.
 Defined in `src/fivccliche/services/interfaces/speech.py`:
 
 - `ISpeechProvider.get_recognizer(options=None, *, api_key=None, model=None, base_url=None)`
-  — abstract factory. Optional `api_key` / `model` / `base_url` override the
-  SPEECH config when not `None`.
+  — abstract factory. Optional `api_key` / `model` / `base_url` are supplied by
+  the caller, normally from a database config row.
 - `ISpeechRecognizer` is an async context manager (`async with`)
 - `ISpeechRecognizer.stream_async(audio)` — async iterator of `SpeechEvent`
   (`partial` / `final` / `error`)
@@ -188,43 +188,32 @@ non-realtime config or invalid start frame, `1013` when the provider is not
 mounted, and `1011` for synthesis failure. Errors use
 `{"event":"error","info":{"code":"...","message":"..."}}`.
 
-User ASR configs (`model`, `base_url`, `api_key`, `model_type`) override the
-shared `.env.json` session `SPEECH` when passed to `get_recognizer`:
+ASR and TTS credentials are caller-supplied. Production callers load
+`UserASR` / `UserTTS` rows from the database and pass their values to the
+provider factory:
 
-```json
-{
-  "SPEECH": {
-    "ASR_API_KEY": "sk-...",
-    "ASR_MODEL": "qwen3-asr-flash",
-    "ASR_BASE_URL": "https://dashscope.aliyuncs.com"
-  }
-}
+```python
+speech_provider.get_recognizer(
+    options,
+    api_key=asr.api_key,
+    model=asr.model,
+    base_url=asr.base_url,
+)
 ```
 
-| Key | Default | Meaning |
+| Argument | Default when `None` | Meaning |
 |-----|---------|---------|
-| `ASR_API_KEY` | empty | DashScope API key |
-| `ASR_MODEL` | Flash: `qwen3-asr-flash`; Realtime: `qwen-audio-3.1-asr-flash-streaming` | Model id for that provider |
-| `ASR_BASE_URL` | `https://dashscope.aliyuncs.com` | HTTP origin or complete `ws://` / `wss://` endpoint; Flash derives its generation URL, Realtime derives `wss://.../api-ws/v1/inference` from an HTTP origin |
+| `api_key` | empty | DashScope API key |
+| `model` | Flash: `qwen3-asr-flash`; Realtime: `qwen-audio-3.1-asr-flash-streaming` | Model id for that provider |
+| `base_url` | `https://dashscope.aliyuncs.com` | HTTP origin or complete `ws://` / `wss://` endpoint; Flash derives its generation URL, Realtime derives `wss://.../api-ws/v1/inference` from an HTTP origin |
 
-TTS uses the shared `.env.json` session `SPEECH` when a `UserTTS` row does not
-supply an override:
+TTS uses the same arguments from a `UserTTS` row:
 
-```json
-{
-  "SPEECH": {
-    "TTS_API_KEY": "sk-...",
-    "TTS_MODEL": "qwen-audio-3.0-tts-flash",
-    "TTS_BASE_URL": "https://dashscope.aliyuncs.com"
-  }
-}
-```
-
-| Key | Default | Meaning |
+| Argument | Default when `None` | Meaning |
 |-----|---------|---------|
-| `TTS_API_KEY` | empty | DashScope API key |
-| `TTS_MODEL` | HTTP: `qwen-audio-3.0-tts-flash`; Realtime: `qwen-tts-realtime` | Model id for that provider |
-| `TTS_BASE_URL` | `https://dashscope.aliyuncs.com` | HTTP origin or complete `ws://` / `wss://` endpoint; HTTP TTS derives the SpeechSynthesizer URL, Qwen-TTS Realtime derives `wss://.../api-ws/v1/realtime`, while other realtime models derive `wss://.../api-ws/v1/inference` |
+| `api_key` | empty | DashScope API key |
+| `model` | HTTP: `qwen-audio-3.0-tts-flash`; Realtime: `qwen-tts-realtime` | Model id for that provider |
+| `base_url` | `https://dashscope.aliyuncs.com` | HTTP origin or complete `ws://` / `wss://` endpoint; HTTP TTS derives the SpeechSynthesizer URL, Qwen-TTS Realtime derives `wss://.../api-ws/v1/realtime`, while other realtime models derive `wss://.../api-ws/v1/inference` |
 
 For tests, instantiate `FakeSpeechProvider(transcript="...")` directly.
 
