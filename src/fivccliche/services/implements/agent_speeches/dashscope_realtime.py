@@ -15,7 +15,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from fivcglue import IComponentSite
 
-from fivccliche.services.interfaces.speech import (
+from fivccliche.services.interfaces.agent_speeches import (
     ISpeechProvider,
     ISpeechRecognizer,
     ISpeechSynthesizer,
@@ -684,14 +684,23 @@ class _DashScopeRealtimeRecognizer(ISpeechRecognizer):
         connect: _ConnectFn | None = None,
         http_client: Any | None = None,
         options: SpeechRecognizeOptions | None = None,
+        speech_id: str = "",
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._ws_url = ws_url or _websocket_url(_DEFAULT_BASE_URL)
         self._connect = connect or _connect_websockets
         self._http_client = http_client
-        self._options = options
+        self._options = options or SpeechRecognizeOptions()
+        self._id = speech_id
         self._socket: _DashScopeRecognitionSocket | None = None
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    def get_option(self) -> SpeechRecognizeOptions:
+        return self._options
 
     async def __aenter__(self) -> Self:
         self._socket = _DashScopeRecognitionSocket(
@@ -768,10 +777,12 @@ class _DashScopeTTSSynthesizer(ISpeechSynthesizer):
         ws_url: str = _DEFAULT_WS_URL,
         options: SpeechSynthesisOptions | None,
         connect: _ConnectFn | None = None,
+        speech_id: str = "",
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._ws_url = ws_url
+        self._id = speech_id
         if options is not None:
             self._options = _tts_options_with_default_voice(model, options)
         elif _is_qwen_tts_realtime_model(model):
@@ -785,6 +796,13 @@ class _DashScopeTTSSynthesizer(ISpeechSynthesizer):
         self._connect = connect or _connect_websockets
         self._socket: _DashScopeTTSSocket | _DashScopeQwenTTSSocket | None = None
         self._stream_lock = asyncio.Lock()
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    def get_option(self) -> SpeechSynthesisOptions:
+        return self._options
 
     async def __aenter__(self) -> Self:
         if _is_qwen_tts_realtime_model(self._model):
@@ -927,16 +945,18 @@ class DashScopeRealtimeSpeechProvider(ISpeechProvider):
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
-        **_kwargs: Any,
+        **kwargs: Any,
     ) -> ISpeechRecognizer:
         api_key, model, base_url = self._credentials(
             capability="asr", api_key=api_key, model=model, base_url=base_url
         )
+        speech_id = kwargs.get("id")
         return _DashScopeRealtimeRecognizer(
             api_key=api_key,
             model=model,
             ws_url=_websocket_url(base_url),
             options=options,
+            speech_id=speech_id if isinstance(speech_id, str) else "",
         )
 
     async def get_synthesizer(
@@ -946,7 +966,7 @@ class DashScopeRealtimeSpeechProvider(ISpeechProvider):
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
-        **_kwargs: Any,
+        **kwargs: Any,
     ) -> ISpeechSynthesizer:
         api_key, model, base_url = self._credentials(
             capability="tts", api_key=api_key, model=model, base_url=base_url
@@ -956,11 +976,13 @@ class DashScopeRealtimeSpeechProvider(ISpeechProvider):
             if _is_qwen_tts_realtime_model(model)
             else _websocket_url(base_url)
         )
+        speech_id = kwargs.get("id")
         return _DashScopeTTSSynthesizer(
             api_key=api_key,
             model=model,
             ws_url=ws_url,
             options=options,
+            speech_id=speech_id if isinstance(speech_id, str) else "",
         )
 
     def _credentials(

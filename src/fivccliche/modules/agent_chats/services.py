@@ -1,21 +1,34 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
+from collections.abc import AsyncIterator
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
-from fivcglue import IComponentSite
-from fivcplayground.agents import AgentRun, AgentRunSession
+from fivcglue import IComponentSite, query_component
+from fivcglue.interfaces.mutexes import IMutex
+from fivcplayground.agents import (
+    AgentRun,
+    AgentRunEvent,
+    AgentRunSession,
+    create_agent_async,
+)
+from fivcplayground.skills import create_skill_retriever_async
+from fivcplayground.tools import create_tool_retriever_async
 
 from fivccliche.services.interfaces.agent_chats import (
     IUserChatProvider,
+    IUserChatRun,
+    IUserChatRunProvider,
     UserChatRepository,
 )
+from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.services.interfaces.modules import IModule, IModuleJob
 from fivccliche.utils.deps import get_db_session_context_async
 
 from . import routers, utils
 from .filters import ChatFilterSet
+from .jobs.describe import ChatDescribeJob
 
 logger = logging.getLogger(__name__)
 
@@ -244,12 +257,156 @@ class UserChatProviderImpl(IUserChatProvider):
         return user_context
 
 
+class UserChatRunImpl(IUserChatRun):
+    """Run one user query through the configured chat agent."""
+
+    class _Dependencies:
+        """Provider-resolved collaborators reused for every turn."""
+
+        def __init__(
+            self,
+            config_provider: IUserConfigProvider,
+            chat_provider: IUserChatProvider,
+            *,
+            user_uuid: str,
+        ):
+            self.embedding_repository = config_provider.get_embedding_repository(
+                user_uuid=user_uuid
+            )
+            self.embedding_backend = config_provider.get_embedding_backend()
+            self.model_repository = config_provider.get_model_repository(user_uuid=user_uuid)
+            self.model_backend = config_provider.get_model_backend()
+            self.tool_repository = config_provider.get_tool_repository(user_uuid=user_uuid)
+            self.tool_backend = config_provider.get_tool_backend()
+            self.skill_repository = config_provider.get_skill_repository(user_uuid=user_uuid)
+            self.agent_repository = config_provider.get_agent_repository(user_uuid=user_uuid)
+            self.agent_backend = config_provider.get_agent_backend()
+            self.chat_repository = chat_provider.get_chat_repository(user_uuid=user_uuid)
+
+    def __init__(
+        self,
+        config_provider: IUserConfigProvider,
+        chat_provider: IUserChatProvider,
+        chat_uuid: str,
+        *,
+        user_uuid: str,
+        agent_id: str = "default",
+        context: dict | None = None,
+    ) -> None:
+        self._config_provider = config_provider
+        self._chat_provider = chat_provider
+        self._chat_uuid = chat_uuid
+        self._user_uuid = user_uuid
+        self._agent_id = agent_id
+        self._context = context
+        self._dependencies: UserChatRunImpl._Dependencies | None = None
+
+    async def __aenter__(self) -> "UserChatRunImpl":
+        self._dependencies = self._Dependencies(
+            self._config_provider,
+            self._chat_provider,
+            user_uuid=self._user_uuid,
+        )
+        return self
+
+    async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+        self._dependencies = None
+
+    async def stream_async(
+        self,
+        query: str,
+        *,
+        mutex: IMutex | None = None,
+        timeout: timedelta | None = None,
+    ) -> AsyncIterator[tuple[AgentRunEvent, AgentRun]]:
+        context_copy = self._chat_provider.get_chat_context(
+            user_uuid=self._user_uuid,
+            context=self._context,
+            chat_uuid=self._chat_uuid,
+        )
+        dependencies = self._dependencies
+        if dependencies is None:
+            dependencies = self._Dependencies(
+                self._config_provider,
+                self._chat_provider,
+                user_uuid=self._user_uuid,
+            )
+            self._dependencies = dependencies
+        try:
+            async with asyncio.timeout(timeout.total_seconds() if timeout else None):
+                agent = await create_agent_async(
+                    model_backend=dependencies.model_backend,
+                    model_config_repository=dependencies.model_repository,
+                    agent_backend=dependencies.agent_backend,
+                    agent_config_repository=dependencies.agent_repository,
+                    agent_config_id=self._agent_id,
+                )
+                agent_tools = await create_tool_retriever_async(
+                    tool_backend=dependencies.tool_backend,
+                    tools=None,
+                    tool_config_repository=dependencies.tool_repository,
+                    embedding_backend=dependencies.embedding_backend,
+                    embedding_config_repository=dependencies.embedding_repository,
+                    space_id=self._user_uuid,
+                )
+                agent_skills = await create_skill_retriever_async(
+                    tool_backend=dependencies.tool_backend,
+                    skill_config_repository=dependencies.skill_repository,
+                    embedding_backend=dependencies.embedding_backend,
+                    embedding_config_repository=dependencies.embedding_repository,
+                    space_id=self._user_uuid,
+                )
+
+                async for event in agent.stream_async(
+                    query=query,
+                    agent_run_repository=dependencies.chat_repository,
+                    agent_run_session_id=self._chat_uuid,
+                    tool_retriever=agent_tools,
+                    tool_ids=[],
+                    skill_retriever=agent_skills,
+                    skill_ids=[],
+                    context=context_copy,
+                ):
+                    yield event
+        except TimeoutError:
+            logger.warning("Chat run timed out chat_uuid=%s", self._chat_uuid)
+            raise
+        finally:
+            if mutex:
+                await mutex.release_async()
+
+
+class UserChatRunProviderImpl(IUserChatRunProvider):
+    """Create user chat runs from registered config and chat providers."""
+
+    def __init__(self, component_site: IComponentSite, **kwargs):
+        self.component_site = component_site
+
+    def create_chat_run(
+        self,
+        chat_uuid: str,
+        *,
+        user_uuid: str,
+        agent_id: str = "default",
+        context: dict | None = None,
+        **kwargs,
+    ) -> IUserChatRun:
+        return UserChatRunImpl(
+            query_component(self.component_site, IUserConfigProvider),
+            query_component(self.component_site, IUserChatProvider),
+            chat_uuid,
+            user_uuid=user_uuid,
+            agent_id=agent_id,
+            context=context,
+        )
+
+
 class ModuleImpl(IModule):
     """Agent chats module implementation."""
 
     def __init__(self, component_site: IComponentSite, **kwargs):
         self._component_site = component_site
-        self._jobs: list[IModuleJob] = []
+        self._jobs: list[IModuleJob] = [ChatDescribeJob(component_site)]
         logger.info("agent chats module initialized")
 
     @property

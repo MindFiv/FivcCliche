@@ -14,7 +14,7 @@ automatic TTS for chat replies remain out of scope.
 - Fake provider for tests (`FakeSpeechProvider`)
 - DashScope HTTP and Realtime providers (each file is one implementation)
 - Message WebSocket can accept one audio clip or one streamed utterance, then
-  runs the existing text `ChatQueryJob`
+  runs the existing text `UserChatRunImpl`
 - Function tool `SpeechTranscribe` for later `transport=function` wiring
 - DashScope TTS and `UserTTS` probe configuration
 
@@ -39,12 +39,15 @@ sent for this protocol.
 
 ## Interfaces
 
-Defined in `src/fivccliche/services/interfaces/speech.py`:
+Defined in `src/fivccliche/services/interfaces/agent_speeches.py`:
 
 - `ISpeechProvider.get_recognizer(options=None, *, api_key=None, model=None, base_url=None)`
   — abstract factory. Optional `api_key` / `model` / `base_url` are supplied by
   the caller, normally from a database config row.
 - `ISpeechRecognizer` is an async context manager (`async with`)
+- `ISpeechRecognizer.id` is the caller-supplied config id (`id=` on the factory)
+- `ISpeechRecognizer.get_option()` returns the `SpeechRecognizeOptions` captured
+  at construction
 - `ISpeechRecognizer.stream_async(audio)` — async iterator of `SpeechEvent`
   (`partial` / `final` / `error`)
 - `ISpeechProvider.get_synthesizer(options=None, *, api_key=None, model=None, base_url=None)`
@@ -53,6 +56,9 @@ Defined in `src/fivccliche/services/interfaces/speech.py`:
 - `ISpeechSynthesizer` is an async context manager and
   `stream_async(text)` is an async iterator of encoded audio bytes; `text` is
   either a string or an `AsyncIterator[str]`
+- `ISpeechSynthesizer.id` is the caller-supplied config id
+- `ISpeechSynthesizer.get_option()` returns the `SpeechSynthesisOptions`
+  captured at construction, including provider defaults when options were omitted
 - `SpeechSynthesisOptions` are passed at factory time. A provider may apply
   defaults when they are omitted; when supplied, `voice` is required, and
   format, sample rate, volume, speech rate, pitch, and vendor extras are
@@ -89,14 +95,14 @@ two DashScope providers:
 
 ```yaml
 - entries:
-    - interface: fivccliche.services.interfaces.speech.ISpeechProvider
+    - interface: fivccliche.services.interfaces.agent_speeches.ISpeechProvider
       name: dashscope
-  class: fivccliche.services.implements.speech.dashscope.DashScopeSpeechProvider
+  class: fivccliche.services.implements.agent_speeches.dashscope.DashScopeSpeechProvider
 
 - entries:
-    - interface: fivccliche.services.interfaces.speech.ISpeechProvider
+    - interface: fivccliche.services.interfaces.agent_speeches.ISpeechProvider
       name: dashscope_realtime
-  class: fivccliche.services.implements.speech.dashscope_realtime.DashScopeRealtimeSpeechProvider
+  class: fivccliche.services.implements.agent_speeches.dashscope_realtime.DashScopeRealtimeSpeechProvider
 
 ```
 

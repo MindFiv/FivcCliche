@@ -67,6 +67,10 @@ class IModuleSite(IComponent):
         """Unregister a module."""
 
     @abstractmethod
+    def get_module(self, module_name: str) -> IModule | None:
+        """Get the module with the given name."""
+
+    @abstractmethod
     def create_application(self, **kwargs) -> FastAPI:
         """Create a FastAPI app."""
 

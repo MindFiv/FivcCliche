@@ -9,12 +9,12 @@ from fivcglue import query_component, IComponentSite, LazyValue
 from fivcglue.interfaces import configs
 from fivcglue.interfaces import mutexes
 
-from fivccliche.services.interfaces.agent_chats import IUserChatProvider
+from fivccliche.services.interfaces.agent_chats import IUserChatProvider, IUserChatRunProvider
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.services.interfaces.agent_memories import IUserMemoryProvider
 from fivccliche.services.interfaces.db import IDatabase
 from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator
-from fivccliche.services.interfaces.speech import ISpeechProvider
+from fivccliche.services.interfaces.agent_speeches import ISpeechProvider
 from fivccliche.services.implements import service_site
 from fivccliche.utils.types import UNSET, UnsetType
 from sqlalchemy.ext.asyncio.session import AsyncSession
@@ -46,6 +46,10 @@ default_config_provider: LazyValue[IUserConfigProvider] = LazyValue(
 
 default_chat_provider: LazyValue[IUserChatProvider] = LazyValue(
     lambda: query_component(cast(IComponentSite, service_site), IUserChatProvider)
+)
+
+default_chat_run_provider: LazyValue[IUserChatRunProvider] = LazyValue(
+    lambda: query_component(cast(IComponentSite, service_site), IUserChatRunProvider)
 )
 
 default_memory_provider: LazyValue[IUserMemoryProvider | None] = LazyValue(
@@ -263,6 +267,11 @@ async def get_config_provider_async() -> IUserConfigProvider:
 async def get_chat_provider_async() -> IUserChatProvider:
     """Get the user chat provider for dependency injection."""
     return cast(IUserChatProvider, default_chat_provider())
+
+
+async def get_chat_run_provider_async() -> IUserChatRunProvider:
+    """Get the user chat run provider for dependency injection."""
+    return cast(IUserChatRunProvider, default_chat_run_provider())
 
 
 async def get_memory_provider_async() -> IUserMemoryProvider | None:

@@ -75,6 +75,8 @@ def test_module_site_registers_fake_job():
     site = ModuleSiteImpl(component_site, modules=[])
     module = _FakeModule()
     site.register_module(module)
+    assert site.get_module("fake_module") is module
+    assert site.get_module("missing") is None
     app = site.create_application()
     job = app.state.scheduler.get_job("fake-job")
     assert job is not None
@@ -108,6 +110,14 @@ def test_cli_jobs_show(fake_module_site):
     assert result.exit_code == 0
     assert "fake-job" in result.stdout
     assert "interval" in result.stdout
+
+
+def test_cli_jobs_show_missing_module(fake_module_site):
+    site, _module = fake_module_site
+    runner = CliRunner()
+    with patch("fivccliche.cli.modules", site):
+        result = runner.invoke(cli, ["jobs", "show", "missing", "fake-job"])
+    assert result.exit_code == 1
 
 
 def test_cli_jobs_show_missing(fake_module_site):

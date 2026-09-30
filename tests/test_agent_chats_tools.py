@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from fivccliche.modules.agent_chats.tools import SpeechTranscribe
-from fivccliche.services.interfaces.speech import (
+from fivccliche.services.interfaces.agent_speeches import (
     SpeechAudioInput,
     SpeechEvent,
     SpeechRecognizeOptions,

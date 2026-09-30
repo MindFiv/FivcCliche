@@ -23,7 +23,8 @@ registration:
    - `scheduler.shutdown(wait=False)` on application shutdown.
 
 Modules never create their own scheduler. They expose jobs through
-`list_jobs` / `get_job`; the site wires them onto the shared scheduler.
+`list_jobs` / `get_job`; the site stores modules and looks them up with
+`list_modules` / `get_module`, then wires jobs onto the shared scheduler.
 
 ## IModuleJob
 
@@ -120,8 +121,10 @@ fivccliche jobs show MODULE JOB
 fivccliche jobs run MODULE JOB
 ```
 
-`jobs run` calls `job.run_async()` immediately via asyncio; it does not
-require the FastAPI lifespan or a running scheduler.
+`jobs show` and `jobs run` resolve the module with `IModuleSite.get_module`,
+then the job with `IModule.get_job`. `jobs run` calls `job.run_async()`
+immediately via asyncio; it does not require the FastAPI lifespan or a
+running scheduler.
 
 ## Triggers
 
@@ -160,12 +163,14 @@ within the test window.
 
 ## Real module example
 
-`agent_chats` currently returns an empty `list_jobs()`, so the query, describe,
-and memorize jobs are not registered on the scheduler. `ChatQueryJob` lives in
-`agent_chats.jobs.query` (`config is None`; the message handler starts it with
-`asyncio.create_task`). `ChatDescribeJob` lives in `agent_chats.jobs.describe`
-(`config is None`; invoked from the same handler via `BackgroundTasks` after
-the query task). `ChatMemorizeJob` lives in `agent_chats.jobs.memorize`;
-re-attach it by constructing it in `ModuleImpl.__init__`. See
+`agent_chats` lists `ChatDescribeJob` (`agent_chats.jobs.describe`) with
+`config is None`, so it is visible to `get_job` and the CLI but not registered
+on the scheduler. The text WebSocket looks it up with
+`IModuleSite.get_module("agent_chats")` and `get_job("agent-chats-describe")`.
+SSE still starts that same job through `BackgroundTasks`. Chat runs are
+provided by `UserChatRunProviderImpl`; the message handler creates a
+`UserChatRunImpl` and starts it with `asyncio.create_task`. `ChatMemorizeJob`
+(`agent_chats.jobs.memorize`) is still not on `list_jobs()`; re-attach it by
+constructing it in `ModuleImpl.__init__`. See
 [agent-memories.md](agent-memories.md) for chat-level retain semantics and
 per-chat Redis mutex details.

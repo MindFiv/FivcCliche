@@ -1,7 +1,7 @@
-import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import cast
+from collections.abc import AsyncGenerator
+from typing import Any, cast
 
 from fastapi import (
     APIRouter,
@@ -14,35 +14,170 @@ from fastapi import (
     status,
     WebSocket,
 )
-from fivcglue import IComponentSite
+from fivcglue import IComponentSite, query_component
 from fivcglue.interfaces.mutexes import IMutexSite
 from fivccliche.services.interfaces.auth import IUserAuthenticator
+from fivccliche.services.interfaces.modules import IModuleSite
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from fivccliche.services.implements import service_site
-from fivccliche.utils.chats import ChatEventHandler, ChatWSHandler
+from fivccliche.utils import deps
+from fivccliche.utils.chats import ChatChannel, ChatRunParser, ChatSnapshot
 from fivccliche.utils.deps import (
     IUser,
     get_authenticator_async,
     get_authenticated_user_async,
+    get_chat_run_provider_async,
     get_db_session_async,
     get_mutex_site_async,
 )
 from fivccliche.utils.filters import FilterError
 from fivccliche.utils.schemas import PaginatedResponse
-from fivccliche.utils.voice import VoiceChatWSHandler
-
 from . import models, schemas, utils
 from .filters import ChatEditableFilterSet, ChatFilterSet
-from .jobs import ChatDescribeJob, ChatQueryJob
+from .jobs import ChatDescribeJob
 
 # ============================================================================
 # Chat Session Endpoints
 # ============================================================================
 
 router_chats = APIRouter(tags=["chats"], prefix="/chats")
+
+
+async def _load_chat_snapshot(
+    session: AsyncSession,
+    user: IUser,
+    chat_uuid: str,
+) -> ChatSnapshot | None:
+    chat = await utils.get_chat_async(
+        session,
+        chat_uuid,
+        filters=ChatEditableFilterSet(user.uuid, is_superuser=user.is_superuser),
+    )
+    if chat is None:
+        return None
+    return ChatSnapshot(
+        uuid=chat.uuid,
+        agent_id=chat.agent_id,
+        context=chat.context or {},
+        description=chat.description,
+    )
+
+
+async def _load_realtime_voice_setup(
+    session: AsyncSession,
+    channel: ChatChannel,
+    user: IUser,
+    chat: ChatSnapshot,
+    start_frame: dict[str, Any],
+) -> tuple[Any, Any]:
+    from fivccliche.modules.agent_configs.filters import UserScopedReadableFilterSet
+    from fivccliche.modules.agent_configs.models import UserASR, UserTTS
+    from fivccliche.modules.agent_configs.utils import get_user_scoped_async
+    from fivccliche.services.interfaces.agent_speeches import (
+        SpeechRecognizeOptions,
+        SpeechSynthesisOptions,
+    )
+    from fivccliche.utils.chats.processors import _INPUT_SAMPLE_RATE, _OUTPUT_SAMPLE_RATE
+    from fivccliche.utils.deps import get_speech_provider_async
+
+    context = chat.context or {}
+    asr_id = start_frame.get("asr_id") or context.get("asr_id") or "realtime"
+    tts_id = start_frame.get("tts_id") or context.get("tts_id") or "realtime"
+    if not isinstance(asr_id, str) or not isinstance(tts_id, str):
+        await channel.fail_async(
+            code="invalid_frame",
+            message="asr_id and tts_id must be strings",
+            close_code=1003,
+        )
+
+    asr = await get_user_scoped_async(
+        session,
+        UserASR,
+        filters=UserScopedReadableFilterSet(
+            UserASR.user_uuid, user.uuid, is_superuser=user.is_superuser
+        ),
+        config_id=asr_id,
+    )
+    tts = await get_user_scoped_async(
+        session,
+        UserTTS,
+        filters=UserScopedReadableFilterSet(
+            UserTTS.user_uuid, user.uuid, is_superuser=user.is_superuser
+        ),
+        config_id=tts_id,
+    )
+    if asr is None:
+        await channel.fail_async(
+            code="asr_not_found",
+            message="ASR config not found",
+            close_code=4404,
+        )
+    if tts is None:
+        await channel.fail_async(
+            code="tts_not_found",
+            message="TTS config not found",
+            close_code=4404,
+        )
+    if asr.model_type != "dashscope_realtime":
+        await channel.fail_async(
+            code="invalid_asr_model_type",
+            message="ASR config must use dashscope_realtime",
+            close_code=1003,
+        )
+    if tts.model_type != "dashscope_realtime":
+        await channel.fail_async(
+            code="invalid_tts_model_type",
+            message="TTS config must use dashscope_realtime",
+            close_code=1003,
+        )
+
+    resolved_asr_id = asr.id
+    resolved_tts_id = tts.id
+    asr_model = asr.model
+    tts_model = tts.model
+    asr_api_key = asr.api_key
+    tts_api_key = tts.api_key
+    asr_base_url = asr.base_url
+    tts_base_url = tts.base_url
+    asr_model_type = asr.model_type
+    tts_model_type = tts.model_type
+    language = start_frame.get("language")
+    voice_name = start_frame.get("voice")
+
+    asr_provider = await get_speech_provider_async(asr_model_type)
+    tts_provider = await get_speech_provider_async(tts_model_type)
+    if asr_provider is None or tts_provider is None:
+        await channel.fail_async(
+            code="speech_unavailable",
+            message="Speech provider is not mounted",
+            close_code=1011,
+        )
+    recognizer = await asr_provider.get_recognizer(
+        SpeechRecognizeOptions(
+            language=language if isinstance(language, str) and language else None,
+            format="pcm",
+            sample_rate=_INPUT_SAMPLE_RATE,
+        ),
+        api_key=asr_api_key,
+        model=asr_model,
+        base_url=asr_base_url,
+        id=resolved_asr_id,
+    )
+    synthesizer = await tts_provider.get_synthesizer(
+        SpeechSynthesisOptions(
+            voice=voice_name if isinstance(voice_name, str) and voice_name else "",
+            format="pcm",
+            sample_rate=_OUTPUT_SAMPLE_RATE,
+        ),
+        api_key=tts_api_key,
+        model=tts_model,
+        base_url=tts_base_url,
+        id=resolved_tts_id,
+    )
+    return recognizer, synthesizer
 
 
 @router_chats.post(
@@ -220,22 +355,57 @@ async def delete_chat_async(
     await session.commit()
 
 
+CHAT_MESSAGE_LOCK_EXPIRE = timedelta(minutes=15)
+CHAT_MESSAGE_RUN_TIMEOUT = timedelta(minutes=5)
+
+
 @router_chats.websocket("/{chat_uuid}/")
 async def create_chat_voice_ws_async(
     websocket: WebSocket,
     chat_uuid: str,
     auth: IUserAuthenticator = Depends(get_authenticator_async),
-    session: AsyncSession = Depends(get_db_session_async),
     mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
 ) -> None:
     """Run a full-duplex realtime voice session for one chat."""
-    await VoiceChatWSHandler(
-        websocket,
-        chat_uuid=chat_uuid,
-        authenticator=auth,
-        session=session,
-        mutex=mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None,
-    ).run()
+    from fivccliche.utils.chats.processors import ChatVoiceProcessor
+
+    async with ChatChannel(websocket, auth) as channel:
+        user = await channel.authenticate_async()
+        start_frame = await channel.receive_json_async()
+        if start_frame is None:
+            return
+        if start_frame.get("type") != "start":
+            await channel.fail_async(
+                code="invalid_message",
+                message="A start frame is required",
+                close_code=1003,
+            )
+        async with deps.get_db_session_context_async() as session:
+            chat = await _load_chat_snapshot(session, user, chat_uuid)
+        if chat is None:
+            await channel.fail_async(
+                code="chat_not_found",
+                message="Chat not found",
+                close_code=4404,
+            )
+        async with deps.get_db_session_context_async() as session:
+            recognizer, synthesizer = await _load_realtime_voice_setup(
+                session, channel, user, chat, start_frame
+            )
+
+        run_provider = await get_chat_run_provider_async()
+        mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
+        async with recognizer, synthesizer:
+            await ChatVoiceProcessor(
+                channel,
+                user=user,
+                chat=chat,
+                recognizer=recognizer,
+                synthesizer=synthesizer,
+                run_provider=run_provider,
+                mutex=mutex,
+                timeout=CHAT_MESSAGE_RUN_TIMEOUT,
+            ).process_async()
 
 
 # ============================================================================
@@ -243,9 +413,6 @@ async def create_chat_voice_ws_async(
 # ============================================================================
 
 router_messages = APIRouter(tags=["chat_messages"], prefix="/chats")
-CHAT_MESSAGE_LOCK_EXPIRE = timedelta(minutes=15)
-CHAT_MESSAGE_RUN_TIMEOUT = timedelta(minutes=5)
-CHAT_MESSAGE_AUTH_TIMEOUT = 5.0
 
 
 @router_messages.post(
@@ -288,22 +455,21 @@ async def create_chat_messages_async(
         )
 
     try:
-        chat_stream = ChatEventHandler(chat_uuid=chat_uuid)
-        query_task = asyncio.create_task(
-            ChatQueryJob(cast(IComponentSite, service_site)).run_async(
-                chat_uuid,
-                user_uuid=user.uuid,
-                query=chat_message.query,
-                agent_id=chat_agent_id,
-                context=chat.context,
-                skills_enabled=True,
-                chat_mutex=chat_mutex,
-                run_timeout=CHAT_MESSAGE_RUN_TIMEOUT.total_seconds(),
-                event_callback=chat_stream.on_event,
+        chat_stream = ChatRunParser(chat_uuid=chat_uuid, output_type="sse")
+        run_provider = await get_chat_run_provider_async()
+        chat_run = run_provider.create_chat_run(
+            chat_uuid,
+            user_uuid=user.uuid,
+            agent_id=chat_agent_id,
+            context=chat.context,
+        )
+        run_events = chat_stream.parse_async(
+            chat_run.stream_async(
+                chat_message.query,
+                mutex=chat_mutex,
+                timeout=CHAT_MESSAGE_RUN_TIMEOUT,
             )
         )
-        chat_stream.attach(query_task)
-        background_tasks.add_task(asyncio.gather, query_task, return_exceptions=True)
     except Exception:
         if chat_mutex:
             await chat_mutex.release_async()
@@ -323,7 +489,7 @@ async def create_chat_messages_async(
     await session.close()
 
     return responses.StreamingResponse(
-        chat_stream(),
+        cast(AsyncGenerator[str, None], run_events),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -333,146 +499,31 @@ async def create_chat_messages_async(
     )
 
 
-async def _run_text_messages_websocket_async(
-    websocket: WebSocket,
-    chat_uuid: str,
-    *,
-    auth: IUserAuthenticator,
-    session: AsyncSession,
-    mutex_site: IMutexSite | None,
-) -> None:
-    """Authenticate and stream one text-only chat turn."""
-    chat_ws = ChatWSHandler(websocket, auth_timeout=CHAT_MESSAGE_AUTH_TIMEOUT)
-    user = await chat_ws.authenticate(auth)
-    if user is None:
-        return
-
-    message_frame = await chat_ws.receive()
-    if message_frame is None:
-        return
-    if isinstance(message_frame, bytes):
-        await chat_ws.fail(
-            code="voice_endpoint_moved",
-            message="Use WEBSOCKET /api/chats/{chat_uuid}/",
-            close_code=1003,
-        )
-        return
-    if not isinstance(message_frame, dict):
-        await chat_ws.fail(
-            code="invalid_frame",
-            message="Invalid JSON frame",
-            close_code=1003,
-        )
-        return
-    if (
-        "audio" in message_frame
-        or "audio_stream" in message_frame
-        or message_frame.get("type") == "audio_commit"
-    ):
-        await chat_ws.fail(
-            code="voice_endpoint_moved",
-            message="Use WEBSOCKET /api/chats/{chat_uuid}/",
-            close_code=1003,
-        )
-        return
-
-    chat = await utils.get_chat_async(
-        session,
-        chat_uuid,
-        filters=ChatEditableFilterSet(user.uuid, is_superuser=user.is_superuser),
-    )
-    if not chat:
-        await session.close()
-        await chat_ws.fail(
-            code="chat_not_found",
-            message="Chat not found",
-            close_code=4004,
-        )
-        return
-
-    query = str(message_frame.get("query") or "").strip()
-    if message_frame.get("type") != "message" or not query:
-        await chat_ws.fail(
-            code="invalid_message",
-            message="A non-empty query is required",
-            close_code=1003,
-        )
-        return
-
-    await session.close()
-    chat_mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
-    if chat_mutex and not await chat_mutex.acquire_async(
-        expire=CHAT_MESSAGE_LOCK_EXPIRE,
-        timeout=None,
-    ):
-        await chat_ws.fail(
-            code="chat_busy",
-            message="Chat message processing already running",
-            close_code=4009,
-        )
-        return
-
-    chat_stream = ChatEventHandler(chat_uuid=chat_uuid)
-    query_task: asyncio.Task | None = None
-    try:
-        query_task = asyncio.create_task(
-            ChatQueryJob(cast(IComponentSite, service_site)).run_async(
-                chat_uuid,
-                user_uuid=user.uuid,
-                query=query,
-                agent_id=chat.agent_id,
-                context=chat.context,
-                skills_enabled=True,
-                chat_mutex=chat_mutex,
-                run_timeout=CHAT_MESSAGE_RUN_TIMEOUT.total_seconds(),
-                event_callback=chat_stream.on_event,
-            )
-        )
-        chat_stream.attach(query_task)
-    except Exception:
-        if chat_mutex:
-            await chat_mutex.release_async()
-        await chat_ws.fail(
-            code="internal_error",
-            message="Failed to start chat message",
-            close_code=1011,
-        )
-        return
-
-    completion_tasks = [query_task]
-    if not (chat.description or "").strip() and query and not query.startswith("/"):
-        describe_task = asyncio.create_task(
-            ChatDescribeJob(cast(IComponentSite, service_site)).run_async(
-                chat.uuid,
-                user_uuid=user.uuid,
-                query_text=query,
-            )
-        )
-        completion_tasks.append(describe_task)
-    completion_task = asyncio.gather(*completion_tasks, return_exceptions=True)
-
-    if await chat_ws.send(chat_stream.events()):
-        await completion_task
-    else:
-        await websocket.close(code=1000)
-
-
 @router_messages.websocket("/{chat_uuid}/messages/")
 async def create_chat_messages_ws_async(
     websocket: WebSocket,
     chat_uuid: str,
     auth: IUserAuthenticator = Depends(get_authenticator_async),
-    session: AsyncSession = Depends(get_db_session_async),
     mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
 ) -> None:
     """Stream one text chat turn over the canonical WebSocket route."""
-    await _run_text_messages_websocket_async(
-        websocket,
-        chat_uuid,
-        auth=auth,
-        session=session,
-        mutex_site=mutex_site,
-    )
+    from fivccliche.utils.chats.processors import ChatTextProcessor
+
+    async def load_chat(user: IUser) -> ChatSnapshot | None:
+        async with deps.get_db_session_context_async() as session:
+            return await _load_chat_snapshot(session, user, chat_uuid)
+
+    module_site = query_component(cast(IComponentSite, service_site), IModuleSite)
+    mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
+    async with ChatChannel(websocket, auth) as channel:
+        await ChatTextProcessor(
+            channel,
+            chat_uuid=chat_uuid,
+            chat_loader=load_chat,
+            mutex=mutex,
+            module_site=module_site,
+            timeout=CHAT_MESSAGE_RUN_TIMEOUT,
+        ).process_async()
 
 
 @router_messages.websocket("/{chat_uuid}/messages/ws/")
@@ -480,17 +531,26 @@ async def create_chat_messages_ws_compat_async(
     websocket: WebSocket,
     chat_uuid: str,
     auth: IUserAuthenticator = Depends(get_authenticator_async),
-    session: AsyncSession = Depends(get_db_session_async),
     mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
 ) -> None:
     """Legacy text-only alias for the canonical message WebSocket."""
-    await _run_text_messages_websocket_async(
-        websocket,
-        chat_uuid,
-        auth=auth,
-        session=session,
-        mutex_site=mutex_site,
-    )
+    from fivccliche.utils.chats.processors import ChatTextProcessor
+
+    async def load_chat(user: IUser) -> ChatSnapshot | None:
+        async with deps.get_db_session_context_async() as session:
+            return await _load_chat_snapshot(session, user, chat_uuid)
+
+    module_site = query_component(cast(IComponentSite, service_site), IModuleSite)
+    mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
+    async with ChatChannel(websocket, auth) as channel:
+        await ChatTextProcessor(
+            channel,
+            chat_uuid=chat_uuid,
+            chat_loader=load_chat,
+            mutex=mutex,
+            module_site=module_site,
+            timeout=CHAT_MESSAGE_RUN_TIMEOUT,
+        ).process_async()
 
 
 @router_messages.get(

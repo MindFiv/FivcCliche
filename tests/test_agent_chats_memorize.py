@@ -909,10 +909,11 @@ def test_agent_chats_list_jobs_does_not_register_memorize_job():
     module = ModuleImpl(component_site)
 
     jobs = module.list_jobs()
-    assert jobs == []
+    assert [job.name for job in jobs] == ["agent-chats-describe"]
+    assert jobs[0].config is None
+    assert module.get_job("agent-chats-describe") is jobs[0]
     assert module.get_job(_MEMORIZE_JOB_ID) is None
     assert module.get_job("agent-chats-query") is None
-    assert module.get_job("agent-chats-describe") is None
     assert module.get_job("missing") is None
 
     module_site.register_module(module)
@@ -920,4 +921,5 @@ def test_agent_chats_list_jobs_does_not_register_memorize_job():
 
     scheduler: AsyncIOScheduler = app.state.scheduler
     with TestClient(app):
+        assert scheduler.get_job("agent-chats-describe") is None
         assert scheduler.get_job(_MEMORIZE_JOB_ID) is None

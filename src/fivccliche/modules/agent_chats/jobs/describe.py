@@ -52,8 +52,8 @@ def _title_from_result(result: object) -> str:
 class ChatDescribeJob(IModuleJob):
     """On-demand job that writes ``chat.description`` when it is empty.
 
-    Not listed on ``ModuleImpl.list_jobs``; invoke ``run_async`` from the
-    message-create handler. ``config`` is ``None`` so it is never scheduled.
+    Listed on ``ModuleImpl.list_jobs``. ``config`` is ``None`` so it is never
+    scheduled. The text WebSocket looks it up with ``get_module`` / ``get_job``.
     """
 
     def __init__(self, component_site: IComponentSite) -> None:

@@ -34,18 +34,24 @@
 
   class: fivccliche.modules.agent_chats.UserChatProviderImpl
 
+# chat run provider -----------------------------------
+- entries:
+    - interface: fivccliche.services.interfaces.agent_chats.IUserChatRunProvider
+
+  class: fivccliche.modules.agent_chats.UserChatRunProviderImpl
+
 # speech ----------------------------------------------
 - entries:
-    - interface: fivccliche.services.interfaces.speech.ISpeechProvider
+    - interface: fivccliche.services.interfaces.agent_speeches.ISpeechProvider
       name: dashscope
 
-  class: fivccliche.services.implements.speech.dashscope.DashScopeSpeechProvider
+  class: fivccliche.services.implements.agent_speeches.dashscope.DashScopeSpeechProvider
 
 - entries:
-    - interface: fivccliche.services.interfaces.speech.ISpeechProvider
+    - interface: fivccliche.services.interfaces.agent_speeches.ISpeechProvider
       name: dashscope_realtime
 
-  class: fivccliche.services.implements.speech.dashscope_realtime.DashScopeRealtimeSpeechProvider
+  class: fivccliche.services.implements.agent_speeches.dashscope_realtime.DashScopeRealtimeSpeechProvider
 
 # modules ---------------------------------------------
 - entries:

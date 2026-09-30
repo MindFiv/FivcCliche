@@ -81,6 +81,15 @@ class SpeechEvent(BaseModel):
 class ISpeechRecognizer(ABC):
     """One recognition turn. Created by ``ISpeechProvider.get_recognizer``."""
 
+    @property
+    @abstractmethod
+    def id(self) -> str:
+        """ """
+
+    @abstractmethod
+    def get_option(self) -> SpeechRecognizeOptions:
+        """Return the recognition options."""
+
     @abstractmethod
     async def __aenter__(self) -> Self:
         raise NotImplementedError
@@ -105,6 +114,15 @@ class ISpeechRecognizer(ABC):
 
 class ISpeechSynthesizer(ABC):
     """One synthesis turn. Created by ``ISpeechProvider.get_synthesizer``."""
+
+    @property
+    @abstractmethod
+    def id(self) -> str:
+        """ """
+
+    @abstractmethod
+    def get_option(self) -> SpeechSynthesisOptions:
+        """Return the synthesis options."""
 
     @abstractmethod
     async def __aenter__(self) -> Self:

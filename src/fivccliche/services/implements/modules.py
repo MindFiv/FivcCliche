@@ -83,6 +83,9 @@ class ModuleSiteImpl(IModuleSite):
     def list_modules(self, **kwargs) -> list[IModule]:
         return list(self._modules.values())
 
+    def get_module(self, module_name: str) -> IModule | None:
+        return self._modules.get(module_name)
+
     def create_application(self, **kwargs) -> FastAPI:
         scheduler = AsyncIOScheduler()
 

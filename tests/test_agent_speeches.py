@@ -7,10 +7,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
-from fivccliche.services.implements.speech.fake import FakeSpeechProvider, FakeSpeechRecognizer
-from fivccliche.services.interfaces.speech import (
+from fivccliche.services.implements.agent_speeches.fake import (
+    FakeSpeechProvider,
+    FakeSpeechRecognizer,
+)
+from fivccliche.services.interfaces.agent_speeches import (
     ISpeechProvider,
     ISpeechRecognizer,
+    ISpeechSynthesizer,
     SpeechAudioInput,
     SpeechEvent,
     SpeechRecognizeOptions,
@@ -112,6 +116,10 @@ class TestSpeechRecognizerInterface:
         assert inspect.isasyncgenfunction(ISpeechRecognizer.stream_async)
         assert ISpeechRecognizer.__aenter__.__isabstractmethod__
         assert ISpeechRecognizer.__aexit__.__isabstractmethod__
+        assert ISpeechRecognizer.id.fget.__isabstractmethod__  # type: ignore[union-attr]
+        assert ISpeechRecognizer.get_option.__isabstractmethod__
+        assert ISpeechSynthesizer.id.fget.__isabstractmethod__  # type: ignore[union-attr]
+        assert ISpeechSynthesizer.get_option.__isabstractmethod__
 
         class MissingLifecycle(ISpeechRecognizer):
             async def stream_async(

@@ -8,8 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from fivccliche.services.implements.speech.fake import FakeSpeechProvider
-from fivccliche.services.interfaces.speech import (
+from fivccliche.services.implements.agent_speeches.fake import FakeSpeechProvider
+from fivccliche.services.interfaces.agent_speeches import (
     SpeechEvent,
     SpeechRequestError,
     SpeechSynthesisOptions,

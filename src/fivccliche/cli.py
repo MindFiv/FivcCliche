@@ -45,18 +45,18 @@ _LEGACY_TTS_PROVIDER_SQL = text(
     "UPDATE user_tts SET model_type = 'dashscope_realtime' WHERE model_type = 'dashscope_tts'"
 )
 
-modules = query_component(cast(IComponentSite, service_site), IModuleSite)
+modules: IModuleSite = query_component(cast(IComponentSite, service_site), IModuleSite)
 
 # FastAPI App for ASGI
 app = modules.create_application()
 
 
 def _find_module(module_name: str) -> IModule:
-    for module in modules.list_modules():
-        if module.name == module_name:
-            return cast(IModule, module)
-    console.print(f"[red]❌ Module '{module_name}' not found[/red]")
-    raise typer.Exit(1)
+    module = modules.get_module(module_name)
+    if module is None:
+        console.print(f"[red]❌ Module '{module_name}' not found[/red]")
+        raise typer.Exit(1)
+    return module
 
 
 def _find_job(module: IModule, job_name: str) -> IModuleJob:

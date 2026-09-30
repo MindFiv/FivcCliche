@@ -15,7 +15,7 @@ from websockets.http11 import Response
 
 import pytest
 
-from fivccliche.services.implements.speech.dashscope import (
+from fivccliche.services.implements.agent_speeches.dashscope import (
     _DEFAULT_GENERATION_URL,
     _QWEN_AUDIO_TTS_MODELS,
     _QWEN_AUDIO_TTS_PATH,
@@ -27,7 +27,7 @@ from fivccliche.services.implements.speech.dashscope import (
     _TTS_DEFAULT_MODEL,
     DashScopeSpeechProvider,
 )
-from fivccliche.services.implements.speech.dashscope_realtime import (
+from fivccliche.services.implements.agent_speeches.dashscope_realtime import (
     _connect_websockets,
     _is_qwen_tts_realtime_model,
     _qwen_tts_websocket_url,
@@ -37,10 +37,10 @@ from fivccliche.services.implements.speech.dashscope_realtime import (
     _DashScopeRealtimeRecognizer,
     DashScopeRealtimeSpeechProvider,
 )
-from fivccliche.services.implements.speech.dashscope_realtime import (
+from fivccliche.services.implements.agent_speeches.dashscope_realtime import (
     _DashScopeTTSSynthesizer,
 )
-from fivccliche.services.interfaces.speech import (
+from fivccliche.services.interfaces.agent_speeches import (
     SpeechAudioInput,
     SpeechEvent,
     SpeechRecognizeOptions,
@@ -1028,7 +1028,7 @@ class TestDashScopeSpeechProvider:
         component_site = MagicMock()
         component_site.query_component.return_value = MagicMock()
         with patch(
-            "fivccliche.services.implements.speech.dashscope._DashScopeMultimodalRecognizer",
+            "fivccliche.services.implements.agent_speeches.dashscope._DashScopeMultimodalRecognizer",
         ) as clip_cls:
             provider = DashScopeSpeechProvider(component_site)
             await provider.get_recognizer()
@@ -1044,7 +1044,7 @@ class TestDashScopeSpeechProvider:
         component_site.query_component.return_value = MagicMock()
         options = SpeechSynthesisOptions(voice="", format="wav", sample_rate=24000)
         with patch(
-            "fivccliche.services.implements.speech.dashscope._DashScopeQwenAudioTTSSynthesizer",
+            "fivccliche.services.implements.agent_speeches.dashscope._DashScopeQwenAudioTTSSynthesizer",
         ) as synthesizer_cls:
             provider = DashScopeSpeechProvider(component_site)
             await provider.get_synthesizer(options)
@@ -1060,7 +1060,7 @@ class TestDashScopeSpeechProvider:
     async def test_get_recognizer_builds_flash(self):
         options = SpeechRecognizeOptions(language="zh")
         with patch(
-            "fivccliche.services.implements.speech.dashscope._DashScopeMultimodalRecognizer",
+            "fivccliche.services.implements.agent_speeches.dashscope._DashScopeMultimodalRecognizer",
         ) as clip_cls:
             provider = DashScopeSpeechProvider(MagicMock())
             recognizer = await provider.get_recognizer(
@@ -1079,7 +1079,7 @@ class TestDashScopeSpeechProvider:
     async def test_get_recognizer_overrides_credentials(self):
         options = SpeechRecognizeOptions(language="zh")
         with patch(
-            "fivccliche.services.implements.speech.dashscope._DashScopeMultimodalRecognizer",
+            "fivccliche.services.implements.agent_speeches.dashscope._DashScopeMultimodalRecognizer",
         ) as clip_cls:
             provider = DashScopeSpeechProvider(MagicMock())
             await provider.get_recognizer(
@@ -1096,7 +1096,7 @@ class TestDashScopeSpeechProvider:
     @pytest.mark.asyncio
     async def test_get_recognizer_empty_api_key_is_explicit(self):
         with patch(
-            "fivccliche.services.implements.speech.dashscope._DashScopeMultimodalRecognizer",
+            "fivccliche.services.implements.agent_speeches.dashscope._DashScopeMultimodalRecognizer",
         ) as clip_cls:
             provider = DashScopeSpeechProvider(MagicMock())
             await provider.get_recognizer(api_key="")
@@ -1107,7 +1107,7 @@ class TestDashScopeSpeechProvider:
     async def test_get_synthesizer_uses_tts_defaults_and_overrides(self):
         options = SpeechSynthesisOptions(voice="", format="wav", sample_rate=24000)
         with patch(
-            "fivccliche.services.implements.speech.dashscope._DashScopeQwenAudioTTSSynthesizer",
+            "fivccliche.services.implements.agent_speeches.dashscope._DashScopeQwenAudioTTSSynthesizer",
         ) as synthesizer_cls:
             provider = DashScopeSpeechProvider(MagicMock())
             await provider.get_synthesizer(options)
@@ -1138,7 +1138,7 @@ class TestDashScopeRealtimeSpeechProvider:
         component_site = MagicMock()
         component_site.query_component.return_value = MagicMock()
         with patch(
-            "fivccliche.services.implements.speech.dashscope_realtime._DashScopeRealtimeRecognizer",
+            "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeRealtimeRecognizer",
         ) as stream_cls:
             provider = DashScopeRealtimeSpeechProvider(component_site)
             await provider.get_recognizer()
@@ -1156,7 +1156,7 @@ class TestDashScopeRealtimeSpeechProvider:
         component_site.query_component.return_value = MagicMock()
         options = SpeechSynthesisOptions(voice="Cherry")
         with patch(
-            "fivccliche.services.implements.speech.dashscope_realtime._DashScopeTTSSynthesizer",
+            "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeTTSSynthesizer",
         ) as synthesizer_cls:
             provider = DashScopeRealtimeSpeechProvider(component_site)
             await provider.get_synthesizer(options)
@@ -1176,7 +1176,7 @@ class TestDashScopeRealtimeSpeechProvider:
         stream.__aexit__ = AsyncMock(return_value=None)
         options = SpeechRecognizeOptions(format="pcm")
         with patch(
-            "fivccliche.services.implements.speech.dashscope_realtime._DashScopeRealtimeRecognizer",
+            "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeRealtimeRecognizer",
             return_value=stream,
         ) as stream_cls:
             provider = DashScopeRealtimeSpeechProvider(MagicMock())
@@ -1206,7 +1206,7 @@ class TestDashScopeRealtimeSpeechProvider:
         stream = MagicMock()
         options = SpeechRecognizeOptions(format="pcm")
         with patch(
-            "fivccliche.services.implements.speech.dashscope_realtime._DashScopeRealtimeRecognizer",
+            "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeRealtimeRecognizer",
             return_value=stream,
         ) as stream_cls:
             provider = DashScopeRealtimeSpeechProvider(MagicMock())
@@ -1226,7 +1226,7 @@ class TestDashScopeRealtimeSpeechProvider:
     async def test_get_recognizer_accepts_websocket_base_url(self):
         stream = MagicMock()
         with patch(
-            "fivccliche.services.implements.speech.dashscope_realtime._DashScopeRealtimeRecognizer",
+            "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeRealtimeRecognizer",
             return_value=stream,
         ) as stream_cls:
             provider = DashScopeRealtimeSpeechProvider(MagicMock())
@@ -1245,10 +1245,10 @@ class TestDashScopeRealtimeSpeechProvider:
         base_url = "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com/"
         with (
             patch(
-                "fivccliche.services.implements.speech.dashscope_realtime._DashScopeRealtimeRecognizer"
+                "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeRealtimeRecognizer"
             ) as recognizer_cls,
             patch(
-                "fivccliche.services.implements.speech.dashscope_realtime._DashScopeTTSSynthesizer"
+                "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeTTSSynthesizer"
             ) as synthesizer_cls,
         ):
             provider = DashScopeRealtimeSpeechProvider(MagicMock())
@@ -1268,7 +1268,7 @@ class TestDashScopeTTS:
     @pytest.mark.asyncio
     async def test_get_synthesizer_defaults_without_options(self):
         with patch(
-            "fivccliche.services.implements.speech.dashscope_realtime._DashScopeTTSSynthesizer",
+            "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeTTSSynthesizer",
         ) as synthesizer_cls:
             provider = DashScopeRealtimeSpeechProvider(MagicMock())
             await provider.get_synthesizer()
@@ -1587,7 +1587,7 @@ class TestDashScopeTTS:
     async def test_get_synthesizer_uses_tts_defaults_and_overrides(self):
         options = SpeechSynthesisOptions(voice="longanhuan_v3.1")
         with patch(
-            "fivccliche.services.implements.speech.dashscope_realtime._DashScopeTTSSynthesizer",
+            "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeTTSSynthesizer",
         ) as synthesizer_cls:
             provider = DashScopeRealtimeSpeechProvider(MagicMock())
             await provider.get_synthesizer(options)

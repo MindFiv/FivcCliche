@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Layering, ownership, and HTTP CRUD: [docs/architecture.md](docs/architecture.md). Scheduled jobs: [docs/scheduler.md](docs/scheduler.md). Memories: [docs/agent-memories.md](docs/agent-memories.md). Speech / ASR / TTS: [docs/speech.md](docs/speech.md). Agent rules that override this file: [AGENTS.md](AGENTS.md). Getting started: [docs/getting-started.md](docs/getting-started.md).
+Layering, ownership, and HTTP CRUD: [docs/architecture.md](docs/architecture.md). Scheduled jobs: [docs/scheduler.md](docs/scheduler.md). Memories: [docs/agent-memories.md](docs/agent-memories.md). Speech / ASR / TTS: [docs/agent_speeches.md](docs/agent_speeches.md). Agent rules that override this file: [AGENTS.md](AGENTS.md). Getting started: [docs/getting-started.md](docs/getting-started.md).
 
 ## Project Overview
 
@@ -76,7 +76,7 @@ HTTP list/get returns inactive tools/skills. Playground repositories filter `is_
 
 ### Scheduled Tasks
 
-Modules expose jobs via `IModule.list_jobs` / `get_job` (`IModuleJob`: `name`, `config`, `run_async`). `ModuleSiteImpl.create_application` creates a single `AsyncIOScheduler`, attaches it to `app.state.scheduler`, mounts routers via `module.mount(app, ...)`, then registers each job whose `config` is not `None` onto the scheduler (`config is None` skips `add_job`). Lifespan starts/stops the scheduler. CLI: `fivccliche jobs list|show|run`. `agent_chats` query, describe, and memorize jobs are currently **not** on `list_jobs()`. See [docs/scheduler.md](docs/scheduler.md).
+Modules expose jobs via `IModule.list_jobs` / `get_job` (`IModuleJob`: `name`, `config`, `run_async`). `IModuleSite` registers them with `list_modules` / `get_module`. `ModuleSiteImpl.create_application` creates a single `AsyncIOScheduler`, attaches it to `app.state.scheduler`, mounts routers via `module.mount(app, ...)`, then registers each job whose `config` is not `None` onto the scheduler (`config is None` skips `add_job`). Lifespan starts/stops the scheduler. CLI: `fivccliche jobs list|show|run`; `jobs show` and `jobs run` locate the module with `get_module`. `agent_chats` lists `ChatDescribeJob` with `config is None` (not scheduled); the text WebSocket calls it through `get_module` / `get_job`. The memorize job is still **not** on `list_jobs()`. Chat runs use `UserChatRunProviderImpl`. See [docs/scheduler.md](docs/scheduler.md).
 
 ### Authentication Flow
 

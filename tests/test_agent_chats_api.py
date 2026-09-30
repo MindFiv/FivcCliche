@@ -1,9 +1,10 @@
 """Integration tests for agent_chats API endpoints."""
 
 import asyncio
+import inspect
 import json
 from json import JSONDecodeError
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -12,7 +13,48 @@ from fastapi.testclient import TestClient
 
 from fivccliche.modules.agent_chats.models import UserChat
 from fivccliche.modules.users.models import User
+from fivccliche.utils.chats import ChatSnapshot
 from tests.conftest import make_api_client
+
+
+def test_chat_processors_receive_chat_values_without_session():
+    """Auth-time callers resolve chat rows; processors consume pure values."""
+    from fivccliche.utils.chats.processors import ChatTextProcessor, ChatVoiceProcessor
+
+    text_parameters = inspect.signature(ChatTextProcessor.__init__).parameters
+    voice_parameters = inspect.signature(ChatVoiceProcessor.__init__).parameters
+
+    assert "session" not in text_parameters
+    assert {"channel", "chat_loader", "module_site", "mutex", "timeout"} <= text_parameters.keys()
+    assert "mutex_site" not in text_parameters
+    assert "describe_chat" not in text_parameters
+    assert "session" not in voice_parameters
+    assert {
+        "channel",
+        "user",
+        "chat",
+        "recognizer",
+        "synthesizer",
+        "run_provider",
+        "mutex",
+        "timeout",
+    } <= voice_parameters.keys()
+    assert "asr_id" not in voice_parameters
+    assert "tts_id" not in voice_parameters
+    assert "chat_loader" not in voice_parameters
+    assert "voice_setup_loader" not in voice_parameters
+    assert "mutex_site" not in voice_parameters
+    for parameters in (text_parameters, voice_parameters):
+        assert "websocket" not in parameters
+        assert "authenticator" not in parameters
+        assert "auth_timeout" not in parameters
+        assert "lock_expire" not in parameters
+        assert "run_timeout" not in parameters
+
+
+async def _empty_events():
+    return
+    yield None
 
 
 @pytest.fixture
@@ -683,23 +725,23 @@ class TestChatIntegration:
         assert data["results"][0]["is_memorized"] is False
 
 
-class TestChatStreamApiSurface:
-    """ChatStream remains importable as an alias of ChatEventHandler."""
+class TestChatRunParserApiSurface:
+    """ChatRunParser parses streams as an async generator."""
 
-    def test_call_returns_async_generator(self):
-        """Calling ChatStream returns an async generator."""
-        from fivccliche.utils.chats import ChatStream
+    def test_parse_returns_async_generator(self):
+        """Parsing with ChatRunParser returns an async generator."""
+        from fivccliche.utils.chats import ChatRunParser
 
-        chat_stream = ChatStream(chat_uuid="c1")
-        stream = chat_stream()
+        chat_stream = ChatRunParser(chat_uuid="c1")
+        stream = chat_stream.parse_async(_empty_events())
         assert hasattr(stream, "__aiter__")
 
-    def test_call_is_async_iterable(self):
-        """Calling ChatStream supports async iteration."""
-        from fivccliche.utils.chats import ChatStream
+    def test_parse_is_async_iterable(self):
+        """ChatRunParser parses a run stream asynchronously."""
+        from fivccliche.utils.chats import ChatRunParser
 
-        chat_stream = ChatStream()
-        stream = chat_stream()
+        chat_stream = ChatRunParser()
+        stream = chat_stream.parse_async(_empty_events())
         assert hasattr(stream, "__aiter__")
         assert hasattr(stream, "__anext__")
 
@@ -1521,13 +1563,21 @@ class TestCreateChatMessages:
 
     @pytest.fixture(autouse=True)
     def _mock_describe_job(self):
-        with patch("fivccliche.modules.agent_chats.routers.ChatDescribeJob") as mocked:
+        with (patch("fivccliche.modules.agent_chats.routers.ChatDescribeJob") as mocked,):
             instance = MagicMock()
             instance.run_async = AsyncMock()
             mocked.return_value = instance
-            self._describe_job_cls = mocked
-            self._describe_job = instance
-            yield mocked
+            module = MagicMock()
+            module.get_job.return_value = instance
+            module_site = MagicMock()
+            module_site.get_module.return_value = module
+            with patch(
+                "fivccliche.modules.agent_chats.routers.query_component",
+                return_value=module_site,
+            ):
+                self._describe_job_cls = mocked
+                self._describe_job = instance
+                yield mocked
 
     @staticmethod
     def _mock_user(uuid: str = "user-123", is_superuser: bool = False):
@@ -1552,6 +1602,15 @@ class TestCreateChatMessages:
             description=description,
         )
 
+    @classmethod
+    def _chat_snapshot(cls, chat: UserChat) -> ChatSnapshot:
+        return ChatSnapshot(
+            uuid=chat.uuid,
+            agent_id=chat.agent_id,
+            context=chat.context or {},
+            description=chat.description,
+        )
+
     @staticmethod
     def _mock_asr(
         *,
@@ -1573,18 +1632,28 @@ class TestCreateChatMessages:
 
     @staticmethod
     def _fake_chat_stream(stream_factory):
-        """Build a ChatEventHandler-like mock for router tests."""
+        """Build a ChatRunParser-like mock for router tests."""
         instance = MagicMock()
-        instance.attach = MagicMock()
-        instance.on_event = MagicMock()
-        instance.side_effect = stream_factory
+        instance.parse_async = Mock(return_value=stream_factory())
         return instance
 
     @staticmethod
-    def _fake_query_job():
+    def _fake_chat_run():
         instance = MagicMock()
-        instance.run_async = AsyncMock()
+
+        async def run_events():
+            return
+            yield None
+
+        instance.stream_async = Mock(return_value=run_events())
         return instance
+
+    @staticmethod
+    def _mock_run_provider(fake_job=None):
+        provider = MagicMock()
+        if fake_job is not None:
+            provider.create_chat_run.return_value = fake_job
+        return provider, AsyncMock(return_value=provider)
 
     @staticmethod
     def _fake_websocket(frames=None, *, fail_on_send=0):
@@ -1593,6 +1662,8 @@ class TestCreateChatMessages:
                 self.frames = list(frames or [])
                 self.sent = []
                 self.closed = []
+                self.client_state = MagicMock()
+                self.client_state.name = "CONNECTED"
 
             async def accept(self):
                 return None
@@ -1620,57 +1691,62 @@ class TestCreateChatMessages:
                 if fail_on_send and len(self.sent) >= fail_on_send:
                     raise WebSocketDisconnect
 
-            async def close(self, code=1000):
+            async def close(self, code=1000, reason=None):
                 self.closed.append(code)
 
         return FakeWebSocket()
 
     @staticmethod
-    def _query_kwargs(job):
-        args, kwargs = job.run_async.call_args
-        return args, kwargs
+    def _patch_short_db_session(session):
+        @asynccontextmanager
+        async def context():
+            try:
+                yield session
+            finally:
+                await session.close()
+
+        return patch(
+            "fivccliche.utils.deps.get_db_session_context_async",
+            context,
+        )
 
     @staticmethod
-    async def _attached_query_task(fake_stream):
-        fake_stream.attach.assert_called_once()
-        query_task = fake_stream.attach.call_args[0][0]
-        await asyncio.sleep(0)
-        return query_task
+    def _chat_run_kwargs(job):
+        args, kwargs = job.stream_async.call_args
+        return args, kwargs
 
     @contextmanager
-    def _patch_stream_and_job(self, stream_factory, *, job_side_effect=None):
+    def _patch_stream_and_run(self, stream_factory, *, run_side_effect=None):
         fake_stream = self._fake_chat_stream(stream_factory)
-        fake_job = self._fake_query_job()
-        job_patch = (
-            {"side_effect": job_side_effect}
-            if job_side_effect is not None
-            else {"return_value": fake_job}
-        )
+        fake_job = self._fake_chat_run()
+        run_provider, get_run_provider = self._mock_run_provider()
+        if run_side_effect is not None:
+            run_provider.create_chat_run.side_effect = run_side_effect
+        else:
+            run_provider.create_chat_run.return_value = fake_job
         with (
             patch(
-                "fivccliche.modules.agent_chats.routers.ChatEventHandler",
+                "fivccliche.modules.agent_chats.routers.ChatRunParser",
                 return_value=fake_stream,
             ) as mock_stream_cls,
             patch(
-                "fivccliche.modules.agent_chats.routers.ChatQueryJob",
-                **job_patch,
-            ) as mock_job_cls,
+                "fivccliche.modules.agent_chats.routers.get_chat_run_provider_async",
+                new=get_run_provider,
+            ) as get_run_provider_mock,
         ):
-            yield fake_stream, fake_job, mock_stream_cls, mock_job_cls
+            yield fake_stream, fake_job, mock_stream_cls, get_run_provider_mock
 
     @staticmethod
     def _patch_ws_stream_and_job(events):
         fake_stream = MagicMock()
-        fake_stream.attach = MagicMock()
-        fake_stream.on_event = MagicMock()
 
         async def event_generator():
             for event in events:
                 yield event
 
-        fake_stream.events = event_generator
+        fake_stream.parse_async = Mock(return_value=event_generator())
         fake_job = MagicMock()
-        fake_job.run_async = AsyncMock()
+        fake_job.stream_async = Mock(side_effect=lambda *args, **kwargs: event_generator())
         return fake_stream, fake_job
 
     @pytest.mark.asyncio
@@ -1679,17 +1755,12 @@ class TestCreateChatMessages:
         from fivccliche.modules.agent_chats.routers import create_chat_messages_ws_async
 
         websocket = self._fake_websocket()
-        with patch(
-            "fivccliche.modules.agent_chats.routers.CHAT_MESSAGE_AUTH_TIMEOUT",
-            0.01,
-        ):
-            await create_chat_messages_ws_async(
-                websocket=websocket,
-                chat_uuid="chat-123",
-                auth=AsyncMock(),
-                session=AsyncMock(),
-                mutex_site=None,
-            )
+        await create_chat_messages_ws_async(
+            websocket=websocket,
+            chat_uuid="chat-123",
+            auth=AsyncMock(),
+            mutex_site=None,
+        )
 
         assert websocket.closed == [1008]
 
@@ -1706,7 +1777,6 @@ class TestCreateChatMessages:
                 websocket=websocket,
                 chat_uuid="chat-123",
                 auth=auth,
-                session=AsyncMock(),
                 mutex_site=None,
             )
 
@@ -1728,7 +1798,6 @@ class TestCreateChatMessages:
             websocket=websocket,
             chat_uuid="chat-123",
             auth=auth,
-            session=AsyncMock(),
             mutex_site=None,
         )
 
@@ -1751,20 +1820,24 @@ class TestCreateChatMessages:
         )
         auth = MagicMock()
         auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
-        with patch(
-            "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
-            new_callable=AsyncMock,
-            return_value=self._mock_chat(),
-        ) as get_chat:
+        session = AsyncMock()
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._chat_snapshot(self._mock_chat()),
+            ) as get_chat,
+            self._patch_short_db_session(session),
+        ):
             await create_chat_messages_ws_async(
                 websocket=websocket,
                 chat_uuid="chat-123",
                 auth=auth,
-                session=AsyncMock(),
                 mutex_site=None,
             )
 
         get_chat.assert_awaited_once()
+        session.close.assert_awaited_once()
         assert websocket.sent[-1] == {
             "event": "error",
             "info": {"code": "invalid_message", "message": "A non-empty query is required"},
@@ -1785,16 +1858,18 @@ class TestCreateChatMessages:
         session = AsyncMock()
         auth = MagicMock()
         auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
-        with patch(
-            "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
-            new_callable=AsyncMock,
-            return_value=None,
-        ) as get_chat:
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=None,
+            ) as get_chat,
+            self._patch_short_db_session(session),
+        ):
             await create_chat_messages_ws_async(
                 websocket=websocket,
                 chat_uuid="missing-chat",
                 auth=auth,
-                session=session,
                 mutex_site=None,
             )
 
@@ -1825,25 +1900,32 @@ class TestCreateChatMessages:
         auth = MagicMock()
         auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
 
+        run_provider, get_run_provider = self._mock_run_provider()
+        session = AsyncMock()
         with (
             patch(
                 "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
                 new_callable=AsyncMock,
-                return_value=self._mock_chat(),
+                return_value=self._chat_snapshot(self._mock_chat()),
             ),
-            patch("fivccliche.modules.agent_chats.routers.ChatEventHandler") as stream_cls,
-            patch("fivccliche.modules.agent_chats.routers.ChatQueryJob") as job_cls,
+            patch("fivccliche.utils.chats.processors.ChatRunParser") as stream_cls,
+            patch(
+                "fivccliche.utils.chats.processors.get_chat_run_provider_async",
+                new=get_run_provider,
+            ),
+            self._patch_short_db_session(session),
         ):
             await create_chat_messages_ws_async(
                 websocket=websocket,
                 chat_uuid="chat-123",
                 auth=auth,
-                session=AsyncMock(),
                 mutex_site=mutex_site,
             )
 
+        session.close.assert_awaited_once()
+
         stream_cls.assert_not_called()
-        job_cls.assert_not_called()
+        run_provider.create_chat_run.assert_not_called()
         mutex.release_async.assert_not_awaited()
         assert websocket.sent[-1] == {
             "event": "error",
@@ -1870,56 +1952,67 @@ class TestCreateChatMessages:
             {"event": "finish", "info": {"chat_uuid": "chat-123"}},
         ]
         fake_stream, fake_job = self._patch_ws_stream_and_job(events)
+        order: list[str] = []
+        previous_stream = fake_job.stream_async.side_effect
+
+        def stream_async(*args, **kwargs):
+            order.append("stream")
+            return previous_stream(*args, **kwargs)
+
+        fake_job.stream_async.side_effect = stream_async
         mutex = MagicMock()
         mutex.acquire_async = AsyncMock(return_value=True)
         mutex.release_async = AsyncMock()
         mutex_site = MagicMock()
         mutex_site.get_mutex.return_value = mutex
         session = AsyncMock()
+
+        async def close_session():
+            order.append("close")
+
+        session.close = AsyncMock(side_effect=close_session)
         auth = MagicMock()
         auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
 
+        run_provider, get_run_provider = self._mock_run_provider(fake_job)
         with (
             patch(
                 "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
                 new_callable=AsyncMock,
-                return_value=self._mock_chat(context={"scope": "router"}),
+                return_value=self._chat_snapshot(self._mock_chat(context={"scope": "router"})),
             ),
             patch(
-                "fivccliche.modules.agent_chats.routers.ChatEventHandler",
+                "fivccliche.utils.chats.processors.ChatRunParser",
                 return_value=fake_stream,
             ),
             patch(
-                "fivccliche.modules.agent_chats.routers.ChatQueryJob",
-                return_value=fake_job,
+                "fivccliche.utils.chats.processors.get_chat_run_provider_async",
+                new=get_run_provider,
             ),
+            self._patch_short_db_session(session),
         ):
             await create_chat_messages_ws_async(
                 websocket=websocket,
                 chat_uuid="chat-123",
                 auth=auth,
-                session=session,
                 mutex_site=mutex_site,
             )
-            query_task = fake_stream.attach.call_args[0][0]
-            await asyncio.sleep(0)
-
+        assert order == ["close", "stream"]
         assert websocket.sent == events
         assert websocket.closed == [1000]
-        args, kwargs = fake_job.run_async.call_args
-        assert args == ("chat-123",)
-        assert kwargs["user_uuid"] == "user-123"
-        assert kwargs["query"] == "Hello"
-        assert kwargs["agent_id"] == "test-agent"
-        assert kwargs["context"] == {"scope": "router"}
-        assert kwargs["chat_mutex"] is mutex
-        assert kwargs["run_timeout"] == CHAT_MESSAGE_RUN_TIMEOUT.total_seconds()
-        assert kwargs["event_callback"] == fake_stream.on_event
+        run_provider.create_chat_run.assert_called_once_with(
+            "chat-123",
+            user_uuid="user-123",
+            agent_id="test-agent",
+            context={"scope": "router"},
+        )
+        args, kwargs = fake_job.stream_async.call_args
+        assert args == ("Hello",)
+        assert kwargs["mutex"] is mutex
+        assert kwargs["timeout"] == CHAT_MESSAGE_RUN_TIMEOUT
         self._describe_job.run_async.assert_awaited_once_with(
             "chat-123", user_uuid="user-123", query_text="Hello"
         )
-        assert query_task.done() is True
-        session.close.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_websocket_rejects_audio_with_moved_endpoint(self):
@@ -1936,13 +2029,12 @@ class TestCreateChatMessages:
         with patch(
             "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
             new_callable=AsyncMock,
-            return_value=self._mock_chat(),
+            return_value=self._chat_snapshot(self._mock_chat()),
         ) as get_chat:
             await create_chat_messages_ws_async(
                 websocket=websocket,
                 chat_uuid="chat-123",
                 auth=auth,
-                session=AsyncMock(),
                 mutex_site=None,
             )
 
@@ -1981,13 +2073,12 @@ class TestCreateChatMessages:
         with patch(
             "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
             new_callable=AsyncMock,
-            return_value=self._mock_chat(),
+            return_value=self._chat_snapshot(self._mock_chat()),
         ) as get_chat:
             await handler(
                 websocket=websocket,
                 chat_uuid="chat-123",
                 auth=auth,
-                session=AsyncMock(),
                 mutex_site=None,
             )
 
@@ -2002,8 +2093,8 @@ class TestCreateChatMessages:
         assert websocket.closed == [1003]
 
     @pytest.mark.asyncio
-    async def test_websocket_disconnect_keeps_agent_task_alive(self):
-        """Disconnect does not cancel the query job or bypass mutex release."""
+    async def test_websocket_disconnect_closes_run_and_releases_mutex(self):
+        """Disconnect deterministically closes the run stream and releases the mutex."""
         from fivccliche.modules.agent_chats.routers import create_chat_messages_ws_async
 
         websocket = self._fake_websocket(
@@ -2013,19 +2104,24 @@ class TestCreateChatMessages:
             ],
             fail_on_send=1,
         )
-        events = [
-            {"event": "start", "info": {"chat_uuid": "chat-123"}},
-            {"event": "finish", "info": {"chat_uuid": "chat-123"}},
-        ]
-        fake_stream, fake_job = self._patch_ws_stream_and_job(events)
+        closed = asyncio.Event()
+        events = [{"event": "start", "info": {"chat_uuid": "chat-123"}}]
+        fake_stream = MagicMock()
         mutex = MagicMock()
         mutex.acquire_async = AsyncMock(return_value=True)
         mutex.release_async = AsyncMock()
 
         async def run_query(*args, **kwargs):
-            await mutex.release_async()
+            try:
+                yield events[0]
+                await asyncio.sleep(10)
+            finally:
+                closed.set()
+                await mutex.release_async()
 
-        fake_job.run_async = AsyncMock(side_effect=run_query)
+        fake_stream.parse_async = Mock(return_value=run_query())
+        fake_job = MagicMock()
+        fake_job.stream_async = Mock(side_effect=lambda *args, **kwargs: run_query())
         mutex_site = MagicMock()
         mutex_site.get_mutex.return_value = mutex
         auth = MagicMock()
@@ -2035,28 +2131,28 @@ class TestCreateChatMessages:
             patch(
                 "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
                 new_callable=AsyncMock,
-                return_value=self._mock_chat(description="Already titled"),
+                return_value=self._chat_snapshot(self._mock_chat(description="Already titled")),
             ),
             patch(
-                "fivccliche.modules.agent_chats.routers.ChatEventHandler",
+                "fivccliche.utils.chats.processors.ChatRunParser",
                 return_value=fake_stream,
             ),
             patch(
-                "fivccliche.modules.agent_chats.routers.ChatQueryJob",
-                return_value=fake_job,
+                "fivccliche.utils.chats.processors.get_chat_run_provider_async",
+                new=self._mock_run_provider(fake_job)[1],
             ),
+            self._patch_short_db_session(AsyncMock()),
         ):
             await create_chat_messages_ws_async(
                 websocket=websocket,
                 chat_uuid="chat-123",
                 auth=auth,
-                session=AsyncMock(),
                 mutex_site=mutex_site,
             )
-            query_task = fake_stream.attach.call_args[0][0]
+            await asyncio.wait_for(closed.wait(), timeout=1)
 
-        assert query_task.done() is True
-        assert query_task.cancelled() is False
+        fake_stream.parse_async.assert_called_once()
+        assert closed.is_set()
         assert mutex.release_async.await_count == 1
 
     def test_websocket_route_is_mounted_and_authenticates(self, client, auth_token):
@@ -2082,14 +2178,18 @@ class TestCreateChatMessages:
 
         mock_mutex_site = MagicMock()
 
+        run_provider, get_run_provider = self._mock_run_provider()
         with (
             patch(
                 "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch("fivccliche.modules.agent_chats.routers.ChatEventHandler") as mock_stream_cls,
-            patch("fivccliche.modules.agent_chats.routers.ChatQueryJob") as mock_job_cls,
+            patch("fivccliche.modules.agent_chats.routers.ChatRunParser") as mock_stream_cls,
+            patch(
+                "fivccliche.modules.agent_chats.routers.get_chat_run_provider_async",
+                new=get_run_provider,
+            ),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 await create_chat_messages_async(
@@ -2104,7 +2204,7 @@ class TestCreateChatMessages:
         assert exc_info.value.status_code == 404
         mock_mutex_site.get_mutex.assert_not_called()
         mock_stream_cls.assert_not_called()
-        mock_job_cls.assert_not_called()
+        run_provider.create_chat_run.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_create_message_falls_back_without_mutex_site(self):
@@ -2128,11 +2228,11 @@ class TestCreateChatMessages:
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(context=context),
             ),
-            self._patch_stream_and_job(mock_generator) as (
+            self._patch_stream_and_run(mock_generator) as (
                 fake_stream,
                 fake_job,
                 mock_stream_cls,
-                mock_job_cls,
+                get_run_provider_mock,
             ),
         ):
             response = await create_chat_messages_async(
@@ -2144,28 +2244,29 @@ class TestCreateChatMessages:
                 mutex_site=None,
             )
             chunks = await self._consume_response(response)
-            query_task = await self._attached_query_task(fake_stream)
 
         assert chunks == [b"data: done\n\n"]
-        mock_stream_cls.assert_called_once_with(chat_uuid="chat-123")
-        mock_job_cls.assert_called_once()
-        args, kwargs = self._query_kwargs(fake_job)
-        assert args == ("chat-123",)
-        assert kwargs["user_uuid"] == "user-123"
-        assert kwargs["query"] == "Hello"
-        assert kwargs["agent_id"] == "test-agent"
-        assert kwargs["context"] == context
-        assert kwargs["skills_enabled"] is True
-        assert kwargs["chat_mutex"] is None
-        assert kwargs["run_timeout"] == CHAT_MESSAGE_RUN_TIMEOUT.total_seconds()
-        assert kwargs["event_callback"] == fake_stream.on_event
-        gather_call, describe_call = background_tasks.add_task.call_args_list
-        assert gather_call.args == (asyncio.gather, query_task)
-        assert gather_call.kwargs == {"return_exceptions": True}
+        mock_stream_cls.assert_called_once_with(
+            chat_uuid="chat-123",
+            output_type="sse",
+        )
+        get_run_provider_mock.assert_called_once()
+        get_run_provider_mock.return_value.create_chat_run.assert_called_once_with(
+            "chat-123",
+            user_uuid="user-123",
+            agent_id="test-agent",
+            context=context,
+        )
+        args, kwargs = self._chat_run_kwargs(fake_job)
+        assert args == ("Hello",)
+        assert kwargs["mutex"] is None
+        assert kwargs["timeout"] == CHAT_MESSAGE_RUN_TIMEOUT
+        fake_stream.parse_async.assert_called_once()
+        describe_call = background_tasks.add_task.call_args
         assert describe_call.args == (self._describe_job.run_async, "chat-123")
         assert describe_call.kwargs == {"user_uuid": "user-123", "query_text": "Hello"}
         self._describe_job_cls.assert_called_once()
-        assert background_tasks.add_task.call_count == 2
+        assert background_tasks.add_task.call_count == 1
         mock_session.close.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -2186,11 +2287,11 @@ class TestCreateChatMessages:
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(),
             ),
-            self._patch_stream_and_job(mock_generator) as (
-                fake_stream,
+            self._patch_stream_and_run(mock_generator) as (
+                _fake_stream,
                 fake_job,
                 _mock_stream_cls,
-                _mock_job_cls,
+                _get_run_provider_mock,
             ),
         ):
             response = await create_chat_messages_async(
@@ -2202,12 +2303,10 @@ class TestCreateChatMessages:
                 mutex_site=mock_mutex_site,
             )
             chunks = await self._consume_response(response)
-            await self._attached_query_task(fake_stream)
-
         assert chunks == [b"data: done\n\n"]
         mock_mutex_site.get_mutex.assert_called_once_with("chats:message:chat-123")
-        _, kwargs = self._query_kwargs(fake_job)
-        assert kwargs["chat_mutex"] is None
+        _, kwargs = self._chat_run_kwargs(fake_job)
+        assert kwargs["mutex"] is None
 
     @pytest.mark.asyncio
     async def test_create_message_skips_describe_when_description_set(self):
@@ -2226,7 +2325,7 @@ class TestCreateChatMessages:
                 new_callable=AsyncMock,
                 return_value=chat,
             ),
-            self._patch_stream_and_job(mock_generator) as (fake_stream, _job, _s, _j),
+            self._patch_stream_and_run(mock_generator) as (_fake_stream, _job, _s, _j),
         ):
             await create_chat_messages_async(
                 chat_uuid="chat-123",
@@ -2236,7 +2335,6 @@ class TestCreateChatMessages:
                 session=AsyncMock(),
                 mutex_site=None,
             )
-            await self._attached_query_task(fake_stream)
 
         self._describe_job_cls.assert_not_called()
 
@@ -2254,7 +2352,7 @@ class TestCreateChatMessages:
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(),
             ),
-            self._patch_stream_and_job(mock_generator) as (fake_stream, _job, _s, _j),
+            self._patch_stream_and_run(mock_generator) as (_fake_stream, _job, _s, _j),
         ):
             await create_chat_messages_async(
                 chat_uuid="chat-123",
@@ -2264,8 +2362,6 @@ class TestCreateChatMessages:
                 session=AsyncMock(),
                 mutex_site=None,
             )
-            await self._attached_query_task(fake_stream)
-
         self._describe_job_cls.assert_not_called()
 
     @pytest.mark.asyncio
@@ -2280,14 +2376,18 @@ class TestCreateChatMessages:
         mock_mutex_site = MagicMock()
         mock_mutex_site.get_mutex.return_value = mock_mutex
 
+        run_provider, get_run_provider = self._mock_run_provider()
         with (
             patch(
                 "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(),
             ),
-            patch("fivccliche.modules.agent_chats.routers.ChatEventHandler") as mock_stream_cls,
-            patch("fivccliche.modules.agent_chats.routers.ChatQueryJob") as mock_job_cls,
+            patch("fivccliche.modules.agent_chats.routers.ChatRunParser") as mock_stream_cls,
+            patch(
+                "fivccliche.modules.agent_chats.routers.get_chat_run_provider_async",
+                new=get_run_provider,
+            ),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 await create_chat_messages_async(
@@ -2304,11 +2404,11 @@ class TestCreateChatMessages:
         mock_mutex.acquire_async.assert_awaited_once()
         mock_mutex.release_async.assert_not_awaited()
         mock_stream_cls.assert_not_called()
-        mock_job_cls.assert_not_called()
+        run_provider.create_chat_run.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_create_message_passes_acquired_mutex_to_query_job(self):
-        """Router acquires the lock and hands the mutex to ChatQueryJob."""
+    async def test_create_message_passes_acquired_mutex_to_chat_run(self):
+        """Router acquires the lock and hands the mutex to the chat run."""
         from fivccliche.modules.agent_chats.routers import (
             CHAT_MESSAGE_RUN_TIMEOUT,
             create_chat_messages_async,
@@ -2332,11 +2432,11 @@ class TestCreateChatMessages:
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(),
             ),
-            self._patch_stream_and_job(mock_generator) as (
-                fake_stream,
+            self._patch_stream_and_run(mock_generator) as (
+                _fake_stream,
                 fake_job,
                 _mock_stream_cls,
-                _mock_job_cls,
+                _get_run_provider_mock,
             ),
         ):
             response = await create_chat_messages_async(
@@ -2348,17 +2448,14 @@ class TestCreateChatMessages:
                 mutex_site=mock_mutex_site,
             )
             chunks = await self._consume_response(response)
-            query_task = await self._attached_query_task(fake_stream)
 
         assert chunks == [b"data: done\n\n"]
         mock_mutex.acquire_async.assert_awaited_once()
-        _, kwargs = self._query_kwargs(fake_job)
-        assert kwargs["chat_mutex"] is mock_mutex
-        assert kwargs["run_timeout"] == CHAT_MESSAGE_RUN_TIMEOUT.total_seconds()
-        background_tasks.add_task.assert_any_call(
-            asyncio.gather, query_task, return_exceptions=True
-        )
-        # Release is owned by ChatQueryJob, not the router.
+        _, kwargs = self._chat_run_kwargs(fake_job)
+        assert kwargs["mutex"] is mock_mutex
+        assert kwargs["timeout"] == CHAT_MESSAGE_RUN_TIMEOUT
+        background_tasks.add_task.assert_called_once()
+        # Release is owned by the chat run, not the router.
         mock_mutex.release_async.assert_not_awaited()
         mock_session.close.assert_awaited_once()
         self._describe_job_cls.assert_called_once()
@@ -2386,11 +2483,11 @@ class TestCreateChatMessages:
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(),
             ),
-            self._patch_stream_and_job(mock_generator) as (
-                fake_stream,
+            self._patch_stream_and_run(mock_generator) as (
+                _fake_stream,
                 fake_job,
                 _mock_stream_cls,
-                _mock_job_cls,
+                _get_run_provider_mock,
             ),
         ):
             response = await create_chat_messages_async(
@@ -2403,15 +2500,14 @@ class TestCreateChatMessages:
             )
             with pytest.raises(RuntimeError, match="stream failed"):
                 await self._consume_response(response)
-            await self._attached_query_task(fake_stream)
 
-        _, kwargs = self._query_kwargs(fake_job)
-        assert kwargs["chat_mutex"] is mock_mutex
+        _, kwargs = self._chat_run_kwargs(fake_job)
+        assert kwargs["mutex"] is mock_mutex
         mock_mutex.release_async.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_create_message_releases_mutex_when_query_job_ctor_fails(self):
-        """Router releases mutex when ChatQueryJob construction fails after acquire."""
+    async def test_create_message_releases_mutex_when_chat_run_creation_fails(self):
+        """Router releases mutex when chat run creation fails after acquire."""
         from fivccliche.modules.agent_chats.routers import create_chat_messages_async
         from fivccliche.modules.agent_chats.schemas import UserChatMessageCreateSchema
 
@@ -2430,9 +2526,9 @@ class TestCreateChatMessages:
                 new_callable=AsyncMock,
                 return_value=self._mock_chat(),
             ),
-            self._patch_stream_and_job(
-                mock_generator, job_side_effect=RuntimeError("setup failed")
-            ) as (_stream, _job, _mock_stream_cls, mock_job_cls),
+            self._patch_stream_and_run(
+                mock_generator, run_side_effect=RuntimeError("setup failed")
+            ) as (_stream, _job, _mock_stream_cls, get_run_provider_mock),
         ):
             with pytest.raises(RuntimeError, match="setup failed"):
                 await create_chat_messages_async(
@@ -2444,7 +2540,7 @@ class TestCreateChatMessages:
                     mutex_site=mock_mutex_site,
                 )
 
-        mock_job_cls.assert_called_once()
+        get_run_provider_mock.assert_called_once()
         mock_mutex.release_async.assert_awaited_once()
 
     def test_create_message_unauthorized(self, client: TestClient):

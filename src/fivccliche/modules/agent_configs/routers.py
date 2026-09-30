@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fivcplayground.tools import create_tool_retriever_async
 
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
-from fivccliche.services.interfaces.speech import (
+from fivccliche.services.interfaces.agent_speeches import (
     SpeechAudioInput,
     SpeechRecognizeOptions,
     SpeechRequestError,
@@ -482,174 +482,179 @@ async def probe_realtime_asr_config_async(
     config_uuid: str,
     websocket: WebSocket,
 ) -> None:
-    from fivccliche.utils.chats import ChatWSHandler
+    from fivccliche.utils.chats import ChatChannel, ChatChannelError
 
-    chat_ws = ChatWSHandler(websocket)
     authenticator = await get_authenticator_async()
-    user = await chat_ws.authenticate(authenticator)
-    if user is None:
-        return
+    async with ChatChannel(websocket, authenticator) as channel:
+        user = await channel.authenticate_async()
+        async with deps.get_db_session_context_async() as session:
+            filters = UserScopedReadableFilterSet(
+                models.UserASR.user_uuid, user.uuid, is_superuser=user.is_superuser
+            )
+            config = await utils.get_user_scoped_async(
+                session, models.UserASR, filters=filters, config_uuid=config_uuid
+            )
+            model_type = config.model_type if config else None
+            api_key = config.api_key if config else None
+            asr_model = config.model if config else None
+            base_url = config.base_url if config else None
 
-    async with deps.get_db_session_context_async() as session:
-        filters = UserScopedReadableFilterSet(
-            models.UserASR.user_uuid, user.uuid, is_superuser=user.is_superuser
+        if config is None:
+            await channel.fail_async(
+                code="asr_not_found",
+                message="ASR config not found",
+                close_code=4404,
+            )
+            return
+        if model_type != "dashscope_realtime":
+            await channel.fail_async(
+                code="invalid_model_type",
+                message="Realtime ASR is required",
+                close_code=1003,
+            )
+            return
+
+        start_frame = await channel.receive_json_async()
+        if start_frame is None:
+            return
+        if start_frame.get("type") != "start":
+            await channel.fail_async(
+                code="invalid_start",
+                message="A start frame is required",
+                close_code=1003,
+            )
+        if start_frame.get("format") != "pcm" or start_frame.get("sample_rate") != 16000:
+            await channel.fail_async(
+                code="invalid_start",
+                message="PCM audio at 16000 Hz is required",
+                close_code=1003,
+            )
+            return
+
+        speech_provider = await get_speech_provider_async(model_type)
+        if speech_provider is None:
+            await channel.fail_async(
+                code="provider_unmounted",
+                message="Speech provider is not mounted",
+                close_code=1013,
+            )
+            return
+
+        options = SpeechRecognizeOptions(
+            language=start_frame.get("language"),
+            hotwords=start_frame.get("hotwords"),
+            context=start_frame.get("context"),
+            format="pcm",
+            sample_rate=16000,
         )
-        config = await utils.get_user_scoped_async(
-            session, models.UserASR, filters=filters, config_uuid=config_uuid
-        )
-        model_type = config.model_type if config else None
-        api_key = config.api_key if config else None
-        asr_model = config.model if config else None
-        base_url = config.base_url if config else None
-
-    if config is None:
-        await chat_ws.fail(
-            code="asr_not_found",
-            message="ASR config not found",
-            close_code=4404,
-        )
-        return
-    if model_type != "dashscope_realtime":
-        await chat_ws.fail(
-            code="invalid_model_type",
-            message="Realtime ASR is required",
-            close_code=1003,
-        )
-        return
-
-    start_frame = await chat_ws.receive(
-        expected_type="start",
-        invalid_code="invalid_start",
-    )
-    if start_frame is None:
-        return
-    if not isinstance(start_frame, dict):
-        return
-    if start_frame.get("format") != "pcm" or start_frame.get("sample_rate") != 16000:
-        await chat_ws.fail(
-            code="invalid_start",
-            message="PCM audio at 16000 Hz is required",
-            close_code=1003,
-        )
-        return
-
-    speech_provider = await get_speech_provider_async(model_type)
-    if speech_provider is None:
-        await chat_ws.fail(
-            code="provider_unmounted",
-            message="Speech provider is not mounted",
-            close_code=1013,
-        )
-        return
-
-    options = SpeechRecognizeOptions(
-        language=start_frame.get("language"),
-        hotwords=start_frame.get("hotwords"),
-        context=start_frame.get("context"),
-        format="pcm",
-        sample_rate=16000,
-    )
-    try:
-        recognizer = await speech_provider.get_recognizer(
-            options,
-            api_key=api_key,
-            model=asr_model,
-            base_url=base_url,
-        )
-    except SpeechRequestError as exc:
-        await chat_ws.fail(
-            code="recognition_failed",
-            message=str(exc) or "Speech recognition failed",
-            close_code=1011,
-        )
-        return
-
-    audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
-    output_queue: asyncio.Queue[dict | None] = asyncio.Queue()
-
-    async def _read_audio() -> None:
-        while True:
-            frame = await chat_ws.receive()
-            if frame is None:
-                break
-            if isinstance(frame, bytes):
-                await audio_queue.put(frame)
-                continue
-            if frame.get("type") != "audio_commit":
-                await chat_ws.fail(
-                    code="invalid_frame",
-                    message="Binary PCM or audio_commit is required",
-                    close_code=1003,
-                )
-                break
-            break
-        await audio_queue.put(None)
-
-    async def _recognize() -> None:
-        async def _audio() -> AsyncIterator[bytes]:
-            while True:
-                chunk = await audio_queue.get()
-                if chunk is None:
-                    return
-                yield chunk
-
         try:
-            async with recognizer:
-                await websocket.send_json({"event": "ready", "info": {}})
-                final_parts: list[str] = []
-                async for event in recognizer.stream_async(_audio()):
-                    payload = {"text": event.text, "language": event.language}
-                    if event.type == "error":
-                        await output_queue.put(
-                            {
-                                "event": "error",
-                                "info": {
-                                    "code": "recognition_failed",
-                                    "message": event.message or "Speech recognition failed",
-                                },
-                            }
-                        )
-                        return
-                    await output_queue.put({"event": event.type, "info": payload})
-                    if event.type == "final":
-                        final_parts.append(event.text)
-                await output_queue.put(
-                    {"event": "complete", "info": {"text": "".join(final_parts)}}
-                )
-        except Exception as exc:
-            message = (
-                str(exc) if isinstance(exc, SpeechRequestError) else "Speech recognition failed"
+            recognizer = await speech_provider.get_recognizer(
+                options,
+                api_key=api_key,
+                model=asr_model,
+                base_url=base_url,
             )
-            await output_queue.put(
-                {
-                    "event": "error",
-                    "info": {"code": "recognition_failed", "message": message},
-                }
+        except SpeechRequestError as exc:
+            await channel.fail_async(
+                code="recognition_failed",
+                message=str(exc) or "Speech recognition failed",
+                close_code=1011,
             )
-        finally:
-            await output_queue.put(None)
+            return
 
-    audio_task = asyncio.create_task(_read_audio())
-    recognition_task = asyncio.create_task(_recognize())
-    try:
-        while True:
-            item = await output_queue.get()
-            if item is None:
-                await websocket.close(code=1000)
-                return
-            await websocket.send_json(item)
-            if item.get("event") == "error":
-                await websocket.close(code=1011)
-                return
-            if item.get("event") == "complete":
-                await websocket.close(code=1000)
-                return
-    except (RuntimeError, WebSocketDisconnect):
-        return
-    finally:
-        audio_task.cancel()
-        recognition_task.cancel()
-        await asyncio.gather(audio_task, recognition_task, return_exceptions=True)
+        audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        output_queue: asyncio.Queue[dict | None] = asyncio.Queue()
+
+        async def _read_audio() -> None:
+            while True:
+                frame = await channel.receive_async()
+                if frame is None:
+                    break
+                if isinstance(frame, bytes):
+                    await audio_queue.put(frame)
+                    continue
+                if isinstance(frame, str):
+                    try:
+                        frame = json.loads(frame)
+                    except json.JSONDecodeError:
+                        frame = None
+                if not isinstance(frame, dict) or frame.get("type") != "audio_commit":
+                    await output_queue.put(
+                        {
+                            "event": "error",
+                            "info": {
+                                "code": "invalid_frame",
+                                "message": "Binary PCM or audio_commit is required",
+                            },
+                        }
+                    )
+                    break
+                break
+            await audio_queue.put(None)
+
+        async def _recognize() -> None:
+            async def _audio() -> AsyncIterator[bytes]:
+                while True:
+                    chunk = await audio_queue.get()
+                    if chunk is None:
+                        return
+                    yield chunk
+
+            try:
+                async with recognizer:
+                    await channel.send_json_async({"event": "ready", "info": {}})
+                    final_parts: list[str] = []
+                    async for event in recognizer.stream_async(_audio()):
+                        payload = {"text": event.text, "language": event.language}
+                        if event.type == "error":
+                            await output_queue.put(
+                                {
+                                    "event": "error",
+                                    "info": {
+                                        "code": "recognition_failed",
+                                        "message": event.message or "Speech recognition failed",
+                                    },
+                                }
+                            )
+                            return
+                        await output_queue.put({"event": event.type, "info": payload})
+                        if event.type == "final":
+                            final_parts.append(event.text)
+                    await output_queue.put(
+                        {"event": "complete", "info": {"text": "".join(final_parts)}}
+                    )
+            except Exception as exc:
+                message = (
+                    str(exc) if isinstance(exc, SpeechRequestError) else "Speech recognition failed"
+                )
+                await output_queue.put(
+                    {
+                        "event": "error",
+                        "info": {"code": "recognition_failed", "message": message},
+                    }
+                )
+            finally:
+                await output_queue.put(None)
+
+        audio_task = asyncio.create_task(_read_audio())
+        recognition_task = asyncio.create_task(_recognize())
+        try:
+            while True:
+                item = await output_queue.get()
+                if item is None:
+                    return
+                await channel.send_json_async(item)
+                if item.get("event") == "error":
+                    message = str(item.get("info", {}).get("message", ""))
+                    raise ChatChannelError(code=1011, msg=message)
+                if item.get("event") == "complete":
+                    return
+        except (RuntimeError, WebSocketDisconnect):
+            return
+        finally:
+            audio_task.cancel()
+            recognition_task.cancel()
+            await asyncio.gather(audio_task, recognition_task, return_exceptions=True)
 
 
 @router_asrs.get(
@@ -855,99 +860,97 @@ async def probe_realtime_tts_config_async(
     websocket: WebSocket,
 ) -> None:
     """Stream one synthesis probe over the realtime provider WebSocket protocol."""
-    from fivccliche.utils.chats import ChatWSHandler
+    from fivccliche.utils.chats import ChatChannel
 
-    chat_ws = ChatWSHandler(websocket)
     authenticator = await get_authenticator_async()
-    user = await chat_ws.authenticate(authenticator)
-    if user is None:
-        return
+    async with ChatChannel(websocket, authenticator) as channel:
+        user = await channel.authenticate_async()
 
-    async with deps.get_db_session_context_async() as session:
-        filters = UserScopedReadableFilterSet(
-            models.UserTTS.user_uuid, user.uuid, is_superuser=user.is_superuser
-        )
-        config = await utils.get_user_scoped_async(
-            session, models.UserTTS, filters=filters, config_uuid=config_uuid
-        )
-        model_type = config.model_type if config else None
-        api_key = config.api_key if config else None
-        tts_model = config.model if config else None
-        base_url = config.base_url if config else None
+        async with deps.get_db_session_context_async() as session:
+            filters = UserScopedReadableFilterSet(
+                models.UserTTS.user_uuid, user.uuid, is_superuser=user.is_superuser
+            )
+            config = await utils.get_user_scoped_async(
+                session, models.UserTTS, filters=filters, config_uuid=config_uuid
+            )
+            model_type = config.model_type if config else None
+            api_key = config.api_key if config else None
+            tts_model = config.model if config else None
+            base_url = config.base_url if config else None
 
-    if config is None:
-        await chat_ws.fail(
-            code="tts_not_found",
-            message="TTS config not found",
-            close_code=4404,
-        )
-        return
-    if model_type != "dashscope_realtime":
-        await chat_ws.fail(
-            code="invalid_model_type",
-            message="Realtime TTS is required",
-            close_code=1003,
-        )
-        return
+        if config is None:
+            await channel.fail_async(
+                code="tts_not_found",
+                message="TTS config not found",
+                close_code=4404,
+            )
+            return
+        if model_type != "dashscope_realtime":
+            await channel.fail_async(
+                code="invalid_model_type",
+                message="Realtime TTS is required",
+                close_code=1003,
+            )
+            return
 
-    start_frame = await chat_ws.receive(
-        expected_type="start",
-        invalid_code="invalid_start",
-    )
-    if start_frame is None or not isinstance(start_frame, dict):
-        return
-    try:
-        probe = schemas.UserTTSProbeRequest.model_validate(start_frame)
-    except ValidationError:
-        await chat_ws.fail(
-            code="invalid_start",
-            message="Invalid TTS probe parameters",
-            close_code=1003,
-        )
-        return
+        start_frame = await channel.receive_json_async()
+        if start_frame is None:
+            return
+        if start_frame.get("type") != "start":
+            await channel.fail_async(
+                code="invalid_start",
+                message="A start frame is required",
+                close_code=1003,
+            )
+        try:
+            probe = schemas.UserTTSProbeRequest.model_validate(start_frame)
+        except ValidationError:
+            await channel.fail_async(
+                code="invalid_start",
+                message="Invalid TTS probe parameters",
+                close_code=1003,
+            )
+            return
 
-    speech_provider = await get_speech_provider_async(model_type)
-    if speech_provider is None:
-        await chat_ws.fail(
-            code="provider_unmounted",
-            message="Speech provider is not mounted",
-            close_code=1013,
-        )
-        return
+        speech_provider = await get_speech_provider_async(model_type)
+        if speech_provider is None:
+            await channel.fail_async(
+                code="provider_unmounted",
+                message="Speech provider is not mounted",
+                close_code=1013,
+            )
+            return
 
-    options = SpeechSynthesisOptions(
-        voice=probe.voice,
-        format=probe.format,
-        sample_rate=probe.sample_rate,
-        volume=probe.volume,
-        speech_rate=probe.speech_rate,
-        pitch_rate=probe.pitch_rate,
-    )
-    try:
-        synthesizer = await speech_provider.get_synthesizer(
-            options,
-            api_key=api_key,
-            model=tts_model,
-            base_url=base_url,
+        options = SpeechSynthesisOptions(
+            voice=probe.voice,
+            format=probe.format,
+            sample_rate=probe.sample_rate,
+            volume=probe.volume,
+            speech_rate=probe.speech_rate,
+            pitch_rate=probe.pitch_rate,
         )
-        async with synthesizer:
-            await websocket.send_json({"event": "ready", "info": {}})
-            async for audio in synthesizer.stream_async(probe.text):
-                encoded = base64.b64encode(audio).decode("ascii")
-                await websocket.send_json({"event": "audio", "info": {"data_b64": encoded}})
-        await websocket.send_json({"event": "complete", "info": {}})
-        await websocket.close(code=1000)
-    except WebSocketDisconnect:
-        return
-    except RuntimeError:
-        return
-    except SpeechRequestError as exc:
-        await chat_ws.fail(
-            code="synthesis_failed",
-            message=str(exc) or "Speech synthesis failed",
-            close_code=1011,
-        )
-        return
+        try:
+            synthesizer = await speech_provider.get_synthesizer(
+                options,
+                api_key=api_key,
+                model=tts_model,
+                base_url=base_url,
+            )
+            async with synthesizer:
+                await channel.send_json_async({"event": "ready", "info": {}})
+                async for audio in synthesizer.stream_async(probe.text):
+                    encoded = base64.b64encode(audio).decode("ascii")
+                    await channel.send_json_async({"event": "audio", "info": {"data_b64": encoded}})
+            await channel.send_json_async({"event": "complete", "info": {}})
+        except (RuntimeError, WebSocketDisconnect):
+            return
+        except SpeechRequestError as exc:
+            await channel.fail_async(
+                code="synthesis_failed",
+                message=str(exc) or "Speech synthesis failed",
+                close_code=1011,
+            )
+            return
 
 
 @router_tts.get(

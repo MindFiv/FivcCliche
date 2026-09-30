@@ -10,7 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 from fivcglue import IComponentSite
 
-from fivccliche.services.interfaces.speech import (
+from fivccliche.services.interfaces.agent_speeches import (
     ISpeechProvider,
     ISpeechRecognizer,
     ISpeechSynthesizer,
@@ -202,13 +202,22 @@ class _DashScopeMultimodalRecognizer(ISpeechRecognizer):
         base_url: str = _DEFAULT_BASE_URL,
         http_client: httpx.AsyncClient | None = None,
         options: SpeechRecognizeOptions | None = None,
+        speech_id: str = "",
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._http_client = http_client
         self._owns_http_client = http_client is None
-        self._options = options
+        self._options = options or SpeechRecognizeOptions()
+        self._id = speech_id
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    def get_option(self) -> SpeechRecognizeOptions:
+        return self._options
 
     async def __aenter__(self) -> Self:
         if self._http_client is None:
@@ -295,6 +304,7 @@ class _DashScopeQwenAudioTTSSynthesizer(ISpeechSynthesizer):
         base_url: str = _DEFAULT_BASE_URL,
         http_client: httpx.AsyncClient | None = None,
         options: SpeechSynthesisOptions | None = None,
+        speech_id: str = "",
     ) -> None:
         if model not in _QWEN_AUDIO_TTS_MODELS:
             raise SpeechRequestError(
@@ -311,6 +321,14 @@ class _DashScopeQwenAudioTTSSynthesizer(ISpeechSynthesizer):
             format="wav",
             sample_rate=24000,
         )
+        self._id = speech_id
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    def get_option(self) -> SpeechSynthesisOptions:
+        return self._options
 
     async def __aenter__(self) -> Self:
         if self._http_client is None:
@@ -383,16 +401,18 @@ class DashScopeSpeechProvider(ISpeechProvider):
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
-        **_kwargs: Any,
+        **kwargs: Any,
     ) -> ISpeechRecognizer:
         api_key, model, base_url = self._credentials(
             capability="asr", api_key=api_key, model=model, base_url=base_url
         )
+        speech_id = kwargs.get("id")
         return _DashScopeMultimodalRecognizer(
             api_key=api_key,
             model=model,
             base_url=base_url,
             options=options,
+            speech_id=speech_id if isinstance(speech_id, str) else "",
         )
 
     async def get_synthesizer(
@@ -402,16 +422,18 @@ class DashScopeSpeechProvider(ISpeechProvider):
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
-        **_kwargs: Any,
+        **kwargs: Any,
     ) -> ISpeechSynthesizer:
         api_key, model, base_url = self._credentials(
             capability="tts", api_key=api_key, model=model, base_url=base_url
         )
+        speech_id = kwargs.get("id")
         return _DashScopeQwenAudioTTSSynthesizer(
             api_key=api_key,
             model=model,
             base_url=_qwen_audio_tts_url(base_url),
             options=options,
+            speech_id=speech_id if isinstance(speech_id, str) else "",
         )
 
     def _credentials(

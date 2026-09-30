@@ -3,7 +3,7 @@ import json
 from fivccliche.modules.agent_configs.filters import UserScopedReadableFilterSet
 from fivccliche.modules.agent_configs.models import UserASR
 from fivccliche.modules.agent_configs.utils import get_user_scoped_async
-from fivccliche.services.interfaces.speech import SpeechAudioInput, SpeechRecognizeOptions
+from fivccliche.services.interfaces.agent_speeches import SpeechAudioInput, SpeechRecognizeOptions
 from fivccliche.utils.deps import get_db_session_context_async, get_speech_provider_async
 
 

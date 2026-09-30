@@ -9,8 +9,9 @@ via optional `hindsight-client` (not a core package dependency).
 
 - Interface + optional Hindsight provider (DI + `get_memory_provider_async`)
 - Chat-level memorize job is implemented in `agent_chats.jobs.memorize` but **not
-  registered** on the scheduler (`agent_chats` `list_jobs()` is empty). A
-  job listed with `config is None` is also skipped at mount.
+  registered** (`agent_chats` `list_jobs()` includes only `ChatDescribeJob`,
+  whose `config is None` keeps it off the scheduler). A job listed with
+  `config is None` is also skipped at mount.
 - Function tools in `agent_memories.tools` (`MemoryRetain` / `MemoryRecall` /
   `MemoryList` / `MemoryDelete`) for later `transport=function` wiring
 - HTTP API in `agent_memories` (`GET /memories/`, `GET /memories/recall/`,
@@ -187,10 +188,11 @@ or an unmounted provider raises `ValueError`.
 
 Implemented by `agent_chats.jobs.ChatMemorizeJob` (`IModuleJob`; defined in
 `agent_chats.jobs.memorize`). The class
-and `CHAT_MEMORIZE` settings remain, but `agent_chats.ModuleImpl` currently
-returns an empty `list_jobs()`, so `ModuleSiteImpl` does not register
-`agent-chats-memorize` and `fivccliche jobs run agent_chats
-agent-chats-memorize` cannot find it. Listing the job with `config is None`
+and `CHAT_MEMORIZE` settings remain, but `agent_chats.ModuleImpl` does not
+put it on `list_jobs()` (that list is only `ChatDescribeJob`), so
+`ModuleSiteImpl` does not register `agent-chats-memorize` and
+`fivccliche jobs run agent_chats agent-chats-memorize` cannot find it.
+Listing the job with `config is None`
 would also skip the scheduler. Re-enable scheduling by constructing
 `ChatMemorizeJob(component_site)` in `ModuleImpl.__init__` again
 (its `config` is a schedule dict).
