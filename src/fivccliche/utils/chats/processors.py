@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 _INPUT_SAMPLE_RATE = 16_000
 _OUTPUT_SAMPLE_RATE = 24_000
 _LOCK_SLACK = timedelta(seconds=10)
+_UTTERANCE_FLUSH_PARTIALS = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -238,6 +239,10 @@ class ChatVoiceProcessor:
                 {"event": "state", "info": {"state": "listening"}}
             )
             self._asr_queue = asyncio.Queue()
+            synthesizer = self._proc.get_synthesizer()
+            schedule = getattr(type(synthesizer), "schedule_preopen", None)
+            if callable(schedule):
+                schedule(synthesizer)
             return self
 
         async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
@@ -298,15 +303,16 @@ class ChatVoiceProcessor:
                     await asyncio.gather(receive_task, return_exceptions=True)
 
         async def _recognize_async(self) -> str:
+            """Collect recognition text until the caller ends the audio stream."""
             proc = self._proc
-            transcript = ""
+            parts: list[str] = []
             try:
-                async for segment in ChatRecognizeParser().parse_async(
-                    proc.get_recognizer().stream_async(self._asr_audio_async()),
-                ):
-                    transcript = segment.strip()
-                    self._asr_queue.put_nowait(None)
-                    break
+                async for segment in ChatRecognizeParser(
+                    empty_partials_to_flush=_UTTERANCE_FLUSH_PARTIALS,
+                ).parse_async(proc.get_recognizer().stream_async(self._asr_audio_async())):
+                    text = segment.strip()
+                    if text:
+                        parts.append(text)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -320,7 +326,7 @@ class ChatVoiceProcessor:
                         },
                     }
                 )
-            return transcript
+            return "\n".join(parts)
 
         async def _stop_asr_async(self) -> None:
             task = self._asr_task
@@ -548,6 +554,12 @@ class ChatVoiceProcessor:
 
     async def process_async(self) -> None:
         """Send ready, then alternate listening and responding until the socket closes."""
+        from fivccliche.modules.agent_chats.services import voice_session_warmup
+
+        async with voice_session_warmup(self):
+            await self._process_turns_async()
+
+    async def _process_turns_async(self) -> None:
         recognize = self._recognizer.get_option()
         synthesis = self._synthesizer.get_option()
         await self.get_channel().send_json_async(

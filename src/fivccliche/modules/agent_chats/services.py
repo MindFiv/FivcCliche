@@ -1,7 +1,10 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
@@ -31,6 +34,142 @@ from .filters import ChatFilterSet
 from .jobs.describe import ChatDescribeJob
 
 logger = logging.getLogger(__name__)
+
+
+class _WarmSlot:
+    """In-flight agent warmup shared by every turn of one voice session."""
+
+    def __init__(self, agent_id: str) -> None:
+        self.agent_id = agent_id
+        self.task: asyncio.Task[tuple[Any, Any, Any]] | None = None
+
+
+_VOICE_WARM: ContextVar[_WarmSlot | None] = ContextVar("voice_warm", default=None)
+
+
+async def _cancel_task(task: asyncio.Task[Any] | None) -> None:
+    if task is None:
+        return
+    if not task.done():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        return
+    if not task.cancelled():
+        task.exception()
+
+
+async def _prepare_voice_turn_async(proc: Any) -> tuple[Any, Any, Any]:
+    """Build the agent stack once, before the user finishes speaking."""
+    chat = proc._chat
+    run = proc.get_run_provider().create_chat_run(
+        chat.uuid,
+        user_uuid=proc.get_user().uuid,
+        agent_id=chat.agent_id,
+        context=chat.context,
+    )
+    dependencies = run._dependencies
+    if dependencies is None:
+        dependencies = UserChatRunImpl._Dependencies(
+            run._config_provider,
+            run._chat_provider,
+            user_uuid=run._user_uuid,
+        )
+        run._dependencies = dependencies
+    agent = await create_agent_async(
+        model_backend=dependencies.model_backend,
+        model_config_repository=dependencies.model_repository,
+        agent_backend=dependencies.agent_backend,
+        agent_config_repository=dependencies.agent_repository,
+        agent_config_id=run._agent_id,
+    )
+    tools = await create_tool_retriever_async(
+        tool_backend=dependencies.tool_backend,
+        tools=None,
+        tool_config_repository=dependencies.tool_repository,
+        embedding_backend=dependencies.embedding_backend,
+        embedding_config_repository=dependencies.embedding_repository,
+        space_id=run._user_uuid,
+    )
+    skills = await create_skill_retriever_async(
+        tool_backend=dependencies.tool_backend,
+        skill_config_repository=dependencies.skill_repository,
+        embedding_backend=dependencies.embedding_backend,
+        embedding_config_repository=dependencies.embedding_repository,
+        space_id=run._user_uuid,
+    )
+    return agent, tools, skills
+
+
+async def _cached_voice_collaborators(agent_id: str) -> tuple[Any, Any, Any] | None:
+    """Return a warmed collaborator stack, or None when this turn must build its own."""
+    slot = _VOICE_WARM.get()
+    if slot is None or slot.task is None or slot.agent_id != agent_id:
+        return None
+    task = slot.task
+    try:
+        return await task
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning("Voice agent warmup failed; building this turn", exc_info=True)
+        if slot.task is task:
+            slot.task = None
+        return None
+
+
+async def _load_collaborators_async(
+    *,
+    agent_id: str,
+    user_uuid: str,
+    dependencies: Any,
+) -> tuple[Any, Any, Any]:
+    """Reuse this voice session's warmup, or build a fresh stack for a text turn."""
+    prepared = await _cached_voice_collaborators(agent_id)
+    if prepared is not None:
+        return prepared
+    agent = await create_agent_async(
+        model_backend=dependencies.model_backend,
+        model_config_repository=dependencies.model_repository,
+        agent_backend=dependencies.agent_backend,
+        agent_config_repository=dependencies.agent_repository,
+        agent_config_id=agent_id,
+    )
+    tools = await create_tool_retriever_async(
+        tool_backend=dependencies.tool_backend,
+        tools=None,
+        tool_config_repository=dependencies.tool_repository,
+        embedding_backend=dependencies.embedding_backend,
+        embedding_config_repository=dependencies.embedding_repository,
+        space_id=user_uuid,
+    )
+    skills = await create_skill_retriever_async(
+        tool_backend=dependencies.tool_backend,
+        skill_config_repository=dependencies.skill_repository,
+        embedding_backend=dependencies.embedding_backend,
+        embedding_config_repository=dependencies.embedding_repository,
+        space_id=user_uuid,
+    )
+    return agent, tools, skills
+
+
+@asynccontextmanager
+async def voice_session_warmup(proc: Any) -> AsyncIterator[None]:
+    """Warm the agent stack once for every turn of this voice session."""
+    warm = _WarmSlot(proc._chat.agent_id)
+    token = _VOICE_WARM.set(warm)
+    warm.task = asyncio.create_task(_prepare_voice_turn_async(proc))
+    try:
+        yield
+    finally:
+        warm_task = warm.task
+        _VOICE_WARM.reset(token)
+        await _cancel_task(warm_task)
+        get_synthesizer = getattr(proc, "get_synthesizer", None)
+        if callable(get_synthesizer):
+            synthesizer = get_synthesizer()
+            cancel = getattr(type(synthesizer), "cancel_preopen_async", None)
+            if callable(cancel):
+                await cancel(synthesizer)
 
 
 class UserChatRepositoryImpl(UserChatRepository):
@@ -334,27 +473,10 @@ class UserChatRunImpl(IUserChatRun):
             self._dependencies = dependencies
         try:
             async with asyncio.timeout(timeout.total_seconds() if timeout else None):
-                agent = await create_agent_async(
-                    model_backend=dependencies.model_backend,
-                    model_config_repository=dependencies.model_repository,
-                    agent_backend=dependencies.agent_backend,
-                    agent_config_repository=dependencies.agent_repository,
-                    agent_config_id=self._agent_id,
-                )
-                agent_tools = await create_tool_retriever_async(
-                    tool_backend=dependencies.tool_backend,
-                    tools=None,
-                    tool_config_repository=dependencies.tool_repository,
-                    embedding_backend=dependencies.embedding_backend,
-                    embedding_config_repository=dependencies.embedding_repository,
-                    space_id=self._user_uuid,
-                )
-                agent_skills = await create_skill_retriever_async(
-                    tool_backend=dependencies.tool_backend,
-                    skill_config_repository=dependencies.skill_repository,
-                    embedding_backend=dependencies.embedding_backend,
-                    embedding_config_repository=dependencies.embedding_repository,
-                    space_id=self._user_uuid,
+                agent, agent_tools, agent_skills = await _load_collaborators_async(
+                    agent_id=self._agent_id,
+                    user_uuid=self._user_uuid,
+                    dependencies=dependencies,
                 )
 
                 async for event in agent.stream_async(

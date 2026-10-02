@@ -9,7 +9,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
-from typing import Any, Literal, Self
+from typing import Any, Literal, Self, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
@@ -43,6 +43,53 @@ _QWEN_TTS_SAMPLE_RATE = 24000
 _AUDIO_CHUNK_SIZE = 12800
 
 _ConnectFn = Callable[[str, dict[str, str]], Awaitable[Any]]
+_BACKGROUND_CLOSES: set[asyncio.Task[None]] = set()
+
+
+def _socket_finished(socket: object | None) -> bool:
+    """A DashScope realtime socket accepts one finish, then must be replaced."""
+    if socket is None:
+        return False
+    return bool(
+        getattr(socket, "_finish_sent", False)
+        or getattr(socket, "_closed", False)
+        or getattr(socket, "_failed", False)
+    )
+
+
+def _abandon_socket(socket: object) -> None:
+    """Mark a cancelled session finished so the next turn opens a new socket.
+
+    ``_finish_sent`` keeps ``close_async`` from sending another finish.
+    """
+    abandoned = cast(Any, socket)
+    abandoned._closed = True
+    abandoned._failed = True
+    abandoned._finish_sent = True
+
+
+async def _close_abandoned_socket_async(close: Any) -> None:
+    try:
+        await close()
+    except Exception:
+        _logger.debug("Failed to close abandoned voice socket", exc_info=True)
+
+
+def _close_abandoned_socket(close: Any) -> None:
+    """Close a cancelled socket without blocking the interrupted turn."""
+    task = asyncio.create_task(_close_abandoned_socket_async(close))
+    _BACKGROUND_CLOSES.add(task)
+    task.add_done_callback(_BACKGROUND_CLOSES.discard)
+
+
+async def _release_unfinished_socket_async(socket: object | None) -> None:
+    if socket is None or _socket_finished(socket):
+        return
+    _abandon_socket(socket)
+    close = getattr(socket, "close_async", None)
+    if not callable(close):
+        return
+    _close_abandoned_socket(close)
 
 
 def _websocket_url(base_url: str) -> str:
@@ -370,6 +417,7 @@ class _DashScopeRecognitionSocket:
         self._task_id = uuid.uuid4().hex
         self._started = False
         self._finish_sent = False
+        self._failed = False
         self._closed = False
 
     async def start_async(self) -> None:
@@ -702,7 +750,7 @@ class _DashScopeRealtimeRecognizer(ISpeechRecognizer):
     def get_option(self) -> SpeechRecognizeOptions:
         return self._options
 
-    async def __aenter__(self) -> Self:
+    async def _connect_socket_async(self) -> None:
         self._socket = _DashScopeRecognitionSocket(
             url=self._ws_url,
             model=self._model,
@@ -711,6 +759,15 @@ class _DashScopeRealtimeRecognizer(ISpeechRecognizer):
             connect=self._connect,
         )
         await self._socket.start_async()
+
+    async def _open_socket_async(self) -> None:
+        socket = self._socket
+        if socket is not None:
+            await socket.close_async()
+        await self._connect_socket_async()
+
+    async def __aenter__(self) -> Self:
+        await self._connect_socket_async()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -723,6 +780,8 @@ class _DashScopeRealtimeRecognizer(ISpeechRecognizer):
         self,
         audio: SpeechAudioInput | AsyncIterator[bytes],
     ) -> AsyncIterator[SpeechEvent]:
+        if _socket_finished(self._socket):
+            await self._open_socket_async()
         socket = self._socket
         if socket is None:
             raise SpeechRequestError("Realtime ASR session is not started")
@@ -764,6 +823,7 @@ class _DashScopeRealtimeRecognizer(ISpeechRecognizer):
             for task in (send_task, receive_task):
                 task.cancel()
             await asyncio.gather(send_task, receive_task, return_exceptions=True)
+            await _release_unfinished_socket_async(socket)
 
 
 class _DashScopeTTSSynthesizer(ISpeechSynthesizer):
@@ -796,6 +856,7 @@ class _DashScopeTTSSynthesizer(ISpeechSynthesizer):
         self._connect = connect or _connect_websockets
         self._socket: _DashScopeTTSSocket | _DashScopeQwenTTSSocket | None = None
         self._stream_lock = asyncio.Lock()
+        self._preopen_task: asyncio.Task[None] | None = None
 
     @property
     def id(self) -> str:
@@ -804,7 +865,7 @@ class _DashScopeTTSSynthesizer(ISpeechSynthesizer):
     def get_option(self) -> SpeechSynthesisOptions:
         return self._options
 
-    async def __aenter__(self) -> Self:
+    async def _connect_socket_async(self) -> None:
         if _is_qwen_tts_realtime_model(self._model):
             self._validate_qwen_tts_options()
             self._socket = _DashScopeQwenTTSSocket(
@@ -828,6 +889,49 @@ class _DashScopeTTSSynthesizer(ISpeechSynthesizer):
                 connect=self._connect,
             )
         await self._socket.start_async()
+
+    async def _open_socket_async(self) -> None:
+        socket = self._socket
+        if socket is not None:
+            await socket.close_async()
+        await self._connect_socket_async()
+
+    def schedule_preopen(self) -> None:
+        """Reconnect a finished TTS socket while the user is still speaking."""
+        socket = self._socket
+        if socket is not None and not _socket_finished(socket):
+            return
+        if self._preopen_task is not None and not self._preopen_task.done():
+            return
+        self._preopen_task = asyncio.create_task(self._open_socket_async())
+
+    async def _await_preopen_async(self) -> None:
+        task = self._preopen_task
+        if task is None:
+            return
+        try:
+            await task
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _logger.warning("Voice TTS preopen failed", exc_info=True)
+        if self._preopen_task is task:
+            self._preopen_task = None
+
+    async def cancel_preopen_async(self) -> None:
+        task = self._preopen_task
+        self._preopen_task = None
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return
+        if not task.cancelled():
+            task.exception()
+
+    async def __aenter__(self) -> Self:
+        await self._connect_socket_async()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -837,43 +941,56 @@ class _DashScopeTTSSynthesizer(ISpeechSynthesizer):
             await socket.close_async()
 
     async def stream_async(self, text: str | AsyncIterator[str]) -> AsyncIterator[bytes]:
+        await self._await_preopen_async()
+        if _socket_finished(self._socket):
+            await self._open_socket_async()
         socket = self._socket
         if socket is None:
             raise SpeechRequestError("TTS session is not started")
         if self._stream_lock.locked():
             raise SpeechRequestError("TTS session is already streaming")
 
-        async with self._stream_lock:
-            if isinstance(socket, _DashScopeQwenTTSSocket):
-                async for chunk in self._stream_qwen_tts(socket, text):
+        try:
+            async with self._stream_lock:
+                async for chunk in self._iter_audio_async(socket, text):
                     yield chunk
-            else:
-                send_task = asyncio.create_task(self._submit_text(socket, text))
-                try:
-                    while True:
-                        raw = await socket.recv_async()
-                        if isinstance(raw, bytes):
-                            yield raw
-                            continue
+        finally:
+            await _release_unfinished_socket_async(self._socket)
 
-                        message = json.loads(raw)
-                        if not isinstance(message, dict):
-                            raise SpeechRequestError("DashScope TTS received a non-object frame")
-                        discriminator = _message_discriminator(message)
-                        if discriminator == "task-finished":
-                            return
-                        if discriminator == "task-failed":
-                            await socket.close_async(failed=True)
-                            raise SpeechRequestError(_tts_error_message(message))
-                        if discriminator not in {"result-generated", "task-started"}:
-                            raise SpeechRequestError(
-                                f"Unexpected TTS frame: {discriminator or 'missing event'}"
-                            )
-                finally:
-                    if send_task is not None:
-                        send_task.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await send_task
+    async def _iter_audio_async(
+        self,
+        socket: _DashScopeTTSSocket | _DashScopeQwenTTSSocket,
+        text: str | AsyncIterator[str],
+    ) -> AsyncIterator[bytes]:
+        if isinstance(socket, _DashScopeQwenTTSSocket):
+            async for chunk in self._stream_qwen_tts(socket, text):
+                yield chunk
+            return
+        send_task = asyncio.create_task(self._submit_text(socket, text))
+        try:
+            while True:
+                raw = await socket.recv_async()
+                if isinstance(raw, bytes):
+                    yield raw
+                    continue
+
+                message = json.loads(raw)
+                if not isinstance(message, dict):
+                    raise SpeechRequestError("DashScope TTS received a non-object frame")
+                discriminator = _message_discriminator(message)
+                if discriminator == "task-finished":
+                    return
+                if discriminator == "task-failed":
+                    await socket.close_async(failed=True)
+                    raise SpeechRequestError(_tts_error_message(message))
+                if discriminator not in {"result-generated", "task-started"}:
+                    raise SpeechRequestError(
+                        f"Unexpected TTS frame: {discriminator or 'missing event'}"
+                    )
+        finally:
+            send_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await send_task
 
     async def _stream_qwen_tts(
         self,
