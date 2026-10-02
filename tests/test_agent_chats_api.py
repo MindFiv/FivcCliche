@@ -1821,12 +1821,21 @@ class TestCreateChatMessages:
         auth = MagicMock()
         auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
         session = AsyncMock()
+        _run_provider, get_run_provider = self._mock_run_provider()
         with (
             patch(
                 "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
                 new_callable=AsyncMock,
                 return_value=self._chat_snapshot(self._mock_chat()),
             ) as get_chat,
+            patch(
+                "fivccliche.utils.chats.processors.get_chat_run_provider_async",
+                new=get_run_provider,
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.services.build_chat_collaborators",
+                new_callable=AsyncMock,
+            ),
             self._patch_short_db_session(session),
         ):
             await create_chat_messages_ws_async(
@@ -1913,6 +1922,10 @@ class TestCreateChatMessages:
                 "fivccliche.utils.chats.processors.get_chat_run_provider_async",
                 new=get_run_provider,
             ),
+            patch(
+                "fivccliche.modules.agent_chats.services.build_chat_collaborators",
+                new_callable=AsyncMock,
+            ),
             self._patch_short_db_session(session),
         ):
             await create_chat_messages_ws_async(
@@ -1925,7 +1938,12 @@ class TestCreateChatMessages:
         session.close.assert_awaited_once()
 
         stream_cls.assert_not_called()
-        run_provider.create_chat_run.assert_not_called()
+        run_provider.create_chat_run.assert_called_once_with(
+            "chat-123",
+            user_uuid="user-123",
+            agent_id="test-agent",
+            context={},
+        )
         mutex.release_async.assert_not_awaited()
         assert websocket.sent[-1] == {
             "event": "error",
@@ -1989,6 +2007,10 @@ class TestCreateChatMessages:
                 "fivccliche.utils.chats.processors.get_chat_run_provider_async",
                 new=get_run_provider,
             ),
+            patch(
+                "fivccliche.modules.agent_chats.services.build_chat_collaborators",
+                new_callable=AsyncMock,
+            ),
             self._patch_short_db_session(session),
         ):
             await create_chat_messages_ws_async(
@@ -2026,11 +2048,23 @@ class TestCreateChatMessages:
         )
         auth = MagicMock()
         auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
-        with patch(
-            "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
-            new_callable=AsyncMock,
-            return_value=self._chat_snapshot(self._mock_chat()),
-        ) as get_chat:
+        _run_provider, get_run_provider = self._mock_run_provider()
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._chat_snapshot(self._mock_chat()),
+            ) as get_chat,
+            patch(
+                "fivccliche.utils.chats.processors.get_chat_run_provider_async",
+                new=get_run_provider,
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.services.build_chat_collaborators",
+                new_callable=AsyncMock,
+            ),
+            self._patch_short_db_session(AsyncMock()),
+        ):
             await create_chat_messages_ws_async(
                 websocket=websocket,
                 chat_uuid="chat-123",
@@ -2038,7 +2072,7 @@ class TestCreateChatMessages:
                 mutex_site=None,
             )
 
-        get_chat.assert_not_awaited()
+        get_chat.assert_awaited_once()
         assert websocket.sent[-1] == {
             "event": "error",
             "info": {
@@ -2070,11 +2104,23 @@ class TestCreateChatMessages:
         )
         auth = MagicMock()
         auth.verify_credential_async = AsyncMock(return_value=self._mock_user())
-        with patch(
-            "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
-            new_callable=AsyncMock,
-            return_value=self._chat_snapshot(self._mock_chat()),
-        ) as get_chat:
+        _run_provider, get_run_provider = self._mock_run_provider()
+        with (
+            patch(
+                "fivccliche.modules.agent_chats.routers.utils.get_chat_async",
+                new_callable=AsyncMock,
+                return_value=self._chat_snapshot(self._mock_chat()),
+            ) as get_chat,
+            patch(
+                "fivccliche.utils.chats.processors.get_chat_run_provider_async",
+                new=get_run_provider,
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.services.build_chat_collaborators",
+                new_callable=AsyncMock,
+            ),
+            self._patch_short_db_session(AsyncMock()),
+        ):
             await handler(
                 websocket=websocket,
                 chat_uuid="chat-123",
@@ -2082,7 +2128,7 @@ class TestCreateChatMessages:
                 mutex_site=None,
             )
 
-        get_chat.assert_not_awaited()
+        get_chat.assert_awaited_once()
         assert websocket.sent[-1] == {
             "event": "error",
             "info": {
@@ -2140,6 +2186,10 @@ class TestCreateChatMessages:
             patch(
                 "fivccliche.utils.chats.processors.get_chat_run_provider_async",
                 new=self._mock_run_provider(fake_job)[1],
+            ),
+            patch(
+                "fivccliche.modules.agent_chats.services.build_chat_collaborators",
+                new_callable=AsyncMock,
             ),
             self._patch_short_db_session(AsyncMock()),
         ):

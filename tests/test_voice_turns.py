@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import pytest
 from fivccliche.modules.agent_chats import services as chat_services
+from fivccliche.utils.chats.warmup import SessionWarmup
 from fivccliche.services.implements.agent_speeches.dashscope_realtime import (
     _BACKGROUND_CLOSES,
     _DashScopeQwenTTSSocket,
@@ -383,11 +384,15 @@ def _patch_warm_constructors(
 
 async def _load(agent_id: str = "agent-1") -> tuple[Any, Any, Any]:
     run = _warm_proc(agent_id).get_run_provider().create_chat_run()
-    return await chat_services._load_collaborators_async(
-        agent_id=run._agent_id,
-        user_uuid=run._user_uuid,
-        dependencies=run._dependencies,
-    )
+    prepared = await SessionWarmup.take(run._agent_id)
+    if prepared is None:
+        prepared = await chat_services.build_chat_collaborators(run)
+    return prepared
+
+
+def _voice_warmup(agent_id: str = "agent-1"):
+    run = _warm_proc(agent_id).get_run_provider().create_chat_run()
+    return SessionWarmup(run._agent_id, lambda: chat_services.build_chat_collaborators(run)).open()
 
 
 @pytest.mark.asyncio
@@ -412,7 +417,7 @@ async def test_voice_session_warms_agent_stack_once(
     calls["agent"] = 0
     calls["tools"] = 0
     calls["skills"] = 0
-    async with chat_services.voice_session_warmup(_warm_proc()):
+    async with _voice_warmup():
         first_agent, first_tools, first_skills = await _load()
         second_agent, second_tools, second_skills = await _load()
 
@@ -439,7 +444,7 @@ async def test_voice_warmup_failure_rebuilds_on_the_next_turn(
 
     calls = _patch_warm_constructors(monkeypatch, agent=agent, tools=tools, skills=skills)
 
-    async with chat_services.voice_session_warmup(_warm_proc()):
+    async with _voice_warmup():
         first, _tools, _skills = await _load()
         second, _tools, _skills = await _load()
 

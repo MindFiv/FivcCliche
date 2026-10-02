@@ -22,6 +22,7 @@ from fivccliche.services.interfaces.auth import IUser
 from fivccliche.services.interfaces.modules import IModuleSite
 from fivccliche.utils.chats.channels import ChatChannel, ChatChannelClosedError
 from fivccliche.utils.chats.parsers import ChatRecognizeParser, ChatRunParser
+from fivccliche.utils.chats.warmup import SessionWarmup
 from fivccliche.utils.deps import get_chat_run_provider_async
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 _INPUT_SAMPLE_RATE = 16_000
 _OUTPUT_SAMPLE_RATE = 24_000
 _LOCK_SLACK = timedelta(seconds=10)
+_MESSAGE_FRAME_TIMEOUT = timedelta(seconds=5)
 _UTTERANCE_FLUSH_PARTIALS = 1_000_000
 
 
@@ -54,6 +56,7 @@ class ChatTextProcessor:
         mutex: IMutex | None,
         module_site: IModuleSite,
         timeout: timedelta,
+        message_timeout: timedelta = _MESSAGE_FRAME_TIMEOUT,
     ) -> None:
         self._channel = channel
         self._chat_uuid = chat_uuid
@@ -61,40 +64,13 @@ class ChatTextProcessor:
         self._mutex = mutex
         self._module_site = module_site
         self._timeout = timeout
+        self._message_timeout = message_timeout
 
     async def process_async(self) -> None:
+        from fivccliche.modules.agent_chats.services import build_chat_collaborators
+
         channel = self._channel
         user = await channel.authenticate_async()
-        message_frame = await channel.receive_async(raise_exception=True)
-        if message_frame is None:
-            return
-        if isinstance(message_frame, bytes):
-            await channel.fail_async(
-                code="voice_endpoint_moved",
-                message="Use WEBSOCKET /api/chats/{chat_uuid}/",
-                close_code=1003,
-            )
-        try:
-            message = json.loads(message_frame)
-        except json.JSONDecodeError:
-            await channel.fail_async(
-                code="invalid_frame",
-                message="Invalid JSON frame",
-                close_code=1003,
-            )
-        if not isinstance(message, dict):
-            await channel.fail_async(
-                code="invalid_frame",
-                message="Invalid JSON frame",
-                close_code=1003,
-            )
-        if "audio" in message or "audio_stream" in message or message.get("type") == "audio_commit":
-            await channel.fail_async(
-                code="voice_endpoint_moved",
-                message="Use WEBSOCKET /api/chats/{chat_uuid}/",
-                close_code=1003,
-            )
-
         chat = await self._chat_loader(user)
         if chat is None:
             await channel.fail_async(
@@ -103,25 +79,6 @@ class ChatTextProcessor:
                 close_code=4004,
             )
 
-        query = str(message.get("query") or "").strip()
-        if message.get("type") != "message" or not query:
-            await channel.fail_async(
-                code="invalid_message",
-                message="A non-empty query is required",
-                close_code=1003,
-            )
-
-        if self._mutex is not None and not await self._mutex.acquire_async(
-            expire=self._timeout + _LOCK_SLACK,
-            timeout=None,
-        ):
-            await channel.fail_async(
-                code="chat_busy",
-                message="Chat message processing already running",
-                close_code=4009,
-            )
-
-        chat_stream = ChatRunParser(chat_uuid=self._chat_uuid)
         try:
             run_provider = await get_chat_run_provider_async()
             chat_run = run_provider.create_chat_run(
@@ -130,47 +87,122 @@ class ChatTextProcessor:
                 agent_id=chat.agent_id,
                 context=chat.context,
             )
-            run_events = chat_stream.parse_async(
-                chat_run.stream_async(
-                    query,
-                    mutex=self._mutex,
-                    timeout=self._timeout,
-                )
-            )
         except Exception:
-            if self._mutex is not None:
-                await self._mutex.release_async()
             await channel.fail_async(
                 code="internal_error",
                 message="Failed to start chat message",
                 close_code=1011,
             )
 
-        describe_task = None
-        if not (chat.description or "").strip() and query and not query.startswith("/"):
-            module = self._module_site.get_module("agent_chats")
-            job = module.get_job("agent-chats-describe") if module is not None else None
-            if job is None:
-                logger.debug("Describe job is not registered for chat %s", self._chat_uuid)
-            else:
-                describe_task = asyncio.create_task(
-                    job.run_async(
-                        self._chat_uuid,
-                        user_uuid=user.uuid,
-                        query_text=query,
-                    )
+        async with SessionWarmup(
+            chat.agent_id,
+            lambda: build_chat_collaborators(chat_run),
+        ).open():
+            try:
+                message_frame = await asyncio.wait_for(
+                    channel.receive_async(raise_exception=True),
+                    timeout=self._message_timeout.total_seconds(),
+                )
+            except TimeoutError:
+                await channel.fail_async(
+                    code="message_timeout",
+                    message="Message timed out",
+                    close_code=1008,
+                )
+            if message_frame is None:
+                return
+            if isinstance(message_frame, bytes):
+                await channel.fail_async(
+                    code="voice_endpoint_moved",
+                    message="Use WEBSOCKET /api/chats/{chat_uuid}/",
+                    close_code=1003,
+                )
+            try:
+                message = json.loads(message_frame)
+            except json.JSONDecodeError:
+                await channel.fail_async(
+                    code="invalid_frame",
+                    message="Invalid JSON frame",
+                    close_code=1003,
+                )
+            if not isinstance(message, dict):
+                await channel.fail_async(
+                    code="invalid_frame",
+                    message="Invalid JSON frame",
+                    close_code=1003,
+                )
+            if (
+                "audio" in message
+                or "audio_stream" in message
+                or message.get("type") == "audio_commit"
+            ):
+                await channel.fail_async(
+                    code="voice_endpoint_moved",
+                    message="Use WEBSOCKET /api/chats/{chat_uuid}/",
+                    close_code=1003,
                 )
 
-        raw_events = cast(AsyncGenerator[dict[str, Any], None], run_events)
-        try:
-            async for event in raw_events:
-                await channel.send_json_async(event, raise_exception=True)
-        except ChatChannelClosedError:
-            pass
-        finally:
-            await raw_events.aclose()
-        if describe_task is not None:
-            await describe_task
+            query = str(message.get("query") or "").strip()
+            if message.get("type") != "message" or not query:
+                await channel.fail_async(
+                    code="invalid_message",
+                    message="A non-empty query is required",
+                    close_code=1003,
+                )
+
+            if self._mutex is not None and not await self._mutex.acquire_async(
+                expire=self._timeout + _LOCK_SLACK,
+                timeout=None,
+            ):
+                await channel.fail_async(
+                    code="chat_busy",
+                    message="Chat message processing already running",
+                    close_code=4009,
+                )
+
+            chat_stream = ChatRunParser(chat_uuid=self._chat_uuid)
+            try:
+                run_events = chat_stream.parse_async(
+                    chat_run.stream_async(
+                        query,
+                        mutex=self._mutex,
+                        timeout=self._timeout,
+                    )
+                )
+            except Exception:
+                if self._mutex is not None:
+                    await self._mutex.release_async()
+                await channel.fail_async(
+                    code="internal_error",
+                    message="Failed to start chat message",
+                    close_code=1011,
+                )
+
+            describe_task = None
+            if not (chat.description or "").strip() and query and not query.startswith("/"):
+                module = self._module_site.get_module("agent_chats")
+                job = module.get_job("agent-chats-describe") if module is not None else None
+                if job is None:
+                    logger.debug("Describe job is not registered for chat %s", self._chat_uuid)
+                else:
+                    describe_task = asyncio.create_task(
+                        job.run_async(
+                            self._chat_uuid,
+                            user_uuid=user.uuid,
+                            query_text=query,
+                        )
+                    )
+
+            raw_events = cast(AsyncGenerator[dict[str, Any], None], run_events)
+            try:
+                async for event in raw_events:
+                    await channel.send_json_async(event, raise_exception=True)
+            except ChatChannelClosedError:
+                pass
+            finally:
+                await raw_events.aclose()
+            if describe_task is not None:
+                await describe_task
 
 
 async def _voice_frame_kind_async(proc: ChatVoiceProcessor, frame_data: str | bytes) -> str:
@@ -554,10 +586,26 @@ class ChatVoiceProcessor:
 
     async def process_async(self) -> None:
         """Send ready, then alternate listening and responding until the socket closes."""
-        from fivccliche.modules.agent_chats.services import voice_session_warmup
+        from fivccliche.modules.agent_chats.services import build_chat_collaborators
 
-        async with voice_session_warmup(self):
-            await self._process_turns_async()
+        chat = self._chat
+        run = self.get_run_provider().create_chat_run(
+            chat.uuid,
+            user_uuid=self.get_user().uuid,
+            agent_id=chat.agent_id,
+            context=chat.context,
+        )
+        try:
+            async with SessionWarmup(
+                chat.agent_id,
+                lambda: build_chat_collaborators(run),
+            ).open():
+                await self._process_turns_async()
+        finally:
+            synthesizer = self.get_synthesizer()
+            cancel = getattr(type(synthesizer), "cancel_preopen_async", None)
+            if callable(cancel):
+                await cancel(synthesizer)
 
     async def _process_turns_async(self) -> None:
         recognize = self._recognizer.get_option()
