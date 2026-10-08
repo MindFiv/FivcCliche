@@ -13,6 +13,7 @@ __all__ = [
 
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from fivcplayground.agents.types import (
@@ -43,7 +44,7 @@ class UserChatSchema(AgentRunSession):
     """
 
     uuid: str | None = Field(default=None, description="Chat UUID (globally unique)")
-    context: dict | None = Field(default=None, description="Chat context")
+    context: dict[str, Any] | None = Field(default=None, description="Chat context")
     updated_at: datetime | None = Field(default=None, description="Last update time")
     is_memorable: bool = Field(
         default=False, description="Whether this chat is eligible for memory retention"
@@ -75,7 +76,7 @@ class UserChatCreateSchema(BaseModel):
     """
 
     agent_id: str = Field(default="default", description="Agent ID for the chat")
-    context: dict | None = Field(default=None, description="Initial chat context")
+    context: dict[str, Any] | None = Field(default=None, description="Initial chat context")
     is_memorable: bool = Field(
         default=True,
         description="Whether this chat is eligible for memory retention",

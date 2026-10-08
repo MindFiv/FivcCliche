@@ -653,8 +653,9 @@ async def probe_realtime_asr_config_async(
             return
         finally:
             audio_task.cancel()
-            recognition_task.cancel()
-            await asyncio.gather(audio_task, recognition_task, return_exceptions=True)
+            audio_queue.put_nowait(None)
+            await asyncio.gather(audio_task, return_exceptions=True)
+            await asyncio.gather(recognition_task, return_exceptions=True)
 
 
 @router_asrs.get(

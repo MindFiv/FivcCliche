@@ -69,6 +69,7 @@ Question list uses [`QuestionFilterSet`](../src/fivccliche/modules/agent_configs
 - `?created_at_from=` / `?created_at_to=` inclusive bounds (`>=` / `<=`) on `UserChat.created_at` (response field remains `started_at`)
 - `?updated_at_from=` / `?updated_at_to=` inclusive bounds (`>=` / `<=`) on `UserChat.updated_at`
 - `?context.<key>=<value>` exact match on a top-level JSON key of `context` (one level only). `UserChat.context` stays a persisted dict. `context.asr_id` selects the UserASR config id used for WebSocket audio (default `"default"`). `UserChatProviderImpl.get_chat_context` returns a copy of that JSON plus `user_uuid`, merged `**kwargs` (for example `chat_uuid`), default `timezone` (`Asia/Shanghai`), and a lazy `time` whose `__str__` computes a timezone-aware ISO string and is not persisted. `create_chat_run` binds the chat context; `UserChatRunImpl` calls `get_chat_context` when the run executes and passes the result to the agent stream.
+- Playground `AgentRunSession.context` maps to this persisted value. A repository-created session defaults to an empty JSON object; HTTP-created chats may omit context and remain null, while repository updates use the session context.
 - Repeated paths use the last value
 - Nested keys such as `context.profile.uuid` return 422; bare `context=` is invalid if passed into `parse`
 - Question list: `?is_active=` exact match when provided

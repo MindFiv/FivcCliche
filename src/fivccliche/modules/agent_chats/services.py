@@ -91,20 +91,18 @@ class UserChatRepositoryImpl(UserChatRepository):
                 if session.description is not None:
                     existing.description = session.description
                     existing.updated_at = datetime.now(timezone.utc)
-                if hasattr(session, "context") and session.context is not None:
-                    existing.context = session.context
+                existing.context = session.context
                 db_session.add(existing)
                 await db_session.commit()
                 await db_session.refresh(existing)
             else:
-                context = getattr(session, "context", None)
                 await utils.create_chat_async(
                     db_session,
                     user_uuid=self.user_uuid,
                     agent_id=session.agent_id,
                     chat_uuid=session.id,
                     description=session.description,
-                    context=context,
+                    context=session.context,
                 )
                 await db_session.commit()
 

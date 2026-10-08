@@ -897,6 +897,7 @@ class TestUserChatRepositoryImpl:
             id="chat-1",
             agent_id="agent1",
             description="Test chat session",
+            context={"environment": "test"},
         )
 
         await repository.update_agent_run_session_async(session_data)
@@ -909,6 +910,26 @@ class TestUserChatRepositoryImpl:
         assert chat.uuid == "chat-1"
         assert chat.agent_id == "agent1"
         assert chat.description == "Test chat session"
+        assert chat.context == {"environment": "test"}
+
+    async def test_update_agent_run_session_create_default_context(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_user
+    ):
+        """Test that repository-created sessions use AgentRunSession's empty context."""
+        from fivcplayground.agents.types import AgentRunSession
+
+        session_data = AgentRunSession(id="chat-default-context", agent_id="agent1")
+        assert session_data.context == {}
+
+        await repository.update_agent_run_session_async(session_data)
+
+        chat = await methods.get_chat_async(
+            session,
+            "chat-default-context",
+            filters=ChatFilterSet(test_user.uuid, is_superuser=False),
+        )
+        assert chat is not None
+        assert chat.context == {}
 
     async def test_update_agent_run_session_update_existing(
         self,
@@ -926,6 +947,7 @@ class TestUserChatRepositoryImpl:
             id=test_chat.uuid,
             agent_id=test_chat.agent_id,
             description="Updated description",
+            context={"environment": "updated"},
         )
 
         await repository.update_agent_run_session_async(session_data)
@@ -939,6 +961,7 @@ class TestUserChatRepositoryImpl:
         await engine.dispose()
         assert chat is not None
         assert chat.description == "Updated description"
+        assert chat.context == {"environment": "updated"}
 
     async def test_update_agent_run_session_bumps_updated_at(
         self,

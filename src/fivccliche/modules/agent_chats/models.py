@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import Column, DateTime, ForeignKey, Index, String
@@ -32,7 +33,7 @@ class UserChat(SQLModel, table=True):
         max_length=255,
         description="Agent config ID.",
     )
-    context: dict | None = Field(
+    context: dict[str, Any] | None = Field(
         sa_type=JSON,
         default=None,
         description="Chat context.",

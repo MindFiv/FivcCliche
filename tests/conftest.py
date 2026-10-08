@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import uuid
 from collections.abc import AsyncIterator, Iterator
@@ -77,26 +78,23 @@ def with_database(url: str, database: str) -> str:
 @pytest.fixture(scope="session", autouse=True)
 def pg0_instance() -> Iterator[Pg0]:
     global _pg0_for_tests
-    with tempfile.TemporaryDirectory(prefix="fivcliche-test-pg0-") as data_root:
-        # Avoid the developer machine's default pg0 instance without probing
-        # ports, which is denied by the local test sandbox.
-        port = 49152 + uuid.uuid4().int % 16384
-        pg = Pg0(
-            name=f"{_TEST_PG0_NAME}-{uuid.uuid4().hex}",
-            port=port,
-            data_dir=f"{data_root}/data",
-        )
-        _pg0_for_tests = pg
-        try:
-            pg.start()
-        except Exception:
-            _pg0_for_tests = None
-            raise
-        try:
-            yield pg
-        finally:
-            _pg0_for_tests = None
-            pg.stop()
+    data_root = tempfile.mkdtemp(prefix="fivcliche-test-pg0-")
+    os.rmdir(data_root)
+    # pg0's captured subprocess mode requires a nonexistent top-level data dir.
+    port = 49152 + uuid.uuid4().int % 16384
+    pg = Pg0(
+        name=f"{_TEST_PG0_NAME}-{uuid.uuid4().hex}",
+        port=port,
+        data_dir=data_root,
+    )
+    _pg0_for_tests = pg
+    try:
+        pg.start()
+        yield pg
+    finally:
+        _pg0_for_tests = None
+        pg.stop()
+        shutil.rmtree(data_root, ignore_errors=True)
 
 
 def create_test_database(pg: Pg0) -> tuple[str, str]:
