@@ -31,6 +31,23 @@ _DEFAULT_BATCH_SIZE = 50
 _DEFAULT_MAX_BATCHES_PER_RUN = 20
 _DEFAULT_MIN_AGE_MINUTES = 5
 _MUTEX_EXPIRE = timedelta(minutes=30)
+
+
+def memorize_min_age_minutes(config: configs.IConfig | None) -> int:
+    """Resolve CHAT_MEMORIZE.MIN_AGE_MINUTES, falling back to 5 when unset or invalid."""
+    session = config.get_session("CHAT_MEMORIZE") if config else None
+    minutes = to_int(
+        session.get_value("MIN_AGE_MINUTES") if session else None,
+        _DEFAULT_MIN_AGE_MINUTES,
+    )
+    return minutes if minutes > 0 else _DEFAULT_MIN_AGE_MINUTES
+
+
+def memorize_created_at_to(config: configs.IConfig | None) -> datetime:
+    """Age cutoff shared by ChatMemorizeJob and the unmemorized-message admin list."""
+    return datetime.now(timezone.utc) - timedelta(minutes=memorize_min_age_minutes(config))
+
+
 _MEMORIZE_JOB_ID = "agent-chats-memorize"
 _MEMORIZE_MODEL_ID = "memorize"
 _MEMORIZE_EXTRACT_PROMPT = """\
@@ -90,10 +107,6 @@ class _ChatMemorizeSetting:
             session.get_value("MAX_BATCHES_PER_RUN") if session else None,
             _DEFAULT_MAX_BATCHES_PER_RUN,
         )
-        min_age_minutes = to_int(
-            session.get_value("MIN_AGE_MINUTES") if session else None,
-            _DEFAULT_MIN_AGE_MINUTES,
-        )
         self.interval_minutes = (
             interval_minutes if interval_minutes > 0 else _DEFAULT_INTERVAL_MINUTES
         )
@@ -101,7 +114,7 @@ class _ChatMemorizeSetting:
         self.max_batches_per_run = (
             max_batches_per_run if max_batches_per_run > 0 else _DEFAULT_MAX_BATCHES_PER_RUN
         )
-        self.min_age_minutes = min_age_minutes if min_age_minutes > 0 else _DEFAULT_MIN_AGE_MINUTES
+        self.min_age_minutes = memorize_min_age_minutes(config)
 
     def job_config(self) -> dict:
         return {

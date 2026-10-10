@@ -223,6 +223,19 @@ Per tick:
 9. On successful retain, mark that chat's completed, unmemorized messages with
    `created_at <= created_at_to` as `is_memorized=True`.
 
+Superusers can inspect that same backlog without the per-run batch cap:
+
+- `GET /chats/stats/` returns chat and message counts. `messages.unmemorized`
+  counts every unmemorized message on a memorable chat, including messages that
+  are not completed or not yet old enough for the job.
+- `GET /chats/stats/messages/unmemorized/` pages messages the job would process,
+  including ones waiting past `BATCH_SIZE` and `MAX_BATCHES_PER_RUN`. A row is
+  included only when it is completed, `is_memorized` is false,
+  `created_at <= now - MIN_AGE_MINUTES`, and its chat is memorable with a
+  non-null `user_uuid`. Each result is the message plus `chat_uuid`, not a chat
+  summary. `skip` defaults to 0 and `limit` defaults to 100 (maximum 1000).
+  Unauthenticated requests return 401; non-superusers return 403.
+
 A user-visible LLM config with `id=memorize` is optional (typically a global
 row created by a superuser). Without it, chats are retained as raw transcripts.
 

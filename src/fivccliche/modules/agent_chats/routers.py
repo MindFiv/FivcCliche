@@ -23,12 +23,15 @@ from sqlmodel import col, select
 
 from fivccliche.services.implements import service_site
 from fivccliche.utils import deps
+from fivcglue.interfaces import configs
 from fivccliche.utils.chats import ChatChannel, ChatRunParser, ChatSnapshot
 from fivccliche.utils.deps import (
     IUser,
+    get_admin_user_async,
     get_authenticator_async,
     get_authenticated_user_async,
     get_chat_run_provider_async,
+    get_config_async,
     get_db_session_async,
     get_mutex_site_async,
 )
@@ -37,6 +40,7 @@ from fivccliche.utils.schemas import PaginatedResponse
 from . import models, schemas, utils
 from .filters import ChatEditableFilterSet, ChatFilterSet
 from .jobs import ChatDescribeJob
+from .jobs.memorize import memorize_created_at_to
 
 # ============================================================================
 # Chat Session Endpoints
@@ -271,6 +275,58 @@ async def list_chats_async(
     return PaginatedResponse[schemas.UserChatSchema](
         total=total,
         results=[s.to_schema() for s in sessions],
+    )
+
+
+@router_chats.get(
+    "/stats/",
+    summary="Get chat statistics (Admin only).",
+    response_model=schemas.ChatStatsSchema,
+)
+async def get_chat_stats_async(
+    session: AsyncSession = Depends(get_db_session_async),
+    admin_user: IUser = Depends(get_admin_user_async),
+) -> schemas.ChatStatsSchema:
+    """Return aggregate chat and message counts."""
+    stats = await utils.get_stats_async(session)
+    return schemas.ChatStatsSchema(
+        generated_at=datetime.now(timezone.utc),
+        chats=stats,
+    )
+
+
+@router_chats.get(
+    "/stats/messages/unmemorized/",
+    summary="List unmemorized chat messages the memorize job would process (Admin only).",
+    response_model=PaginatedResponse[schemas.ChatStatsUnmemorizedMessageSchema],
+)
+async def list_chat_stats_unmemorized_messages_async(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    session: AsyncSession = Depends(get_db_session_async),
+    config: configs.IConfig = Depends(get_config_async),
+    admin_user: IUser = Depends(get_admin_user_async),
+) -> PaginatedResponse[schemas.ChatStatsUnmemorizedMessageSchema]:
+    """Return the memorize backlog, including messages beyond one job batch."""
+    created_at_to = memorize_created_at_to(config)
+    messages = await utils.list_unmemorized_chat_messages_async(
+        session,
+        None,
+        created_at_to=created_at_to,
+        skip=skip,
+        limit=limit,
+    )
+    total = await utils.count_unmemorized_chat_messages_async(
+        session,
+        None,
+        created_at_to=created_at_to,
+    )
+    return PaginatedResponse(
+        total=total,
+        results=[
+            schemas.ChatStatsUnmemorizedMessageSchema.model_validate(message)
+            for message in messages
+        ],
     )
 
 

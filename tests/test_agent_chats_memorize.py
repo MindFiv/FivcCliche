@@ -25,6 +25,7 @@ from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage
 from fivccliche.modules.agent_chats.services import ModuleImpl
 from fivccliche.services.implements.modules import ModuleSiteImpl
 from fivccliche.services.interfaces.agent_memories import MemoryRetainResult
+from tests.conftest import make_api_client
 
 
 @pytest.fixture
@@ -266,6 +267,123 @@ class TestMemorizeMethods:
             session, chat.uuid, created_at_to=created_at_to
         )
         assert found_after == []
+
+    async def test_list_messages_for_one_chat_is_not_truncated(
+        self, session: AsyncSession, test_user
+    ):
+        chat = await _add_chat(session, test_user.uuid)
+        base = _older(hours=48)
+        session.add_all(
+            [
+                UserChatMessage(
+                    chat_uuid=chat.uuid,
+                    query={"text": f"q-{index}"},
+                    reply={"text": "ok"},
+                    status="completed",
+                    is_memorized=False,
+                    created_at=base + timedelta(seconds=index),
+                    completed_at=base + timedelta(seconds=index),
+                )
+                for index in range(101)
+            ]
+        )
+        await session.commit()
+
+        found = await methods.list_unmemorized_chat_messages_async(
+            session,
+            chat.uuid,
+            created_at_to=datetime.now(timezone.utc),
+        )
+        assert len(found) == 101
+        assert found[0].query == {"text": "q-0"}
+        assert found[-1].query == {"text": "q-100"}
+
+    async def test_list_messages_without_chat_includes_backlog_only(
+        self, session: AsyncSession, test_user
+    ):
+        aged = datetime.now(timezone.utc) - timedelta(minutes=10)
+        young = datetime.now(timezone.utc)
+        created_at_to = datetime.now(timezone.utc) - timedelta(minutes=5)
+        eligible = [await _add_chat(session, test_user.uuid, is_memorable=True) for _ in range(51)]
+        young_chat = await _add_chat(session, test_user.uuid, is_memorable=True)
+        plain_chat = await _add_chat(session, test_user.uuid, is_memorable=True)
+        hidden_chat = await _add_chat(session, test_user.uuid, is_memorable=False)
+        anonymous = UserChat(user_uuid=None, agent_id="agent", is_memorable=True)
+        session.add(anonymous)
+        await session.commit()
+        await session.refresh(anonymous)
+
+        session.add_all(
+            [
+                UserChatMessage(
+                    chat_uuid=chat.uuid,
+                    query={"text": f"backlog-{index}"},
+                    reply={"text": "ok"},
+                    status="completed",
+                    is_memorized=False,
+                    created_at=aged + timedelta(seconds=index),
+                    completed_at=aged + timedelta(seconds=index),
+                )
+                for index, chat in enumerate(eligible)
+            ]
+        )
+        session.add_all(
+            [
+                UserChatMessage(
+                    chat_uuid=young_chat.uuid,
+                    query={"text": "too-new"},
+                    reply={"text": "ok"},
+                    status="completed",
+                    is_memorized=False,
+                    created_at=young,
+                    completed_at=young,
+                ),
+                UserChatMessage(
+                    chat_uuid=plain_chat.uuid,
+                    query={"text": "pending"},
+                    status="pending",
+                    is_memorized=False,
+                    created_at=aged,
+                ),
+                UserChatMessage(
+                    chat_uuid=plain_chat.uuid,
+                    query={"text": "done"},
+                    reply={"text": "ok"},
+                    status="completed",
+                    is_memorized=True,
+                    created_at=aged,
+                    completed_at=aged,
+                ),
+                UserChatMessage(
+                    chat_uuid=hidden_chat.uuid,
+                    query={"text": "hidden"},
+                    reply={"text": "ok"},
+                    status="completed",
+                    is_memorized=False,
+                    created_at=aged,
+                    completed_at=aged,
+                ),
+                UserChatMessage(
+                    chat_uuid=anonymous.uuid,
+                    query={"text": "anonymous"},
+                    reply={"text": "ok"},
+                    status="completed",
+                    is_memorized=False,
+                    created_at=aged,
+                    completed_at=aged,
+                ),
+            ]
+        )
+        await session.commit()
+
+        total = await methods.count_unmemorized_chat_messages_async(
+            session, None, created_at_to=created_at_to
+        )
+        page = await methods.list_unmemorized_chat_messages_async(
+            session, None, created_at_to=created_at_to, skip=50, limit=1
+        )
+        assert total == 51
+        assert page[0].query == {"text": "backlog-50"}
 
     async def test_update_chat_message_is_memorized(self, session: AsyncSession, test_user):
         chat = await _add_chat(session, test_user.uuid)
@@ -923,3 +1041,116 @@ def test_agent_chats_list_jobs_does_not_register_memorize_job():
     with TestClient(app):
         assert scheduler.get_job("agent-chats-describe") is None
         assert scheduler.get_job(_MEMORIZE_JOB_ID) is None
+
+
+@pytest.fixture
+def stats_client():
+    yield from make_api_client(
+        ["users", "agent_chats"],
+        extra_users=[
+            {
+                "username": "bob",
+                "email": "bob@example.com",
+                "password": "bob12345",
+                "is_superuser": False,
+            }
+        ],
+    )
+
+
+def _login(client: TestClient, username: str, password: str) -> str:
+    response = client.post(
+        "/users/login",
+        json={"username": username, "password": password},
+    )
+    assert response.status_code == 200
+    return response.json()["access_token"]
+
+
+def test_chat_stats_require_admin(stats_client: TestClient):
+    assert stats_client.get("/chats/stats/").status_code == 401
+    assert stats_client.get("/chats/stats/messages/unmemorized/").status_code == 401
+
+    regular = _login(stats_client, "bob", "bob12345")
+    headers = {"Authorization": f"Bearer {regular}"}
+    assert stats_client.get("/chats/stats/", headers=headers).status_code == 403
+    assert (
+        stats_client.get("/chats/stats/messages/unmemorized/", headers=headers).status_code == 403
+    )
+
+
+def test_chat_stats_and_unmemorized_list(stats_client: TestClient):
+    token = _login(stats_client, "admin", "admin123")
+    headers = {"Authorization": f"Bearer {token}"}
+    now = datetime.now(timezone.utc)
+    aged = now - timedelta(minutes=10)
+
+    async def seed(session):
+        admin_uuid = stats_client.admin_user.uuid
+        memorable = UserChat(user_uuid=admin_uuid, agent_id="agent", is_memorable=True)
+        other = UserChat(user_uuid=admin_uuid, agent_id="agent", is_memorable=True)
+        hidden = UserChat(user_uuid=admin_uuid, agent_id="agent", is_memorable=False)
+        session.add_all([memorable, other, hidden])
+        await session.flush()
+        session.add_all(
+            [
+                UserChatMessage(
+                    chat_uuid=memorable.uuid,
+                    status="completed",
+                    is_memorized=False,
+                    query={"text": "aged"},
+                    reply={"text": "answer"},
+                    created_at=aged,
+                    completed_at=aged,
+                ),
+                UserChatMessage(
+                    chat_uuid=other.uuid,
+                    status="pending",
+                    is_memorized=False,
+                    query={"text": "pending"},
+                    created_at=aged,
+                ),
+                UserChatMessage(
+                    chat_uuid=other.uuid,
+                    status="completed",
+                    is_memorized=True,
+                    query={"text": "memorized"},
+                    created_at=aged,
+                    completed_at=aged,
+                ),
+                UserChatMessage(
+                    chat_uuid=hidden.uuid,
+                    status="completed",
+                    is_memorized=False,
+                    query={"text": "hidden"},
+                    created_at=aged,
+                    completed_at=aged,
+                ),
+            ]
+        )
+        await session.commit()
+        return memorable.uuid
+
+    chat_uuid = stats_client.loop.run_until_complete(seed(stats_client.async_session))
+
+    stats = stats_client.get("/chats/stats/", headers=headers)
+    assert stats.status_code == 200
+    body = stats.json()
+    assert body["chats"]["total"] == 3
+    assert body["chats"]["memorable"] == 2
+    assert body["chats"]["messages"] == {
+        "total": 4,
+        "completed": 3,
+        "memorized": 1,
+        "unmemorized": 2,
+    }
+
+    listed = stats_client.get("/chats/stats/messages/unmemorized/", headers=headers)
+    assert listed.status_code == 200
+    payload = listed.json()
+    assert payload["total"] == 1
+    message = payload["results"][0]
+    assert set(message) == {"uuid", "chat_uuid", "status", "query", "reply", "created_at"}
+    assert message["chat_uuid"] == chat_uuid
+    assert message["query"] == {"text": "aged"}
+    assert message["reply"] == {"text": "answer"}

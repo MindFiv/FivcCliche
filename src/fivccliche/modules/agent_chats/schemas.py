@@ -4,6 +4,10 @@ __all__ = [
     "AgentRunToolCall",
     "ChatOrderBy",
     "ChatOrderDir",
+    "ChatStats",
+    "ChatStatsMessages",
+    "ChatStatsSchema",
+    "ChatStatsUnmemorizedMessageSchema",
     "UserChatCreateSchema",
     "UserChatMessageCreateSchema",
     "UserChatMessageSchema",
@@ -67,6 +71,47 @@ class UserChatMessageSchema(AgentRun):
     )
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ChatStatsMessages(BaseModel):
+    """Chat message aggregate statistics."""
+
+    total: int = Field(..., ge=0, description="Total chat messages")
+    completed: int = Field(..., ge=0, description="Completed chat messages")
+    memorized: int = Field(..., ge=0, description="Memorized chat messages")
+    unmemorized: int = Field(
+        ...,
+        ge=0,
+        description="Unmemorized messages in memorable chats",
+    )
+
+
+class ChatStats(BaseModel):
+    """Chat aggregate statistics."""
+
+    total: int = Field(..., ge=0, description="Total chats")
+    memorable: int = Field(..., ge=0, description="Memorable chats")
+    messages: ChatStatsMessages
+
+
+class ChatStatsSchema(BaseModel):
+    """Response schema for administrator chat statistics."""
+
+    generated_at: datetime = Field(..., description="Statistics generation time")
+    chats: ChatStats
+
+
+class ChatStatsUnmemorizedMessageSchema(BaseModel):
+    """One aged, completed, unmemorized chat message for administrators."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    uuid: str = Field(..., description="Chat message UUID")
+    chat_uuid: str = Field(..., description="Linked chat UUID")
+    status: AgentRunStatus = Field(..., description="Message status")
+    query: dict[str, Any] | None = Field(default=None, description="User message payload")
+    reply: dict[str, Any] | None = Field(default=None, description="Agent reply payload")
+    created_at: datetime = Field(..., description="Message creation time")
 
 
 class UserChatCreateSchema(BaseModel):
