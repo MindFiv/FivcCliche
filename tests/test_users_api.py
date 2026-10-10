@@ -926,6 +926,18 @@ class TestImpersonateUser:
         response = client.get(f"/users/{user['uuid']}/impersonate/")
         assert response.status_code == 401
 
+    def test_impersonate_inactive_user(self, client: TestClient):
+        admin_headers = self._get_admin_headers(client)
+        user = self._create_regular_user(client, admin_headers)
+        deactivated = client.patch(
+            f"/users/{user['uuid']}/status",
+            json={"is_active": False},
+            headers=admin_headers,
+        )
+        assert deactivated.status_code == 200
+        response = client.get(f"/users/{user['uuid']}/impersonate/", headers=admin_headers)
+        assert response.status_code == 401
+
 
 class TestListUsersOrdering:
     """Test cases for order_by and order_dir query params on the list users endpoint."""
@@ -1190,8 +1202,8 @@ class TestUserStatusUpdate:
         )
         assert response.status_code == 401
 
-    def test_inactive_user_token_rejected(self, client: TestClient):
-        """Inactive user's existing token is rejected."""
+    def test_inactive_user_token_remains_valid_until_expiry(self, client: TestClient):
+        """An access token stays valid after the user is deactivated."""
         admin_headers = self._get_admin_headers(client)
         user_response = self._create_user(client, admin_headers, "testuser4", "password123")
         user_uuid = user_response.json()["uuid"]
@@ -1203,4 +1215,10 @@ class TestUserStatusUpdate:
         client.patch(f"/users/{user_uuid}/status", json={"is_active": False}, headers=admin_headers)
 
         response = client.get("/users/self/", headers=user_headers)
-        assert response.status_code in (401, 403)
+        assert response.status_code == 200
+        assert response.json()["uuid"] == user_uuid
+
+        login = client.post(
+            "/users/login", json={"username": "testuser4", "password": "password123"}
+        )
+        assert login.status_code == 401

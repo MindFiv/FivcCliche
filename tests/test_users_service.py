@@ -1,6 +1,5 @@
 """Unit tests for user service layer."""
 
-import json
 from unittest.mock import Mock, patch
 
 import pytest
@@ -9,7 +8,11 @@ from sqlmodel import col, select
 
 from fivccliche.modules.users import utils as methods
 from fivccliche.modules.users.models import User
-from fivccliche.modules.users.services import UserAuthenticatorImpl, UserImpl
+from fivccliche.modules.users.services import UserAuthenticatorImpl
+from fivccliche.services.implements.auth_remote import (
+    RemoteUserAuthenticatorImpl,
+    RemoteUserImpl,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -316,19 +319,27 @@ class TestSSOAuthentication:
     @pytest.fixture
     def authenticator(self, mock_cache, mock_config):
         """Create a UserAuthenticatorImpl instance with mocked dependencies."""
-        with patch("fivccliche.modules.users.services.query_component") as mock_query:
 
-            def query_side_effect(site, interface):
-                from fivcglue.interfaces.caches import ICache
-                from fivcglue.interfaces.configs import IConfig
+        def query_side_effect(site, interface):
+            from fivcglue.interfaces.caches import ICache
+            from fivcglue.interfaces.configs import IConfig
 
-                if interface == ICache:
-                    return mock_cache
-                elif interface == IConfig:
-                    return mock_config
-                return None
+            if interface == ICache:
+                return mock_cache
+            elif interface == IConfig:
+                return mock_config
+            return None
 
-            mock_query.side_effect = query_side_effect
+        with (
+            patch(
+                "fivccliche.modules.users.services.query_component",
+                side_effect=query_side_effect,
+            ),
+            patch(
+                "fivccliche.services.implements.auth_remote.query_component",
+                side_effect=query_side_effect,
+            ),
+        ):
             authenticator = UserAuthenticatorImpl(Mock())
             return authenticator
 
@@ -404,6 +415,28 @@ class TestSSOAuthentication:
         assert user.email is None
         assert user.hashed_password is None  # SSO users don't have passwords
 
+    async def test_create_sso_credential_inactive_user(self, authenticator, session: AsyncSession):
+        """Inactive users do not receive an SSO access token."""
+        user = await methods.create_user_async(
+            session,
+            username="inactive-sso",
+            email="inactive-sso@example.com",
+            password=None,
+        )
+        user.is_active = False
+        session.add(user)
+        await session.commit()
+
+        credential = await authenticator.create_sso_credential_async(
+            username="inactive-sso",
+            attributes={"email": "inactive-sso@example.com"},
+        )
+
+        assert credential is None
+        stored = await methods.get_user_async(session, username="inactive-sso")
+        assert stored is not None
+        assert stored.signed_in_at is None
+
 
 class TestUserAuthenticatorCaching:
     """Test cases for UserAuthenticatorImpl caching functionality."""
@@ -451,24 +484,32 @@ class TestUserAuthenticatorCaching:
     @pytest.fixture
     def authenticator(self, mock_cache, mock_config):
         """Create a UserAuthenticatorImpl instance with mocked dependencies."""
-        with patch("fivccliche.modules.users.services.query_component") as mock_query:
 
-            def query_side_effect(site, interface):
-                from fivcglue.interfaces.caches import ICache
-                from fivcglue.interfaces.configs import IConfig
+        def query_side_effect(site, interface):
+            from fivcglue.interfaces.caches import ICache
+            from fivcglue.interfaces.configs import IConfig
 
-                if interface == ICache:
-                    return mock_cache
-                elif interface == IConfig:
-                    return mock_config
-                return None
+            if interface == ICache:
+                return mock_cache
+            elif interface == IConfig:
+                return mock_config
+            return None
 
-            mock_query.side_effect = query_side_effect
+        with (
+            patch(
+                "fivccliche.modules.users.services.query_component",
+                side_effect=query_side_effect,
+            ),
+            patch(
+                "fivccliche.services.implements.auth_remote.query_component",
+                side_effect=query_side_effect,
+            ),
+        ):
             authenticator = UserAuthenticatorImpl(Mock())
             return authenticator
 
     async def test_cache_hit_verification(self, authenticator, mock_cache, session: AsyncSession):
-        """Test that cache hits are verified and used correctly."""
+        """Verification uses token claims and does not read the cache."""
         # Create a test user
         user = await methods.create_user_async(
             session,
@@ -477,50 +518,74 @@ class TestUserAuthenticatorCaching:
             password="password123",
         )
 
-        # Create a token for the user
-        credential = authenticator._create_access_token(user.uuid)
+        credential = authenticator._create_access_token(user)
         token = credential.access_token
 
-        # Setup cache to return user data on first call
-        user_info = {
-            "uuid": user.uuid,
-            "username": user.username,
-            "email": user.email,
-            "is_active": user.is_active,
-            "is_superuser": user.is_superuser,
-        }
-        mock_cache.get_value.return_value = json.dumps(user_info).encode("utf-8")
-
-        # First verification - cache hit
         result = await authenticator.verify_credential_async(token)
 
         assert result is not None
         assert result.uuid == user.uuid
+        assert result.username == user.username
+        assert result.email == user.email
+        assert result.is_superuser == user.is_superuser
+        mock_cache.get_value.assert_not_called()
 
-    async def test_cache_miss_database_query(
-        self, authenticator, mock_cache, session: AsyncSession
-    ):
-        """Test that cache miss triggers database query."""
-        # Create a test user
+    async def test_verify_does_not_open_database(self, authenticator, session: AsyncSession):
+        """Verification reads claims and does not open a user database session."""
         user = await methods.create_user_async(
             session,
             username="dbuser",
             email="db@example.com",
             password="password123",
+            is_superuser=False,
         )
+        credential = authenticator._create_access_token(user)
+        user.is_superuser = True
 
-        # Create a token for the user
-        credential = authenticator._create_access_token(user.uuid)
-        token = credential.access_token
+        def fail_open(*_args, **_kwargs):
+            raise AssertionError("verify must not open a database session")
 
-        # Setup cache to return None (cache miss)
-        mock_cache.get_value.return_value = None
-
-        # Verify token - should query database
-        result = await authenticator.verify_credential_async(token)
+        with patch(
+            "fivccliche.modules.users.services.get_db_session_context_async",
+            fail_open,
+        ):
+            result = await authenticator.verify_credential_async(credential.access_token)
 
         assert result is not None
         assert result.uuid == user.uuid
+        assert result.username == "dbuser"
+        assert result.email == "db@example.com"
+        assert result.is_superuser is False
+
+    async def test_superuser_claim_requires_active_superuser_row(
+        self, authenticator, session: AsyncSession
+    ):
+        """A superuser claim is honored only while that row is still an active superuser."""
+        user = await methods.create_user_async(
+            session,
+            username="superuser",
+            email="super@example.com",
+            password="password123",
+            is_superuser=True,
+        )
+        credential = authenticator._create_access_token(user)
+        await session.commit()
+
+        result = await authenticator.verify_credential_async(credential.access_token)
+        assert result is not None
+        assert result.uuid == user.uuid
+        assert result.is_superuser is True
+
+        user.is_superuser = False
+        session.add(user)
+        await session.commit()
+        assert await authenticator.verify_credential_async(credential.access_token) is None
+
+        user.is_superuser = True
+        user.is_active = False
+        session.add(user)
+        await session.commit()
+        assert await authenticator.verify_credential_async(credential.access_token) is None
 
     async def test_invalid_token_not_cached(self, authenticator, mock_cache, session: AsyncSession):
         """Test that invalid tokens don't trigger cache operations."""
@@ -550,6 +615,9 @@ class TestUserAuthenticatorCaching:
         expired_token = jwt.encode(
             {
                 "sub": "test-user-id",
+                "username": "expired-user",
+                "email": "expired@example.com",
+                "is_superuser": False,
                 "iat": time_now,
                 "exp": time_expire,
             },
@@ -589,9 +657,9 @@ class TestUserAuthenticatorCaching:
         )
 
         # Create tokens for both users
-        credential1 = authenticator._create_access_token(user1.uuid)
+        credential1 = authenticator._create_access_token(user1)
         token1 = credential1.access_token
-        credential2 = authenticator._create_access_token(user2.uuid)
+        credential2 = authenticator._create_access_token(user2)
         token2 = credential2.access_token
 
         # Setup cache to return None initially
@@ -606,9 +674,26 @@ class TestUserAuthenticatorCaching:
         assert result2 is not None
         assert result2.uuid == user2.uuid
 
-    async def test_user_impl_wrapping(self, authenticator, mock_cache, session: AsyncSession):
-        """Test that verified users are wrapped in UserImpl."""
-        # Create a test user
+    async def test_token_missing_claims_rejected(self, authenticator):
+        """Tokens that only carry a subject are rejected."""
+        from datetime import datetime, timezone, timedelta
+        import jwt
+
+        now = datetime.now(timezone.utc)
+        token = jwt.encode(
+            {
+                "sub": "test-user-id",
+                "iat": now,
+                "exp": now + timedelta(hours=1),
+            },
+            authenticator.token_secret_key,
+            algorithm=authenticator.token_algorithm,
+        )
+
+        assert await authenticator.verify_credential_async(token) is None
+
+    async def test_user_impl_wrapping(self, authenticator, session: AsyncSession):
+        """Verified principals come from token claims."""
         user = await methods.create_user_async(
             session,
             username="impluser",
@@ -616,19 +701,60 @@ class TestUserAuthenticatorCaching:
             password="password123",
         )
 
-        # Create a token for the user
-        credential = authenticator._create_access_token(user.uuid)
-        token = credential.access_token
+        credential = authenticator._create_access_token(user)
+        result = await authenticator.verify_credential_async(credential.access_token)
 
-        # Setup cache to return None
-        mock_cache.get_value.return_value = None
-
-        # Verify token
-        result = await authenticator.verify_credential_async(token)
-
-        # Verify result is UserImpl instance
-        assert isinstance(result, UserImpl)
+        assert isinstance(result, RemoteUserImpl)
         assert result.uuid == user.uuid
         assert result.username == user.username
         assert result.email == user.email
         assert result.is_superuser == user.is_superuser
+
+    async def test_remote_authenticator_verifies_local_token(
+        self, authenticator, mock_config, session: AsyncSession
+    ):
+        """A remote authenticator with the same secret reads claims from a local token."""
+        from datetime import datetime, timezone, timedelta
+        import jwt
+
+        user = await methods.create_user_async(
+            session,
+            username="remoteuser",
+            email="remote@example.com",
+            password="password123",
+            is_superuser=True,
+        )
+        credential = authenticator._create_access_token(user)
+
+        with patch("fivccliche.services.implements.auth_remote.query_component") as mock_query:
+            mock_query.return_value = mock_config
+            remote = RemoteUserAuthenticatorImpl(Mock())
+
+        result = await remote.verify_credential_async(credential.access_token)
+        assert isinstance(result, RemoteUserImpl)
+        assert result.uuid == user.uuid
+        assert result.username == user.username
+        assert result.email == user.email
+        assert result.is_superuser is True
+
+        now = datetime.now(timezone.utc)
+        missing_claims = jwt.encode(
+            {"sub": user.uuid, "iat": now, "exp": now + timedelta(hours=1)},
+            authenticator.token_secret_key,
+            algorithm=authenticator.token_algorithm,
+        )
+        assert await remote.verify_credential_async(missing_claims) is None
+
+        expired = jwt.encode(
+            {
+                "sub": user.uuid,
+                "username": user.username,
+                "email": user.email,
+                "is_superuser": True,
+                "iat": now,
+                "exp": now - timedelta(hours=1),
+            },
+            authenticator.token_secret_key,
+            algorithm=authenticator.token_algorithm,
+        )
+        assert await remote.verify_credential_async(expired) is None

@@ -80,7 +80,7 @@ Modules expose jobs via `IModule.list_jobs` / `get_job` (`IModuleJob`: `name`, `
 
 ### Authentication Flow
 
-JWT-based (HS256). Login returns token → Bearer token in Authorization header → `get_authenticated_user_async` dependency extracts user. SSO via CAS supported in `modules/users/sso.py`. Configurable via env vars: `SECRET_KEY`, `ALGORITHM`, `EXPIRATION_HOURS`.
+JWT-based (HS256). Login, SSO, and impersonation read the user row and reject `is_active=False` before issuing an access token whose claims are `sub`, `username`, `email`, and `is_superuser`. Later Bearer and WebSocket checks decode that token via `get_authenticated_user_async`. Ordinary users are not read from the user table again. When the claims say `is_superuser`, the local authenticator loads that row and accepts the token only if it is still an active superuser. SSO via CAS is in `modules/users/sso.py`. Configurable via env vars: `SECRET_KEY`, `ALGORITHM`, `EXPIRATION_HOURS`.
 
 ### Database
 

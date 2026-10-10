@@ -1,6 +1,5 @@
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import cast
 
 import jwt
 from fastapi import FastAPI
@@ -8,10 +7,11 @@ from fivcglue import query_component, IComponentSite
 from fivcglue.interfaces.caches import ICache
 from fivcglue.interfaces.configs import IConfig
 
-from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator, UserCredential
+from fivccliche.services.implements.auth_remote import RemoteUserAuthenticatorImpl
+from fivccliche.services.interfaces.auth import IUser, UserCredential
 from fivccliche.services.interfaces.modules import IModule, IModuleJob
 from fivccliche.utils.deps import get_db_session_context_async
-from fivccliche.utils.types import to_float, to_string
+from fivccliche.utils.types import to_float
 
 from .models import User
 from .utils import create_user_async, get_user_async
@@ -42,36 +42,30 @@ class UserImpl(IUser):
     def is_superuser(self) -> bool:
         return self.user.is_superuser
 
-    def check_password(self, password: str) -> bool:
-        return self.user.check_password(password)
 
-    def change_password(self, password: str) -> None:
-        self.user.change_password(password)
-
-
-class UserAuthenticatorImpl(IUserAuthenticator):
+class UserAuthenticatorImpl(RemoteUserAuthenticatorImpl):
     """User authenticator implementation."""
 
     def __init__(self, component_site: IComponentSite, **kwargs):
+        super().__init__(component_site, **kwargs)
         logger.info("users authenticator initialized")
         self.cache = query_component(component_site, ICache)
         config = query_component(component_site, IConfig)
         config = config.get_session("auth")
         self.token_expire_hours = to_float(config.get_value("EXPIRATION_HOURS"), 12)
-        self.token_algorithm = to_string(config.get_value("ALGORITHM"), "HS256")
-        self.token_secret_key = to_string(
-            config.get_value("SECRET_KEY"), "your-secret-key-change-this-in-production"
-        )
 
-    def _create_access_token(self, user_uuid: str) -> UserCredential:
+    def _create_access_token(self, user: User) -> UserCredential:
         """Create a JWT access token for a user."""
         time_now = datetime.now(timezone.utc)
         time_expire = time_now + timedelta(hours=self.token_expire_hours)
         access_token = jwt.encode(
             {
-                "sub": user_uuid,  # Subject (user ID)
-                "iat": time_now,  # Issued at
-                "exp": time_expire,  # Expiration time
+                "sub": user.uuid,
+                "username": user.username,
+                "email": None if user.email is None else str(user.email),
+                "is_superuser": user.is_superuser,
+                "iat": time_now,
+                "exp": time_expire,
             },
             self.token_secret_key,
             algorithm=self.token_algorithm,
@@ -79,17 +73,16 @@ class UserAuthenticatorImpl(IUserAuthenticator):
         expires_in = int(self.token_expire_hours * 3600)  # Convert hours to seconds
         return UserCredential(access_token=access_token, expires_in=expires_in)
 
-    def _decode_access_token(self, access_token: str) -> str | None:
-        """Decode and validate a JWT access token."""
-        try:
-            payload = jwt.decode(
-                access_token, self.token_secret_key, algorithms=[self.token_algorithm]
-            )
-            return cast("str | None", payload.get("sub"))
-        except jwt.ExpiredSignatureError as e:
-            raise ValueError("Token has expired") from e
-        except jwt.InvalidTokenError as e:
-            raise ValueError(f"Invalid token: {e!s}") from e
+    async def verify_credential_async(self, access_token: str, **kwargs) -> IUser | None:
+        """Decode the token, and confirm superuser claims against the user table."""
+        user = await super().verify_credential_async(access_token, **kwargs)
+        if user is None or not user.is_superuser:
+            return user
+        async with get_db_session_context_async() as db_session:
+            row = await get_user_async(db_session, user_uuid=user.uuid)
+        if row is None or not row.is_active or not row.is_superuser:
+            return None
+        return user
 
     async def create_user_async(
         self,
@@ -130,11 +123,13 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                 user = None
             if user and not user.is_active:
                 user = None
-            if user:
-                user.signed_in_at = datetime.now(timezone.utc)
-                db_session.add(user)
-                await db_session.commit()
-            return self._create_access_token(user.uuid) if user else None
+            if not user:
+                return None
+            user.signed_in_at = datetime.now(timezone.utc)
+            db_session.add(user)
+            credential = self._create_access_token(user)
+            await db_session.commit()
+            return credential
 
     async def create_sso_credential_async(
         self,
@@ -168,31 +163,13 @@ class UserAuthenticatorImpl(IUserAuthenticator):
                     is_superuser=False,
                 )
 
-            if user:
-                user.signed_in_at = datetime.now(timezone.utc)
-                db_session.add(user)
-                await db_session.commit()
-            return self._create_access_token(user.uuid) if user else None
-
-    async def verify_credential_async(self, access_token: str, **kwargs) -> IUser | None:
-        """Authenticate a user by token."""
-        try:
-            user_uuid = self._decode_access_token(access_token)
-        except ValueError:
-            return None
-
-        if user_uuid is None:
-            return None
-
-        try:
-            async with get_db_session_context_async() as db_session:
-                user = await get_user_async(db_session, user_uuid=user_uuid)
-            if user and not user.is_active:
+            if not user or not user.is_active:
                 return None
-            return UserImpl(user) if user else None
-        except Exception:
-            logger.exception("Failed to verify credential")
-            return None
+            user.signed_in_at = datetime.now(timezone.utc)
+            db_session.add(user)
+            credential = self._create_access_token(user)
+            await db_session.commit()
+            return credential
 
 
 class ModuleImpl(IModule):
