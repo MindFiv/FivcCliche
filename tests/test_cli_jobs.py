@@ -128,13 +128,20 @@ def test_cli_jobs_show_missing(fake_module_site):
     assert result.exit_code == 1
 
 
-def test_cli_jobs_run(fake_module_site):
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["jobs", "exec", "fake_module", "fake-job"],
+        ["exec", "fake_module", "fake-job"],
+    ],
+)
+def test_cli_jobs_exec(fake_module_site, argv):
     site, module = fake_module_site
     job = module.get_job("fake-job")
     assert job is not None
     runner = CliRunner()
     with patch("fivccliche.cli.modules", site):
-        result = runner.invoke(cli, ["jobs", "run", "fake_module", "fake-job"])
+        result = runner.invoke(cli, argv)
     assert result.exit_code == 0
     assert job.ran is True
     assert "completed successfully" in result.stdout

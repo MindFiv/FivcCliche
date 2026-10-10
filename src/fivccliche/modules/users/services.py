@@ -13,6 +13,7 @@ from fivccliche.services.interfaces.modules import IModule, IModuleJob
 from fivccliche.utils.deps import get_db_session_context_async
 from fivccliche.utils.types import to_float
 
+from .jobs import ChangePasswordJob, CreateSuperuserJob
 from .models import User
 from .utils import create_user_async, get_user_async
 from .routers import router
@@ -175,7 +176,11 @@ class UserAuthenticatorImpl(RemoteUserAuthenticatorImpl):
 class ModuleImpl(IModule):
     """User module implementation."""
 
-    def __init__(self, _: IComponentSite, **kwargs):
+    def __init__(self, component_site: IComponentSite, **kwargs):
+        self._jobs: list[IModuleJob] = [
+            CreateSuperuserJob(component_site),
+            ChangePasswordJob(component_site),
+        ]
         logger.info("users module initialized")
 
     @property
@@ -187,9 +192,12 @@ class ModuleImpl(IModule):
         return "User management module."
 
     def list_jobs(self) -> list[IModuleJob]:
-        return []
+        return list(self._jobs)
 
     def get_job(self, job_name: str) -> IModuleJob | None:
+        for job in self._jobs:
+            if job.name == job_name:
+                return job
         return None
 
     def mount(self, app: FastAPI, **kwargs) -> None:

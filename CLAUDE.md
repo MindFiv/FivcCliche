@@ -28,13 +28,13 @@ pytest tests/test_users_api.py -v              # Run a single test file
 pytest tests/test_users_api.py::test_name -v   # Run a single test
 
 # CLI
-python -m fivccliche.cli run                   # Start server
+python -m fivccliche.cli serve                 # Start server
 python -m fivccliche.cli migrate               # Initialize database tables
-python -m fivccliche.cli createsuperuser       # Create admin user (interactive)
-python -m fivccliche.cli changepassword        # Change a user's password (interactive)
+python -m fivccliche.cli exec users createsuperuser  # Create admin user (interactive)
+python -m fivccliche.cli exec users changepassword   # Change a user's password (interactive)
 python -m fivccliche.cli jobs list             # List scheduled jobs
 python -m fivccliche.cli jobs show <module> <job>
-python -m fivccliche.cli jobs run <module> <job>
+python -m fivccliche.cli exec <module> <job>   # Same as: jobs exec <module> <job>
 ```
 
 API tests share [`tests/conftest.py`](tests/conftest.py) (`make_api_client`: isolated pg0 Postgres DB, admin user, session override).
@@ -76,7 +76,7 @@ HTTP list/get returns inactive tools/skills. Playground repositories filter `is_
 
 ### Scheduled Tasks
 
-Modules expose jobs via `IModule.list_jobs` / `get_job` (`IModuleJob`: `name`, `config`, `run_async`). `IModuleSite` registers them with `list_modules` / `get_module`. `ModuleSiteImpl.create_application` creates a single `AsyncIOScheduler`, attaches it to `app.state.scheduler`, mounts routers via `module.mount(app, ...)`, then registers each job whose `config` is not `None` onto the scheduler (`config is None` skips `add_job`). Lifespan starts/stops the scheduler. CLI: `fivccliche jobs list|show|run`; `jobs show` and `jobs run` locate the module with `get_module`. `agent_chats` lists `ChatDescribeJob` with `config is None` (not scheduled); the text WebSocket calls it through `get_module` / `get_job`. The memorize job is still **not** on `list_jobs()`. Chat runs use `UserChatRunProviderImpl`. See [docs/scheduler.md](docs/scheduler.md).
+Modules expose jobs via `IModule.list_jobs` / `get_job` (`IModuleJob`: `name`, `config`, `run_async`). `IModuleSite` registers them with `list_modules` / `get_module`. `ModuleSiteImpl.create_application` creates a single `AsyncIOScheduler`, attaches it to `app.state.scheduler`, mounts routers via `module.mount(app, ...)`, then registers each job whose `config` is not `None` onto the scheduler (`config is None` skips `add_job`). Lifespan starts/stops the scheduler. CLI: `fivccliche jobs list|show|exec`, and `fivccliche exec` is the same as `jobs exec`. `jobs show` and `jobs exec` locate the module with `get_module`. `agent_chats` lists `ChatDescribeJob` with `config is None` (not scheduled); the text WebSocket calls it through `get_module` / `get_job`. The memorize job is still **not** on `list_jobs()`. Chat runs use `UserChatRunProviderImpl`. See [docs/scheduler.md](docs/scheduler.md).
 
 ### Authentication Flow
 

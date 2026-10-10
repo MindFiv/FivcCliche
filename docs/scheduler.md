@@ -118,11 +118,13 @@ Ops can inspect and run jobs without waiting for the scheduler tick:
 ```bash
 fivccliche jobs list
 fivccliche jobs show MODULE JOB
-fivccliche jobs run MODULE JOB
+fivccliche jobs exec MODULE JOB
+fivccliche exec MODULE JOB
 ```
 
-`jobs show` and `jobs run` resolve the module with `IModuleSite.get_module`,
-then the job with `IModule.get_job`. `jobs run` calls `job.run_async()`
+`fivccliche exec` is the same command as `jobs exec`. `jobs show` and `jobs exec`
+resolve the module with `IModuleSite.get_module`, then the job with
+`IModule.get_job`. `jobs exec` calls `job.run_async()`
 immediately via asyncio; it does not require the FastAPI lifespan or a
 running scheduler.
 

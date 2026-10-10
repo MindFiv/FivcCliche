@@ -191,7 +191,7 @@ Implemented by `agent_chats.jobs.ChatMemorizeJob` (`IModuleJob`; defined in
 and `CHAT_MEMORIZE` settings remain, but `agent_chats.ModuleImpl` does not
 put it on `list_jobs()` (that list is only `ChatDescribeJob`), so
 `ModuleSiteImpl` does not register `agent-chats-memorize` and
-`fivccliche jobs run agent_chats agent-chats-memorize` cannot find it.
+`fivccliche jobs exec agent_chats agent-chats-memorize` cannot find it.
 Listing the job with `config is None`
 would also skip the scheduler. Re-enable scheduling by constructing
 `ChatMemorizeJob(component_site)` in `ModuleImpl.__init__` again

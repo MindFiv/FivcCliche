@@ -24,7 +24,6 @@ from fivccliche import __version__
 from fivccliche.services.implements import service_site
 from fivccliche.services.interfaces.modules import IModule, IModuleJob, IModuleSite
 from fivccliche.services.interfaces.db import IDatabase
-from fivccliche.services.interfaces.auth import IUserAuthenticator
 
 cli = typer.Typer(
     name="FivcCliche",
@@ -68,7 +67,7 @@ def _find_job(module: IModule, job_name: str) -> IModuleJob:
 
 
 @cli.command()
-def run(
+def serve(
     host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind the server to"),
     port: int = typer.Option(8000, "--port", "-p", help="Port to run the server on"),
     reload: bool = typer.Option(
@@ -80,7 +79,7 @@ def run(
     ),
 ):
     """
-    Run the FivcCliche FastAPI application
+    Start the FivcCliche FastAPI application
     """
     console.print(
         Panel.fit(
@@ -135,13 +134,15 @@ def info():
 
     [bold]Usage Examples:[/bold]
     fivccliche migrate                                # Initialize database tables
-    fivccliche createsuperuser                        # Create admin account
-    fivccliche run                                    # Start server
-    fivccliche run --port 9000                        # Custom port
-    fivccliche run --host 127.0.0.1 --no-reload      # Production mode
+    fivccliche exec users createsuperuser             # Create admin account
+    fivccliche exec users changepassword              # Change a user's password
+    fivccliche serve                                  # Start server
+    fivccliche serve --port 9000                      # Custom port
+    fivccliche serve --host 127.0.0.1 --no-reload    # Production mode
     fivccliche jobs list                              # List module jobs
     fivccliche jobs show MODULE JOB                   # Show job config
-    fivccliche jobs run MODULE JOB                    # Run a job immediately
+    fivccliche exec MODULE JOB                        # Run a job immediately
+    fivccliche jobs exec MODULE JOB                   # Same as exec
     fivccliche info                                   # Show this information
     fivccliche clean                                  # Clean temporary files
     """
@@ -253,212 +254,6 @@ async def _migrate_async() -> None:
         raise typer.Exit(1) from e
 
 
-@cli.command()
-def createsuperuser():
-    """
-    Create a superuser (admin) account interactively.
-
-    This command prompts for username, email, and password to create
-    a new superuser account with admin privileges.
-    """
-    console.print(
-        Panel.fit(
-            Text("Create Superuser", style="bold blue"),
-            subtitle="Create a new admin account",
-        )
-    )
-
-    try:
-        # Prompt for username
-        username = typer.prompt("Username")
-        if not username or not username.strip():
-            console.print("[red]❌ Username cannot be empty[/red]")
-            raise typer.Exit(1)
-
-        # Prompt for email
-        email = typer.prompt("Email address")
-        if not email or not email.strip():
-            console.print("[red]❌ Email cannot be empty[/red]")
-            raise typer.Exit(1)
-
-        # Prompt for password with confirmation
-        password = typer.prompt("Password", hide_input=True)
-        if not password or not password.strip():
-            console.print("[red]❌ Password cannot be empty[/red]")
-            raise typer.Exit(1)
-
-        password_confirm = typer.prompt("Confirm password", hide_input=True)
-        if password != password_confirm:
-            console.print("[red]❌ Passwords do not match[/red]")
-            raise typer.Exit(1)
-
-        # Run the async creation
-        asyncio.run(_create_superuser_async(username, email, password))
-
-    except typer.Abort as e:
-        console.print("[yellow]Superuser creation cancelled[/yellow]")
-        raise typer.Exit(0) from e
-    except typer.Exit:
-        raise
-    except Exception as e:
-        console.print(f"[red]❌ Unexpected error: {e}[/red]")
-        raise typer.Exit(1) from e
-
-
-async def _create_superuser_async(username: str, email: str, password: str) -> None:
-    """
-    Async helper function to create a superuser.
-
-    Args:
-        username: Username for the superuser
-        email: Email address for the superuser
-        password: Password for the superuser
-    """
-    try:
-        # Get database and authenticator services
-        db_service = query_component(cast(IComponentSite, service_site), IDatabase)
-        auth_service = query_component(cast(IComponentSite, service_site), IUserAuthenticator)
-
-        # Get a database session
-        session = db_service.create_session()
-
-        try:
-            # Check if user already exists
-            from fivccliche.modules.users.utils import get_user_async
-
-            existing_user = await get_user_async(session, username=username)
-            if existing_user:
-                console.print(f"[red]❌ User '{username}' already exists[/red]")
-                raise typer.Exit(1)
-
-            existing_email = await get_user_async(session, email=email)
-            if existing_email:
-                console.print(f"[red]❌ Email '{email}' is already in use[/red]")
-                raise typer.Exit(1)
-
-            # Create the superuser
-            user = await auth_service.create_user_async(
-                username=username,
-                email=email,
-                password=password,
-                is_superuser=True,
-            )
-
-            if user:
-                console.print("\n" + "=" * 60)
-                console.print("[bold green]✅ Superuser created successfully![/bold green]")
-                console.print("=" * 60)
-                console.print(f"[cyan]Username:[/cyan] {user.username}")
-                console.print(f"[cyan]Email:[/cyan] {user.email}")
-                console.print("[cyan]Admin:[/cyan] Yes")
-                console.print("=" * 60)
-            else:
-                console.print("[red]❌ Failed to create superuser[/red]")
-                raise typer.Exit(1)
-
-        finally:
-            await session.close()
-
-    except typer.Exit:
-        raise
-    except ValueError as e:
-        console.print(f"[red]❌ Validation error: {e}[/red]")
-        raise typer.Exit(1) from e
-    except Exception as e:
-        console.print(f"[red]❌ Database error: {e}[/red]")
-        raise typer.Exit(1) from e
-
-
-@cli.command()
-def changepassword():
-    """
-    Change a user's password interactively.
-
-    This command prompts for a username and new password to update
-    an existing user's password.
-    """
-    console.print(
-        Panel.fit(
-            Text("Change Password", style="bold blue"),
-            subtitle="Update user password",
-        )
-    )
-
-    try:
-        # Prompt for username
-        username = typer.prompt("Username")
-        if not username or not username.strip():
-            console.print("[red]❌ Username cannot be empty[/red]")
-            raise typer.Exit(1)
-
-        # Prompt for new password with confirmation
-        new_password = typer.prompt("New password", hide_input=True)
-        if not new_password or not new_password.strip():
-            console.print("[red]❌ Password cannot be empty[/red]")
-            raise typer.Exit(1)
-
-        password_confirm = typer.prompt("Confirm new password", hide_input=True)
-        if new_password != password_confirm:
-            console.print("[red]❌ Passwords do not match[/red]")
-            raise typer.Exit(1)
-
-        # Run the async update
-        asyncio.run(_change_password_async(username, new_password))
-
-    except typer.Abort as e:
-        console.print("[yellow]Password change cancelled[/yellow]")
-        raise typer.Exit(0) from e
-    except typer.Exit:
-        raise
-    except Exception as e:
-        console.print(f"[red]❌ Unexpected error: {e}[/red]")
-        raise typer.Exit(1) from e
-
-
-async def _change_password_async(username: str, new_password: str) -> None:
-    """
-    Async helper function to change a user's password.
-
-    Args:
-        username: Username of the user to update
-        new_password: New password to set
-    """
-    try:
-        # Get database service
-        db_service = query_component(cast(IComponentSite, service_site), IDatabase)
-
-        # Get a database session
-        session = db_service.create_session()
-
-        try:
-            from fivccliche.modules.users.utils import get_user_async, update_user_async
-
-            # Look up user
-            user = await get_user_async(session, username=username)
-            if not user:
-                console.print(f"[red]❌ User '{username}' not found[/red]")
-                raise typer.Exit(1)
-
-            # Update password
-            await update_user_async(session, user, password=new_password)
-            await session.commit()
-
-            console.print("\n" + "=" * 60)
-            console.print("[bold green]✅ Password changed successfully![/bold green]")
-            console.print("=" * 60)
-            console.print(f"[cyan]Username:[/cyan] {user.username}")
-            console.print("=" * 60)
-
-        finally:
-            await session.close()
-
-    except typer.Exit:
-        raise
-    except Exception as e:
-        console.print(f"[red]❌ Database error: {e}[/red]")
-        raise typer.Exit(1) from e
-
-
 @jobs_cli.command("list")
 def jobs_list():
     """
@@ -503,8 +298,9 @@ def jobs_show(
     console.print(f"[cyan]Config:[/cyan] {job.config}")
 
 
-@jobs_cli.command("run")
-def jobs_run(
+@cli.command("exec")
+@jobs_cli.command("exec")
+def jobs_exec(
     module_name: str = typer.Argument(..., help="Module name"),
     job_name: str = typer.Argument(..., help="Job name"),
 ):

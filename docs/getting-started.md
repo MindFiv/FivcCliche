@@ -20,7 +20,7 @@ Unset `DB_URL` to use embedded PostgreSQL via [pg0](https://github.com/vectorize
 
 ```bash
 python -m fivccliche.cli migrate
-python -m fivccliche.cli createsuperuser
+python -m fivccliche.cli exec users createsuperuser
 ```
 
 `migrate` creates missing tables; it does not alter existing ones. Existing databases
@@ -36,7 +36,7 @@ UPDATE chat SET updated_at = created_at;
 ```bash
 make serve
 # or
-python -m fivccliche.cli run
+python -m fivccliche.cli serve
 ```
 
 - API: http://localhost:8000

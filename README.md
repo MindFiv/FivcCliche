@@ -41,8 +41,8 @@ The easiest way to run FivcCliche is using the built-in CLI:
 
 ```bash
 python -m fivccliche.cli migrate            # Create missing tables
-python -m fivccliche.cli createsuperuser    # Interactive admin user
-python -m fivccliche.cli run                # Start the server
+python -m fivccliche.cli exec users createsuperuser  # Interactive admin user
+python -m fivccliche.cli serve              # Start the server
 python -m fivccliche.cli jobs list          # List scheduled jobs
 python -m fivccliche.cli info               # Show project information
 python -m fivccliche.cli clean              # Clean temporary files and cache
@@ -83,16 +83,16 @@ UPDATE chat SET updated_at = created_at;
 
 ```bash
 # Custom host and port
-python -m fivccliche.cli run --host 127.0.0.1 --port 9000
+python -m fivccliche.cli serve --host 127.0.0.1 --port 9000
 
 # Production mode (no auto-reload)
-python -m fivccliche.cli run --no-reload
+python -m fivccliche.cli serve --no-reload
 
 # Test configuration without running
-python -m fivccliche.cli run --dry-run
+python -m fivccliche.cli serve --dry-run
 
 # Verbose output
-python -m fivccliche.cli run --verbose
+python -m fivccliche.cli serve --verbose
 ```
 
 ## 📚 Documentation
