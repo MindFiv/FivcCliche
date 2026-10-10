@@ -14,10 +14,9 @@ from fastapi import (
     status,
     WebSocket,
 )
-from fivcglue import IComponentSite, query_component
+from fivcglue import IComponentSite
 from fivcglue.interfaces.mutexes import IMutexSite
 from fivccliche.services.interfaces.auth import IUserAuthenticator
-from fivccliche.services.interfaces.modules import IModuleSite
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -497,60 +496,6 @@ async def create_chat_messages_async(
             "X-Accel-Buffering": "no",
         },
     )
-
-
-@router_messages.websocket("/{chat_uuid}/messages/")
-async def create_chat_messages_ws_async(
-    websocket: WebSocket,
-    chat_uuid: str,
-    auth: IUserAuthenticator = Depends(get_authenticator_async),
-    mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
-) -> None:
-    """Stream one text chat turn over the canonical WebSocket route."""
-    from fivccliche.utils.chats.processors import ChatTextProcessor
-
-    async def load_chat(user: IUser) -> ChatSnapshot | None:
-        async with deps.get_db_session_context_async() as session:
-            return await _load_chat_snapshot(session, user, chat_uuid)
-
-    module_site = query_component(cast(IComponentSite, service_site), IModuleSite)
-    mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
-    async with ChatChannel(websocket, auth) as channel:
-        await ChatTextProcessor(
-            channel,
-            chat_uuid=chat_uuid,
-            chat_loader=load_chat,
-            mutex=mutex,
-            module_site=module_site,
-            timeout=CHAT_MESSAGE_RUN_TIMEOUT,
-        ).process_async()
-
-
-@router_messages.websocket("/{chat_uuid}/messages/ws/")
-async def create_chat_messages_ws_compat_async(
-    websocket: WebSocket,
-    chat_uuid: str,
-    auth: IUserAuthenticator = Depends(get_authenticator_async),
-    mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
-) -> None:
-    """Legacy text-only alias for the canonical message WebSocket."""
-    from fivccliche.utils.chats.processors import ChatTextProcessor
-
-    async def load_chat(user: IUser) -> ChatSnapshot | None:
-        async with deps.get_db_session_context_async() as session:
-            return await _load_chat_snapshot(session, user, chat_uuid)
-
-    module_site = query_component(cast(IComponentSite, service_site), IModuleSite)
-    mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
-    async with ChatChannel(websocket, auth) as channel:
-        await ChatTextProcessor(
-            channel,
-            chat_uuid=chat_uuid,
-            chat_loader=load_chat,
-            mutex=mutex,
-            module_site=module_site,
-            timeout=CHAT_MESSAGE_RUN_TIMEOUT,
-        ).process_async()
 
 
 @router_messages.get(

@@ -53,7 +53,7 @@ class ChatDescribeJob(IModuleJob):
     """On-demand job that writes ``chat.description`` when it is empty.
 
     Listed on ``ModuleImpl.list_jobs``. ``config`` is ``None`` so it is never
-    scheduled. The text WebSocket looks it up with ``get_module`` / ``get_job``.
+    scheduled. The SSE message handler starts it through ``BackgroundTasks``.
     """
 
     def __init__(self, component_site: IComponentSite) -> None:

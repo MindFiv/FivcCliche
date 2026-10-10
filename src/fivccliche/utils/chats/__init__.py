@@ -8,7 +8,6 @@ from .parsers import (
 )
 from .processors import (
     ChatSnapshot,
-    ChatTextProcessor,
     ChatVoiceProcessor,
 )
 
@@ -20,6 +19,5 @@ __all__ = [
     "ChatRunParser",
     "ChatRunParserType",
     "ChatSnapshot",
-    "ChatTextProcessor",
     "ChatVoiceProcessor",
 ]

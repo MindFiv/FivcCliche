@@ -167,9 +167,7 @@ within the test window.
 
 `agent_chats` lists `ChatDescribeJob` (`agent_chats.jobs.describe`) with
 `config is None`, so it is visible to `get_job` and the CLI but not registered
-on the scheduler. The text WebSocket looks it up with
-`IModuleSite.get_module("agent_chats")` and `get_job("agent-chats-describe")`.
-SSE still starts that same job through `BackgroundTasks`. Chat runs are
+on the scheduler. SSE starts that job through `BackgroundTasks`. Chat runs are
 provided by `UserChatRunProviderImpl`; the message handler creates a
 `UserChatRunImpl` and starts it with `asyncio.create_task`. `ChatMemorizeJob`
 (`agent_chats.jobs.memorize`) is still not on `list_jobs()`; re-attach it by

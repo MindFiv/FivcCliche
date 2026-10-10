@@ -13,8 +13,6 @@ automatic TTS for chat replies remain out of scope.
 - Interface + optional `ISpeechProvider` (DI + `get_speech_provider_async`)
 - Fake provider for tests (`FakeSpeechProvider`)
 - DashScope HTTP and Realtime providers (each file is one implementation)
-- Message WebSocket can accept one audio clip or one streamed utterance, then
-  runs the existing text `UserChatRunImpl`
 - Function tool `SpeechTranscribe` for later `transport=function` wiring
 - DashScope TTS and `UserTTS` probe configuration
 
@@ -223,27 +221,6 @@ TTS uses the same arguments from a `UserTTS` row:
 
 For tests, instantiate `FakeSpeechProvider(transcript="...")` directly.
 
-## Message WebSocket
-
-Existing one-turn protocol on `WS /api/chats/{chat_uuid}/messages/ws/` is
-unchanged for text. After auth, the `message` frame is **one of**:
-
-- `{"type": "message", "query": "..."}` — existing text path
-- `{"type": "message", "audio": "<url-or-base64>", "format": "wav"}` — clip
-- `{"type": "message", "audio_stream": true, "format": "pcm"}` then binary PCM
-  frames then `{"type": "audio_commit"}` — one streamed utterance
-
-`query` / `audio` / `audio_stream` are mutually exclusive. Chat `context.asr_id`
-selects the UserASR `id` (default `"default"`). Recognition emits
-`{"event": "transcript", "info": {"text": "...", "is_final": true|false}}`, then
-the usual `start` / `stream` / `tool` / `finish` text events. The connection
-still closes after one agent turn.
-
-Error codes: `speech_unavailable` (1011), `asr_failed` (1011),
-`empty_transcript` (1003). SSE `POST /messages/` does not accept audio.
-
-Streaming WS uses manual commit: the PCM generator ends on `audio_commit`.
-
 ## Agent tool
 
 Callable class in `src/fivccliche/modules/agent_chats/tools.py`. Attach it with
@@ -258,7 +235,7 @@ default `"default"`). It loads that UserASR row, calls
 Arguments: `url` or `data_b64`, optional `audio_format`, `language`, `hotwords`,
 `context`. Returns JSON `{ "text", "language" }` from the last `final` event.
 
-There is no separate listen tool. Streaming ASR is used by the chat WebSocket.
+There is no separate listen tool. Streaming ASR is used by the voice chat WebSocket.
 
 ## Later (not implemented)
 
