@@ -44,6 +44,17 @@ class ChatFilterSet(FilterSet):
         )
 
 
+class UnmemorizedMessageFilterSet(FilterSet):
+    """Exact message status for the unmemorized-message admin list."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            [
+                FilterSimpleField("status", models.UserChatMessage.status, operator.eq),
+            ]
+        )
+
+
 class ChatEditableFilterSet(FilterSet):
     """Editable ownership only for chat update/delete."""
 

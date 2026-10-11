@@ -102,7 +102,11 @@ class ChatStatsSchema(BaseModel):
 
 
 class ChatStatsUnmemorizedMessageSchema(BaseModel):
-    """One aged, completed, unmemorized chat message for administrators."""
+    """One aged, unmemorized chat message for administrators.
+
+    ``status`` matches the ``status`` query filter. Omitting the filter includes
+    every status.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 

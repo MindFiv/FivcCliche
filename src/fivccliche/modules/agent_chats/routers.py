@@ -38,7 +38,7 @@ from fivccliche.utils.deps import (
 from fivccliche.utils.filters import FilterError
 from fivccliche.utils.schemas import PaginatedResponse
 from . import models, schemas, utils
-from .filters import ChatEditableFilterSet, ChatFilterSet
+from .filters import ChatEditableFilterSet, ChatFilterSet, UnmemorizedMessageFilterSet
 from .jobs import ChatDescribeJob
 from .jobs.memorize import memorize_created_at_to
 
@@ -288,7 +288,7 @@ async def get_chat_stats_async(
     admin_user: IUser = Depends(get_admin_user_async),
 ) -> schemas.ChatStatsSchema:
     """Return aggregate chat and message counts."""
-    stats = await utils.get_stats_async(session)
+    stats = await utils.get_chat_stats_async(session)
     return schemas.ChatStatsSchema(
         generated_at=datetime.now(timezone.utc),
         chats=stats,
@@ -297,29 +297,38 @@ async def get_chat_stats_async(
 
 @router_chats.get(
     "/stats/messages/unmemorized/",
-    summary="List unmemorized chat messages the memorize job would process (Admin only).",
+    summary="List aged unmemorized chat messages (Admin only).",
     response_model=PaginatedResponse[schemas.ChatStatsUnmemorizedMessageSchema],
 )
 async def list_chat_stats_unmemorized_messages_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
+    message_status: schemas.AgentRunStatus | None = Query(
+        None,
+        alias="status",
+        description="Exact message status. Omit to include every status.",
+    ),
     session: AsyncSession = Depends(get_db_session_async),
     config: configs.IConfig = Depends(get_config_async),
     admin_user: IUser = Depends(get_admin_user_async),
 ) -> PaginatedResponse[schemas.ChatStatsUnmemorizedMessageSchema]:
-    """Return the memorize backlog, including messages beyond one job batch."""
+    """Return aged unmemorized messages. Omit status to include every status."""
     created_at_to = memorize_created_at_to(config)
+    filters = UnmemorizedMessageFilterSet()
+    filters.parse(status=message_status)
     messages = await utils.list_unmemorized_chat_messages_async(
         session,
         None,
         created_at_to=created_at_to,
         skip=skip,
         limit=limit,
+        filters=filters,
     )
     total = await utils.count_unmemorized_chat_messages_async(
         session,
         None,
         created_at_to=created_at_to,
+        filters=filters,
     )
     return PaginatedResponse(
         total=total,

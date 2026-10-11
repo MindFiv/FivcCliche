@@ -14,6 +14,7 @@ from fivcglue.implements.utils import load_component_site
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.modules.agent_chats import utils as methods
+from fivccliche.modules.agent_chats.filters import UnmemorizedMessageFilterSet
 from fivccliche.modules.agent_chats.jobs import ChatMemorizeJob
 from fivccliche.modules.agent_chats.jobs.memorize import (
     _MEMORIZE_EXTRACT_PROMPT,
@@ -22,6 +23,7 @@ from fivccliche.modules.agent_chats.jobs.memorize import (
     _ChatMemorizeParser,
 )
 from fivccliche.modules.agent_chats.models import UserChat, UserChatMessage
+from fivccliche.modules.agent_chats.schemas import AgentRunStatus
 from fivccliche.modules.agent_chats.services import ModuleImpl
 from fivccliche.services.implements.modules import ModuleSiteImpl
 from fivccliche.services.interfaces.agent_memories import MemoryRetainResult
@@ -267,6 +269,44 @@ class TestMemorizeMethods:
             session, chat.uuid, created_at_to=created_at_to
         )
         assert found_after == []
+
+    async def test_delete_unmemorized_messages_respects_status_filter(
+        self, session: AsyncSession, test_user
+    ):
+        chat = await _add_chat(session, test_user.uuid)
+        completed = await _add_message(
+            session,
+            chat.uuid,
+            query={"text": "done"},
+            reply={"text": "a"},
+            created_at=_older(),
+        )
+        pending = await _add_message(
+            session,
+            chat.uuid,
+            query={"text": "wait"},
+            status="pending",
+            created_at=_older(),
+        )
+        created_at_to = datetime.now(timezone.utc) - timedelta(hours=24)
+
+        await methods.delete_unmemorized_chat_messages_async(
+            session, chat.uuid, created_at_to=created_at_to
+        )
+        await session.commit()
+        await session.refresh(completed)
+        await session.refresh(pending)
+        assert completed.is_memorized is True
+        assert pending.is_memorized is False
+
+        filters = UnmemorizedMessageFilterSet()
+        filters.parse(status=AgentRunStatus.PENDING)
+        await methods.delete_unmemorized_chat_messages_async(
+            session, chat.uuid, created_at_to=created_at_to, filters=filters
+        )
+        await session.commit()
+        await session.refresh(pending)
+        assert pending.is_memorized is True
 
     async def test_list_messages_for_one_chat_is_not_truncated(
         self, session: AsyncSession, test_user
@@ -1148,9 +1188,53 @@ def test_chat_stats_and_unmemorized_list(stats_client: TestClient):
     listed = stats_client.get("/chats/stats/messages/unmemorized/", headers=headers)
     assert listed.status_code == 200
     payload = listed.json()
-    assert payload["total"] == 1
-    message = payload["results"][0]
+    assert payload["total"] == 2
+    assert {(message["status"], message["query"]["text"]) for message in payload["results"]} == {
+        ("completed", "aged"),
+        ("pending", "pending"),
+    }
+    for message in payload["results"]:
+        assert set(message) == {"uuid", "chat_uuid", "status", "query", "reply", "created_at"}
+
+    completed = stats_client.get(
+        "/chats/stats/messages/unmemorized/",
+        headers=headers,
+        params={"status": "completed"},
+    )
+    assert completed.status_code == 200
+    completed_body = completed.json()
+    assert completed_body["total"] == 1
+    message = completed_body["results"][0]
     assert set(message) == {"uuid", "chat_uuid", "status", "query", "reply", "created_at"}
     assert message["chat_uuid"] == chat_uuid
+    assert message["status"] == "completed"
     assert message["query"] == {"text": "aged"}
     assert message["reply"] == {"text": "answer"}
+
+    pending = stats_client.get(
+        "/chats/stats/messages/unmemorized/",
+        headers=headers,
+        params={"status": "pending"},
+    )
+    assert pending.status_code == 200
+    pending_body = pending.json()
+    assert pending_body["total"] == 1
+    pending_message = pending_body["results"][0]
+    assert pending_message["status"] == "pending"
+    assert pending_message["query"] == {"text": "pending"}
+    assert pending_message["reply"] is None
+
+    failed = stats_client.get(
+        "/chats/stats/messages/unmemorized/",
+        headers=headers,
+        params={"status": "failed"},
+    )
+    assert failed.status_code == 200
+    assert failed.json() == {"total": 0, "results": []}
+
+    invalid = stats_client.get(
+        "/chats/stats/messages/unmemorized/",
+        headers=headers,
+        params={"status": "nope"},
+    )
+    assert invalid.status_code == 422

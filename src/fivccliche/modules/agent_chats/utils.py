@@ -11,7 +11,7 @@ from fivccliche.utils.filters import FilterSet
 from fivccliche.utils.types import UNSET, UnsetType
 
 from . import models, schemas
-from .filters import ChatFilterSet
+from .filters import ChatFilterSet, UnmemorizedMessageFilterSet
 
 
 async def create_chat_async(
@@ -236,12 +236,15 @@ async def list_unmemorized_chats_async(
 def _unmemorized_chat_messages_statement(
     chat_uuid: str | None,
     created_at_to: datetime,
+    filters: FilterSet | None = None,
 ):
-    """Select completed unmemorized messages the memorize job would handle.
+    """Select aged unmemorized messages.
 
-    ``chat_uuid is None`` lists every eligible chat, including messages waiting
-    beyond one job batch. A specific chat keeps the per-chat filter and does not
-    re-check ``is_memorable``.
+    ``filters is None`` selects ``status == completed``, which is what the
+    memorize job handles. A caller-supplied filter replaces that status
+    predicate. ``chat_uuid is None`` lists every eligible chat, including
+    messages waiting beyond one job batch. A specific chat keeps the per-chat
+    filter and does not re-check ``is_memorable``.
     """
     statement = select(models.UserChatMessage)
     if chat_uuid is None:
@@ -254,11 +257,14 @@ def _unmemorized_chat_messages_statement(
         )
     else:
         statement = statement.where(models.UserChatMessage.chat_uuid == chat_uuid)
-    return statement.where(
+    statement = statement.where(
         col(models.UserChatMessage.is_memorized).is_(False),
-        models.UserChatMessage.status == schemas.AgentRunStatus.COMPLETED,
         col(models.UserChatMessage.created_at) <= created_at_to,
     )
+    if filters is None:
+        filters = UnmemorizedMessageFilterSet()
+        filters.parse(status=schemas.AgentRunStatus.COMPLETED)
+    return filters.filter(statement)
 
 
 async def list_unmemorized_chat_messages_async(
@@ -268,14 +274,15 @@ async def list_unmemorized_chat_messages_async(
     created_at_to: datetime,
     skip: int = 0,
     limit: int | None = None,
+    filters: FilterSet | None = None,
 ) -> list[models.UserChatMessage]:
-    """List aged, completed, unmemorized messages, oldest first.
+    """List aged unmemorized messages, oldest first.
 
-    ``limit is None`` returns every match. The memorize job relies on that so a
-    single chat is not truncated.
+    ``filters is None`` keeps ``status == completed``. ``limit is None`` returns
+    every match. The memorize job relies on that so a single chat is not truncated.
     """
     statement = (
-        _unmemorized_chat_messages_statement(chat_uuid, created_at_to)
+        _unmemorized_chat_messages_statement(chat_uuid, created_at_to, filters)
         .order_by(col(models.UserChatMessage.created_at).asc())
         .offset(skip)
     )
@@ -290,14 +297,36 @@ async def count_unmemorized_chat_messages_async(
     chat_uuid: str | None,
     *,
     created_at_to: datetime,
+    filters: FilterSet | None = None,
 ) -> int:
     """Count messages selected by ``list_unmemorized_chat_messages_async``."""
-    filtered = _unmemorized_chat_messages_statement(chat_uuid, created_at_to)
+    filtered = _unmemorized_chat_messages_statement(chat_uuid, created_at_to, filters)
     result = await session.execute(select(func.count()).select_from(filtered.subquery()))
     return result.scalar_one() or 0
 
 
-async def get_stats_async(session: AsyncSession) -> schemas.ChatStats:
+async def delete_unmemorized_chat_messages_async(
+    session: AsyncSession,
+    chat_uuid: str | None,
+    *,
+    created_at_to: datetime,
+    filters: FilterSet | None = None,
+) -> None:
+    """Mark aged unmemorized messages as memorized.
+
+    ``filters is None`` keeps ``status == completed``. ``chat_uuid is None`` uses
+    the same memorable-chat predicate as the list and count helpers.
+    """
+    selected = _unmemorized_chat_messages_statement(chat_uuid, created_at_to, filters).subquery()
+    await session.execute(
+        update(models.UserChatMessage)
+        .where(col(models.UserChatMessage.uuid).in_(select(selected.c.uuid)))
+        .values(is_memorized=True)
+        .execution_options(synchronize_session=False)
+    )
+
+
+async def get_chat_stats_async(session: AsyncSession) -> schemas.ChatStats:
     """Aggregate chat and chat-message counts without modifying the session."""
     chat_result = await session.execute(
         select(
@@ -339,24 +368,4 @@ async def get_stats_async(session: AsyncSession) -> schemas.ChatStats:
             memorized=memorized or 0,
             unmemorized=unmemorized or 0,
         ),
-    )
-
-
-async def delete_unmemorized_chat_messages_async(
-    session: AsyncSession,
-    chat_uuid: str,
-    *,
-    created_at_to: datetime,
-) -> None:
-    """Mark aged, completed, unmemorized messages for one chat as memorized."""
-    await session.execute(
-        update(models.UserChatMessage)
-        .where(
-            col(models.UserChatMessage.chat_uuid) == chat_uuid,
-            col(models.UserChatMessage.is_memorized).is_(False),
-            models.UserChatMessage.status == schemas.AgentRunStatus.COMPLETED,
-            col(models.UserChatMessage.created_at) <= created_at_to,
-        )
-        .values(is_memorized=True)
-        .execution_options(synchronize_session=False)
     )
