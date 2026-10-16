@@ -95,7 +95,7 @@ class FilterJsonField(FilterField):
 
 
 class FilterReadableField(FilterField):
-    """Rows the user may read: owned or global (same for regular and superuser today)."""
+    """Rows the user may read: owned or global; superusers read all rows."""
 
     def __init__(
         self,
@@ -115,8 +115,8 @@ class FilterReadableField(FilterField):
         return self._name
 
     def filter(self, statement: Any) -> Any:
-        # is_superuser is accepted for API symmetry with Editable; predicate matches
-        # current list/get visibility for both roles (own or global, not others').
+        if self.is_superuser:
+            return statement
         return statement.where((self.col == self.user_uuid) | (self.col == None))  # noqa: E711
 
 

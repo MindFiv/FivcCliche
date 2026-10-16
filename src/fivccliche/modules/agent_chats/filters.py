@@ -44,7 +44,7 @@ class ChatFilterSet(FilterSet):
         )
 
 
-class UnmemorizedMessageFilterSet(FilterSet):
+class ChatStatsUnmemorizedMessageFilterSet(FilterSet):
     """Exact message status for the unmemorized-message admin list."""
 
     def __init__(self) -> None:

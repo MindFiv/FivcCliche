@@ -11,7 +11,7 @@ from fivccliche.utils.filters import FilterSet
 from fivccliche.utils.types import UNSET, UnsetType
 
 from . import models, schemas
-from .filters import ChatFilterSet, UnmemorizedMessageFilterSet
+from .filters import ChatFilterSet, ChatStatsUnmemorizedMessageFilterSet
 
 
 async def create_chat_async(
@@ -262,7 +262,7 @@ def _unmemorized_chat_messages_statement(
         col(models.UserChatMessage.created_at) <= created_at_to,
     )
     if filters is None:
-        filters = UnmemorizedMessageFilterSet()
+        filters = ChatStatsUnmemorizedMessageFilterSet()
         filters.parse(status=schemas.AgentRunStatus.COMPLETED)
     return filters.filter(statement)
 

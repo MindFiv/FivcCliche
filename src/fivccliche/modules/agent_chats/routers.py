@@ -38,7 +38,11 @@ from fivccliche.utils.deps import (
 from fivccliche.utils.filters import FilterError
 from fivccliche.utils.schemas import PaginatedResponse
 from . import models, schemas, utils
-from .filters import ChatEditableFilterSet, ChatFilterSet, UnmemorizedMessageFilterSet
+from .filters import (
+    ChatEditableFilterSet,
+    ChatFilterSet,
+    ChatStatsUnmemorizedMessageFilterSet,
+)
 from .jobs import ChatDescribeJob
 from .jobs.memorize import memorize_created_at_to
 
@@ -314,7 +318,7 @@ async def list_chat_stats_unmemorized_messages_async(
 ) -> PaginatedResponse[schemas.ChatStatsUnmemorizedMessageSchema]:
     """Return aged unmemorized messages. Omit status to include every status."""
     created_at_to = memorize_created_at_to(config)
-    filters = UnmemorizedMessageFilterSet()
+    filters = ChatStatsUnmemorizedMessageFilterSet()
     filters.parse(status=message_status)
     messages = await utils.list_unmemorized_chat_messages_async(
         session,

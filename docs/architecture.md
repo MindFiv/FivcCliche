@@ -46,7 +46,7 @@ User-scoped configs are either owned (`user_uuid` = the user) or global (`user_u
 [`get_user_scoped_async` / `list_user_scoped_async` / `count_user_scoped_async`](../src/fivccliche/modules/agent_configs/utils.py):
 
 - Lookup by exactly one of `config_uuid` or `config_id`
-- Visibility via a required `filters: FilterSet` that includes [`FilterReadableField`](../src/fivccliche/utils/filters.py) (owned or global; same predicate for regular users and superusers today)
+- Visibility via a required `filters: FilterSet` that includes [`FilterReadableField`](../src/fivccliche/utils/filters.py) (owned or global for regular users; all rows for superusers)
 - List order: `id` ascending, with `skip` / `limit`
 
 Callers construct [`UserScopedReadableFilterSet`](../src/fivccliche/modules/agent_configs/filters.py) (or a module FilterSet that embeds Readable). Create/update field mapping for playground types stays in `utils.py` and does not `commit`; the HTTP handler or repository commits. Questions create/update/delete SQL is in the HTTP handlers.
@@ -75,7 +75,7 @@ Question list uses [`QuestionFilterSet`](../src/fivccliche/modules/agent_configs
 - Question list: `?is_active=` exact match when provided
 - Pagination `skip` / `limit` stay on the handler, not on the FilterSet
 - Field classes implement `filter(statement)` and optionally override `parse(value)` to store query-bound state; `FilterSet.filter` always calls every field, and each field decides whether to add a WHERE or return the statement unchanged
-- `FilterReadableField` / `FilterEditableField` take `user_uuid` and `is_superuser`: Readable is always owned-or-global; Editable is owned-only for regular users and owned-or-global for superusers. GET/LIST use Readable; PATCH/DELETE (and chat message create) look up via Editable and return 404 when the row is not editable.
+- `FilterReadableField` / `FilterEditableField` take `user_uuid` and `is_superuser`: Readable is owned-or-global for regular users and unrestricted for superusers; Editable is owned-only for regular users and owned-or-global for superusers. GET/LIST use Readable; PATCH/DELETE (and chat message create) look up via Editable and return 404 when the row is not editable.
 
 ### POST `/{chat_uuid}/messages/`
 

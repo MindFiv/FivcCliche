@@ -14,7 +14,7 @@ from fivcglue.implements.utils import load_component_site
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.modules.agent_chats import utils as methods
-from fivccliche.modules.agent_chats.filters import UnmemorizedMessageFilterSet
+from fivccliche.modules.agent_chats.filters import ChatStatsUnmemorizedMessageFilterSet
 from fivccliche.modules.agent_chats.jobs import ChatMemorizeJob
 from fivccliche.modules.agent_chats.jobs.memorize import (
     _MEMORIZE_EXTRACT_PROMPT,
@@ -299,7 +299,7 @@ class TestMemorizeMethods:
         assert completed.is_memorized is True
         assert pending.is_memorized is False
 
-        filters = UnmemorizedMessageFilterSet()
+        filters = ChatStatsUnmemorizedMessageFilterSet()
         filters.parse(status=AgentRunStatus.PENDING)
         await methods.delete_unmemorized_chat_messages_async(
             session, chat.uuid, created_at_to=created_at_to, filters=filters

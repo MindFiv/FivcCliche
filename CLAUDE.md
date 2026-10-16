@@ -70,7 +70,7 @@ HTTP CRUD is hand-written FastAPI handlers in each module's `routers.py`. Shared
 
 ### Ownership
 
-List/get returns the caller's rows plus globals (`user_uuid is None`). Create: superuser gets `user_uuid=None`, everyone else their own uuid. Update/delete look up via `FilterEditableField` (superuser may change globals; missing/uneditable rows are 404). Details: [docs/architecture.md](docs/architecture.md).
+For regular users, list/get returns the caller's rows plus globals (`user_uuid is None`); superusers can list/get all rows. Create: superuser gets `user_uuid=None`, everyone else their own uuid. Update/delete look up via `FilterEditableField` (superuser may change globals; missing/uneditable rows are 404). Details: [docs/architecture.md](docs/architecture.md).
 
 HTTP list/get returns inactive tools/skills. Playground repositories filter `is_active` themselves so agents never pick up disabled configs.
 

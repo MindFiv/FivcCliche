@@ -216,20 +216,8 @@ def test_readable_field_includes_own_and_global_for_regular_user():
     assert "IS NULL" in compiled.upper() or " = NULL" in compiled.upper() or "IS NULL" in compiled
 
 
-def test_readable_field_same_predicate_for_superuser():
-    regular = compile_statement(
-        FilterSet(
-            [
-                FilterReadableField(
-                    "readable",
-                    OwnershipTestModel.user_uuid,
-                    "user-1",
-                    is_superuser=False,
-                )
-            ]
-        ).filter(select(OwnershipTestModel))
-    )
-    admin = compile_statement(
+def test_readable_field_allows_any_row_for_superuser():
+    compiled = compile_statement(
         FilterSet(
             [
                 FilterReadableField(
@@ -242,7 +230,8 @@ def test_readable_field_same_predicate_for_superuser():
         ).filter(select(OwnershipTestModel))
     )
 
-    assert regular == admin
+    assert compiled == compile_statement(select(OwnershipTestModel))
+    assert "user-1" not in compiled
 
 
 def test_editable_field_own_only_for_regular_user():
