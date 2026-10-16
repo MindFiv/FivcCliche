@@ -104,7 +104,7 @@ async def list_embedding_configs_async(
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
     filters = UserScopedReadableFilterSet(
-        models.UserEmbedding.user_uuid, user.uuid, is_superuser=user.is_superuser
+        models.UserEmbedding.user_uuid, user.uuid, is_superuser=False
     )
     configs = await utils.list_user_scoped_async(
         session, models.UserEmbedding, filters=filters, skip=skip, limit=limit
@@ -237,9 +237,7 @@ async def list_llm_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    filters = UserScopedReadableFilterSet(
-        models.UserLLM.user_uuid, user.uuid, is_superuser=user.is_superuser
-    )
+    filters = UserScopedReadableFilterSet(models.UserLLM.user_uuid, user.uuid, is_superuser=False)
     configs = await utils.list_user_scoped_async(
         session, models.UserLLM, filters=filters, skip=skip, limit=limit
     )
@@ -365,9 +363,7 @@ async def list_asr_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    filters = UserScopedReadableFilterSet(
-        models.UserASR.user_uuid, user.uuid, is_superuser=user.is_superuser
-    )
+    filters = UserScopedReadableFilterSet(models.UserASR.user_uuid, user.uuid, is_superuser=False)
     configs = await utils.list_user_scoped_async(
         session, models.UserASR, filters=filters, skip=skip, limit=limit
     )
@@ -773,9 +769,7 @@ async def list_tts_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    filters = UserScopedReadableFilterSet(
-        models.UserTTS.user_uuid, user.uuid, is_superuser=user.is_superuser
-    )
+    filters = UserScopedReadableFilterSet(models.UserTTS.user_uuid, user.uuid, is_superuser=False)
     configs = await utils.list_user_scoped_async(
         session, models.UserTTS, filters=filters, skip=skip, limit=limit
     )
@@ -1069,9 +1063,7 @@ async def list_agent_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    filters = UserScopedReadableFilterSet(
-        models.UserAgent.user_uuid, user.uuid, is_superuser=user.is_superuser
-    )
+    filters = UserScopedReadableFilterSet(models.UserAgent.user_uuid, user.uuid, is_superuser=False)
     configs = await utils.list_user_scoped_async(
         session, models.UserAgent, filters=filters, skip=skip, limit=limit
     )
@@ -1252,9 +1244,7 @@ async def list_tool_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    filters = UserScopedReadableFilterSet(
-        models.UserTool.user_uuid, user.uuid, is_superuser=user.is_superuser
-    )
+    filters = UserScopedReadableFilterSet(models.UserTool.user_uuid, user.uuid, is_superuser=False)
     configs = await utils.list_user_scoped_async(
         session, models.UserTool, filters=filters, skip=skip, limit=limit
     )
@@ -1380,9 +1370,7 @@ async def list_skill_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    filters = UserScopedReadableFilterSet(
-        models.UserSkill.user_uuid, user.uuid, is_superuser=user.is_superuser
-    )
+    filters = UserScopedReadableFilterSet(models.UserSkill.user_uuid, user.uuid, is_superuser=False)
     configs = await utils.list_user_scoped_async(
         session, models.UserSkill, filters=filters, skip=skip, limit=limit
     )
@@ -1513,7 +1501,7 @@ async def list_question_configs_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
-    filters = QuestionFilterSet(user.uuid, is_superuser=user.is_superuser)
+    filters = QuestionFilterSet(user.uuid, is_superuser=False)
     filters.parse(is_active=is_active)
     configs = await utils.list_user_scoped_async(
         session,

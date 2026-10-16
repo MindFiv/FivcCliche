@@ -3061,6 +3061,25 @@ CONFIG_OWNERSHIP_CASES = [
         {},
         id="tool",
     ),
+    pytest.param(
+        "/configs/skills/",
+        {
+            "id": "owned-config",
+            "description": "Test skill",
+            "instructions": "Test instructions",
+        },
+        {},
+        id="skill",
+    ),
+    pytest.param(
+        "/configs/questions/",
+        {
+            "id": "owned-config",
+            "question": "Owned question?",
+        },
+        {},
+        id="question",
+    ),
 ]
 
 
@@ -3097,6 +3116,22 @@ class TestConfigsAuthorization:
             headers={"Authorization": f"Bearer {other_user_token}"},
         )
         assert response.status_code == 404
+
+    def test_superuser_can_retrieve_but_not_list_other_user_config(
+        self, client: TestClient, auth_token: str, admin_token: str, path, payload, setup
+    ):
+        config_uuid = self._create_owned(client, auth_token, path, payload, setup)
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        assert client.post(path, headers=admin_headers, json=payload).status_code == 201
+        retrieved = client.get(f"{path}{config_uuid}", headers=admin_headers)
+        assert retrieved.status_code == 200
+        assert retrieved.json()["uuid"] == config_uuid
+
+        listed = client.get(path, headers=admin_headers)
+        assert listed.status_code == 200
+        assert listed.json()["total"] == 1
+        assert listed.json()["results"][0]["uuid"] != config_uuid
 
 
 class TestGlobalConfigAuthorization:

@@ -245,7 +245,7 @@ async def list_chats_async(
 ) -> PaginatedResponse[schemas.UserChatSchema]:
     """List all chat sessions for the authenticated user."""
     try:
-        filters = ChatFilterSet(user.uuid, is_superuser=user.is_superuser)
+        filters = ChatFilterSet(user.uuid, is_superuser=False)
         filters.parse(
             agent_id=agent_id,
             description_contains=description_contains,

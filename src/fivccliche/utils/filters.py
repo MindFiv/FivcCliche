@@ -95,7 +95,7 @@ class FilterJsonField(FilterField):
 
 
 class FilterReadableField(FilterField):
-    """Rows the user may read: owned or global; superusers read all rows."""
+    """Rows the user may read: owned or global; superuser retrieve may see all rows."""
 
     def __init__(
         self,

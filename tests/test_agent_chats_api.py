@@ -1399,6 +1399,46 @@ class TestChatDeleteAuthorization:
         assert response.status_code == 404
 
 
+class TestChatReadableAuthorization:
+    """Verify Readable scope differs between chat retrieve and list."""
+
+    def test_superuser_can_retrieve_but_not_list_other_user_chat(self, client, auth_token):
+        from fivccliche.modules.agent_chats import utils as chat_methods
+        from fivccliche.modules.users.utils import get_user_async
+
+        session = client.async_session
+        loop = client.loop
+
+        async def setup():
+            owner = await get_user_async(session, username="admin")
+            foreign_owner = await get_user_async(session, username="testuser")
+            await session.commit()
+            owned = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=str(owner.uuid),
+                agent_id="owned-agent",
+            )
+            foreign = await chat_methods.create_chat_async(
+                session=session,
+                user_uuid=str(foreign_owner.uuid),
+                agent_id="foreign-agent",
+            )
+            await session.commit()
+            return str(owned.uuid), str(foreign.uuid)
+
+        owned_uuid, foreign_uuid = loop.run_until_complete(setup())
+        admin_headers = {"Authorization": f"Bearer {auth_token}"}
+
+        retrieved = client.get(f"/chats/{foreign_uuid}", headers=admin_headers)
+        assert retrieved.status_code == 200
+        assert retrieved.json()["uuid"] == foreign_uuid
+
+        listed = client.get("/chats/", headers=admin_headers)
+        assert listed.status_code == 200
+        assert listed.json()["total"] == 1
+        assert listed.json()["results"][0]["uuid"] == owned_uuid
+
+
 class TestMessageDeleteAuthorization:
     """Test authorization for message deletion across users."""
 
