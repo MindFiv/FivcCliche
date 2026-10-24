@@ -1,23 +1,17 @@
-"""Chat stream parsing, WebSocket channels, and voice orchestration."""
+"""Chat stream parsing, WebSocket channels, and speech orchestration."""
 
 from .channels import ChatChannel, ChatChannelClosedError, ChatChannelError
 from .parsers import (
-    ChatRecognizeParser,
     ChatRunParser,
     ChatRunParserType,
 )
-from .processors import (
-    ChatSnapshot,
-    ChatVoiceProcessor,
-)
+from .speeches import process_chat_speech_async
 
 __all__ = [
     "ChatChannel",
     "ChatChannelClosedError",
     "ChatChannelError",
-    "ChatRecognizeParser",
     "ChatRunParser",
     "ChatRunParserType",
-    "ChatSnapshot",
-    "ChatVoiceProcessor",
+    "process_chat_speech_async",
 ]

@@ -90,7 +90,17 @@ The handler looks up the chat via Editable (404 if missing), acquires mutex `cha
 
 ### WebSocket `/{chat_uuid}/`
 
-Full-duplex voice sessions are implemented by `ChatVoiceProcessor` in [`chats/processors.py`](../src/fivccliche/utils/chats/processors.py). The router opens [`ChatChannel`](../src/fivccliche/utils/chats/channels.py), which owns first-frame JWT authentication, typed request frames, error envelopes, and WebSocket send primitives. It resolves chat and realtime ASR/TTS values inside a short database session, then opens the recognizer and synthesizer and passes those live objects into the processor with the run provider. `ready` reads `id`, format, and sample rate from `recognizer.id` / `get_option()` and `synthesizer.id` / `get_option()`. Startup failures call `channel.fail_async`, which raises `ChatChannelError`. `ChatRunParser(output_type="voice")` yields only cleaned sentence text. The responding phase passes that stream straight into TTS: the first audio byte is preceded by `audio_start`, and `audio_end` follows the last byte. `turn_completed` is sent after synthesis. `ListeningPhase` and `RespondingPhase` enter and leave through `async with`. `ChatVoiceProcessorPhaseChange` switches phases and `ChatVoiceProcessorPhaseEnd` ends the session. An utterance ends on client `speech_end` or after recognized text is followed by idle partials. `speech_start` during responding cancels that turn and raises `ChatVoiceProcessorPhaseChange` back to listening after `interrupted`.
+Full-duplex voice sessions run on **Pipecat** (`fivcplayground.backends.pipecat`) via [`process_chat_speech_async`](../src/fivccliche/utils/chats/speeches.py). Text SSE still uses Strands `stream_async`; voice does **not**.
+
+Protocol (breaking vs the former JSON media loop):
+
+1. [`ChatChannel`](../src/fivccliche/utils/chats/channels.py) accepts the socket and requires a first-frame JWT `auth`, then a JSON `start` (`asr_id` / `tts_id` / `language` / `voice`; defaults from `chat.context` then `"realtime"`).
+2. The router loads chat + `dashscope_realtime` ASR/TTS inside short DB sessions, opens `ISpeechRecognizer` / `ISpeechSynthesizer`, and fails with `channel.fail_async` on missing configs or wrong `model_type`.
+3. The session sends a JSON `ready` (`asr_id`, `tts_id`, `input` / `output` format and sample rate), acquires `chats:message:{uuid}` (same mutex as SSE), then hands the WebSocket to `FastAPIWebsocketTransport` with `ProtobufFrameSerializer`.
+4. Media after `ready` is **Protobuf** (Pipecat frames). Clients must not send the old `vad` / `stop` JSON control frames for audio turn-taking; Silero VAD lives inside [`SpeechSTTService`](../src/fivccliche/utils/chats/speeches.py).
+5. ASR/TTS adapters wrap the opened `ISpeech*` objects. The agent LLM must use provider `openai` or `ollama` (Pipecat model backend). Optional `AgentConfig.extra` keys `pipeline_params` / `idle_timeout_secs` are honored by playground.
+
+Startup failures raise `ChatChannelError`. Disconnect or idle timeout ends `run_async`.
 
 `UserChat.updated_at` is set equal to `created_at` on create. It is refreshed when a new message is created (`create_chat_message_async`) and when a description is written (`PATCH /{chat_uuid}/`, `ChatDescribeJob`, and repository session description updates). Updating an existing message does not refresh it. List order stays `created_at` descending.
 

@@ -24,7 +24,8 @@ from sqlmodel import col, select
 from fivccliche.services.implements import service_site
 from fivccliche.utils import deps
 from fivcglue.interfaces import configs
-from fivccliche.utils.chats import ChatChannel, ChatRunParser, ChatSnapshot
+from fivcplayground.agents import AgentRunSession
+from fivccliche.utils.chats import ChatChannel, ChatRunParser
 from fivccliche.utils.deps import (
     IUser,
     get_admin_user_async,
@@ -57,7 +58,7 @@ async def _load_chat_snapshot(
     session: AsyncSession,
     user: IUser,
     chat_uuid: str,
-) -> ChatSnapshot | None:
+) -> AgentRunSession | None:
     chat = await utils.get_chat_async(
         session,
         chat_uuid,
@@ -65,11 +66,12 @@ async def _load_chat_snapshot(
     )
     if chat is None:
         return None
-    return ChatSnapshot(
-        uuid=chat.uuid,
+    return AgentRunSession(
+        id=chat.uuid,
         agent_id=chat.agent_id,
         context=chat.context or {},
         description=chat.description,
+        started_at=chat.created_at,
     )
 
 
@@ -77,7 +79,7 @@ async def _load_realtime_voice_setup(
     session: AsyncSession,
     channel: ChatChannel,
     user: IUser,
-    chat: ChatSnapshot,
+    chat: AgentRunSession,
     start_frame: dict[str, Any],
 ) -> tuple[Any, Any]:
     from fivccliche.modules.agent_configs.filters import UserScopedReadableFilterSet
@@ -87,7 +89,7 @@ async def _load_realtime_voice_setup(
         SpeechRecognizeOptions,
         SpeechSynthesisOptions,
     )
-    from fivccliche.utils.chats.processors import _INPUT_SAMPLE_RATE, _OUTPUT_SAMPLE_RATE
+    from fivccliche.utils.chats.speeches import INPUT_SAMPLE_RATE, OUTPUT_SAMPLE_RATE
     from fivccliche.utils.deps import get_speech_provider_async
 
     context = chat.context or {}
@@ -166,7 +168,7 @@ async def _load_realtime_voice_setup(
         SpeechRecognizeOptions(
             language=language if isinstance(language, str) and language else None,
             format="pcm",
-            sample_rate=_INPUT_SAMPLE_RATE,
+            sample_rate=INPUT_SAMPLE_RATE,
         ),
         api_key=asr_api_key,
         model=asr_model,
@@ -177,7 +179,7 @@ async def _load_realtime_voice_setup(
         SpeechSynthesisOptions(
             voice=voice_name if isinstance(voice_name, str) and voice_name else "",
             format="pcm",
-            sample_rate=_OUTPUT_SAMPLE_RATE,
+            sample_rate=OUTPUT_SAMPLE_RATE,
         ),
         api_key=tts_api_key,
         model=tts_model,
@@ -434,8 +436,8 @@ async def create_chat_voice_ws_async(
     auth: IUserAuthenticator = Depends(get_authenticator_async),
     mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
 ) -> None:
-    """Run a full-duplex realtime voice session for one chat."""
-    from fivccliche.utils.chats.processors import ChatVoiceProcessor
+    """Run a full-duplex realtime voice session for one chat via Pipecat."""
+    from fivccliche.utils.chats.speeches import process_chat_speech_async
 
     async with ChatChannel(websocket, auth) as channel:
         user = await channel.authenticate_async()
@@ -461,19 +463,17 @@ async def create_chat_voice_ws_async(
                 session, channel, user, chat, start_frame
             )
 
-        run_provider = await get_chat_run_provider_async()
         mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
         async with recognizer, synthesizer:
-            await ChatVoiceProcessor(
-                channel,
+            await process_chat_speech_async(
+                channel=channel,
                 user=user,
                 chat=chat,
                 recognizer=recognizer,
                 synthesizer=synthesizer,
-                run_provider=run_provider,
                 mutex=mutex,
                 timeout=CHAT_MESSAGE_RUN_TIMEOUT,
-            ).process_async()
+            )
 
 
 # ============================================================================

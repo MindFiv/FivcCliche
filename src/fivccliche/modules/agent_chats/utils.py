@@ -177,10 +177,10 @@ async def update_chat_message_async(
     session: AsyncSession,
     message: models.UserChatMessage,
     status: schemas.AgentRunStatus | None = None,
-    reply: dict | None | UnsetType = UNSET,
-    query: dict | None | UnsetType = UNSET,
-    tool_calls: dict | None | UnsetType = UNSET,
-    completed_at: datetime | None | UnsetType = UNSET,
+    reply: dict | UnsetType | None = UNSET,
+    query: dict | UnsetType | None = UNSET,
+    tool_calls: dict | UnsetType | None = UNSET,
+    completed_at: datetime | UnsetType | None = UNSET,
     is_memorized: bool | UnsetType = UNSET,
 ) -> models.UserChatMessage:
     """Update a chat message."""

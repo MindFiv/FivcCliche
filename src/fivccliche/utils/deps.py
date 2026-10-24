@@ -139,7 +139,7 @@ async def get_mutex_context_async(
     *,
     expire: timedelta,
     timeout: timedelta | None = None,
-    mutex_site: mutexes.IMutexSite | None | UnsetType = UNSET,
+    mutex_site: mutexes.IMutexSite | UnsetType | None = UNSET,
 ) -> AsyncGenerator[mutexes.IMutex | None, None]:
     """Acquire a named mutex for the duration of the block.
 

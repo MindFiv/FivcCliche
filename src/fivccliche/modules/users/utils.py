@@ -66,11 +66,11 @@ async def update_user_async(
     user: models.User,
     username: str | None = None,
     email: str | None = None,
-    full_name: str | None | UnsetType = UNSET,
+    full_name: str | UnsetType | None = UNSET,
     password: str | None = None,
     is_active: bool | None = None,
     is_superuser: bool | None = None,
-    preferences: dict | None | UnsetType = UNSET,
+    preferences: dict | UnsetType | None = UNSET,
 ) -> models.User:
     """Update a user."""
     if username is not None:

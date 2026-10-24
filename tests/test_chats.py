@@ -7,16 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from fivcplayground.agents import AgentRunEvent
-from fivccliche.services.interfaces.agent_speeches import SpeechEvent, SpeechRequestError
 
 from datetime import timedelta
 
 from fivccliche.modules.agent_chats import UserChatRunProviderImpl
-from fivccliche.utils.chats import (
-    ChatRecognizeParser,
-    ChatRunParser,
-)
-from fivccliche.utils.chats.parsers import _chat_voice_clean
+from fivccliche.utils.chats import ChatRunParser
 
 _QUERY = "fivccliche.modules.agent_chats.services"
 
@@ -174,69 +169,16 @@ class TestChatRunParser:
             assert all(chunk.endswith("\n\n") for chunk in results)
             assert [json.loads(chunk.removeprefix("data: ")) for chunk in results] == raw_results
 
-    async def test_voice_output_keeps_events_and_buffers_speech(self):
-        delta = Mock()
-        delta.text = "看[这里](https://a.dev) **重要**"
-        delta.model_dump.return_value = {"text": delta.text}
-        parser = self._make_chat_stream(output_type="voice")
-        source = self._source([(AgentRunEvent.STREAM, self._make_run(delta=delta))])
-
-        results = await self._collect(parser, source)
-
-        assert results == ["看这里 重要"]
-
-    async def test_voice_output_splits_speech_on_sentence_boundaries(self):
-        first = Mock()
-        first.text = "第一句。第二"
-        first.model_dump.return_value = {"text": first.text}
-        second = Mock()
-        second.text = "句。尾巴"
-        second.model_dump.return_value = {"text": second.text}
-        parser = self._make_chat_stream(output_type="voice")
-        source = self._source(
-            [
-                (AgentRunEvent.STREAM, self._make_run(delta=first)),
-                (AgentRunEvent.STREAM, self._make_run(delta=second)),
-            ]
-        )
-
-        results = await self._collect(parser, source)
-
-        assert results == ["第一句。", "第二句。", "尾巴"]
-
-    async def test_voice_output_sends_finish_after_speech(self):
-        delta = Mock()
-        delta.text = "第一句。尾巴"
-        delta.model_dump.return_value = {"text": delta.text}
-        parser = self._make_chat_stream(output_type="voice")
-        source = self._source(
-            [
-                (AgentRunEvent.START, self._make_run()),
-                (AgentRunEvent.STREAM, self._make_run(delta=delta)),
-                (AgentRunEvent.TOOL, self._make_run()),
-                (AgentRunEvent.FINISH, self._make_run(reply="done")),
-            ]
-        )
-
-        results = await self._collect(parser, source)
-
-        assert results == ["第一句。", "尾巴"]
-        assert parser.current_run_id == "run-1"
-
     async def test_invalid_output_type_is_rejected(self):
         with pytest.raises(ValueError, match="output_type"):
             self._make_chat_stream(output_type="queue")
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("output_type", ["raw", "sse", "voice"])
+    @pytest.mark.parametrize("output_type", ["raw", "sse"])
     async def test_error_handling(self, output_type):
         """Test error event is generated on exception."""
         chat_stream = self._make_chat_stream(output_type=output_type)
         source = self._source([], error=ValueError("Test error"))
-        if output_type == "voice":
-            with pytest.raises(ValueError, match="Test error"):
-                await self._collect(chat_stream, source)
-            return
 
         results = await self._collect(chat_stream, source)
 
@@ -250,118 +192,6 @@ class TestChatRunParser:
             data = json.loads(results[0].removeprefix("data: "))
             assert data["event"] == "error"
             assert data["info"]["message"] == "Test error"
-
-
-class TestChatRecognizeParser:
-    """Test recognition stream parsing used by voice orchestration."""
-
-    @staticmethod
-    async def _collect(handler, source):
-        return [payload async for payload in handler.parse_async(source)]
-
-    @staticmethod
-    def _events(*items: tuple[str, str]) -> list[SpeechEvent]:
-        return [SpeechEvent(type=event_type, text=text) for event_type, text in items]
-
-    @pytest.mark.asyncio
-    async def test_recognition_flushes_after_five_empty_partials(self):
-        source = iter(
-            self._events(
-                ("final", "one"),
-                ("partial", ""),
-                ("partial", ""),
-                ("partial", ""),
-                ("partial", ""),
-                ("partial", ""),
-                ("final", "two"),
-            )
-        )
-
-        async def events():
-            for event in source:
-                yield event
-
-        results = await self._collect(ChatRecognizeParser(), events())
-
-        assert results == ["one", "two"]
-
-    @pytest.mark.asyncio
-    async def test_non_empty_partial_resets_empty_streak(self):
-        source = iter(
-            self._events(
-                ("final", "one"),
-                ("partial", ""),
-                ("partial", ""),
-                ("partial", "spoken"),
-                ("partial", ""),
-                ("partial", ""),
-            )
-        )
-
-        async def events():
-            for event in source:
-                yield event
-
-        results = await self._collect(ChatRecognizeParser(), events())
-
-        assert results == ["one"]
-
-    @pytest.mark.asyncio
-    async def test_recognition_joins_finals_with_newlines(self):
-        source = iter(self._events(("final", "one"), ("final", "two")))
-
-        async def events():
-            for event in source:
-                yield event
-
-        results = await self._collect(ChatRecognizeParser(), events())
-
-        assert results == ["one\ntwo"]
-
-    @pytest.mark.asyncio
-    async def test_recognition_stops_after_first_limited_sentence(self):
-        parsed: list[str] = []
-
-        async def events():
-            for event_type, text in (("final", "one"), ("final", "unused")):
-                parsed.append(event_type)
-                yield SpeechEvent(type=event_type, text=text)
-
-        results = await self._collect(ChatRecognizeParser(max_sentences=1), events())
-
-        assert results == ["one"]
-        assert parsed == ["final"]
-
-    @pytest.mark.asyncio
-    async def test_recognition_without_events_yields_nothing(self):
-        source = iter(self._events(("partial", ""), ("partial", "")))
-
-        async def events():
-            for event in source:
-                yield event
-
-        results = await self._collect(ChatRecognizeParser(), events())
-
-        assert results == []
-
-    @pytest.mark.asyncio
-    async def test_recognition_error_propagates_without_flush(self):
-        async def events():
-            yield SpeechEvent(type="final", text="pending")
-            yield SpeechEvent(type="partial", text="")
-            raise SpeechRequestError("vendor failed")
-
-        with pytest.raises(SpeechRequestError, match="vendor failed"):
-            await self._collect(ChatRecognizeParser(), events())
-
-    def test_recognition_rejects_non_positive_sentence_limit(self):
-        with pytest.raises(ValueError, match="max_sentences"):
-            ChatRecognizeParser(max_sentences=0)
-
-    def test_voice_text_cleaning_removes_non_speech_markup(self):
-        assert _chat_voice_clean("看[这里](https://example.com) **重要** #news") == (
-            "看这里 重要 news"
-        )
 
 
 class TestUserChatRun:

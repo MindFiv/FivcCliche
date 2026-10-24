@@ -25,7 +25,6 @@ from fivcplayground.tools.types import (
 from fivcplayground.agents.types import AgentConfig
 from fivcplayground.skills.types import SkillConfig
 
-
 # ============================================================================
 # Read/Response Schemas (with uuid field)
 # ============================================================================

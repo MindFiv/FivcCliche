@@ -25,7 +25,6 @@ from fivccliche.services.interfaces.agent_chats import (
 )
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.services.interfaces.modules import IModule, IModuleJob
-from fivccliche.utils.chats.warmup import SessionWarmup
 from fivccliche.utils.deps import get_db_session_context_async
 
 from . import routers, utils
@@ -334,10 +333,7 @@ class UserChatRunImpl(IUserChatRun):
             self._dependencies = dependencies
         try:
             async with asyncio.timeout(timeout.total_seconds() if timeout else None):
-                prepared = await SessionWarmup.take(self._agent_id)
-                if prepared is None:
-                    prepared = await build_chat_collaborators(self)
-                agent, agent_tools, agent_skills = prepared
+                agent, agent_tools, agent_skills = await build_chat_collaborators(self)
 
                 async for event in agent.stream_async(
                     query=query,

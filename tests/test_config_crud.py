@@ -8,7 +8,6 @@ from fivccliche.modules.agent_configs import models, utils as methods
 from fivccliche.modules.agent_configs.filters import UserScopedReadableFilterSet
 from fivccliche.modules.users.models import User
 
-
 CONFIG_MODELS = [
     pytest.param(
         models.UserEmbedding,

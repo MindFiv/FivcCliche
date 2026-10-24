@@ -1,87 +1,34 @@
-"""Tests for full-duplex chat voice orchestration."""
+"""Tests for chat voice setup and Pipecat session orchestration."""
 
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import asyncio
-import json
 import pytest
-from fivcplayground.agents import AgentRunEvent
-from fivccliche.services.interfaces.agent_speeches import SpeechRequestError
+from fivcplayground.agents import AgentRunSession
 
-from fivccliche.utils.chats import ChatChannel
-from fivccliche.utils.chats.parsers import _chat_voice_clean
-from fivccliche.utils.chats.processors import (
-    _INPUT_SAMPLE_RATE,
-    _OUTPUT_SAMPLE_RATE,
-    ChatSnapshot,
-    ChatVoiceProcessor,
+from fivccliche.utils.chats.speeches import (
+    INPUT_SAMPLE_RATE,
+    OUTPUT_SAMPLE_RATE,
+    process_chat_speech_async,
 )
-
-
-class _SpeechOption:
-    def __init__(self, sample_rate: int) -> None:
-        self.format = "pcm"
-        self.sample_rate = sample_rate
-
-
-class _Recognized:
-    id = "asr"
-
-    def get_option(self) -> _SpeechOption:
-        return _SpeechOption(16_000)
-
-
-class _Spoken:
-    id = "tts"
-
-    def get_option(self) -> _SpeechOption:
-        return _SpeechOption(24_000)
 
 
 def _voice_authenticator():
     auth = MagicMock()
-    auth.verify_credential_async = AsyncMock(return_value=MagicMock())
+    auth.verify_credential_async = AsyncMock(return_value=MagicMock(uuid="user-1"))
     return auth
 
 
-async def _run_voice_process(websocket, *, chat_run, asr, tts, provider, mutex_site=None):
-    asr.model_type = "dashscope_realtime"
-    tts.model_type = "dashscope_realtime"
-    frames = [
-        {"type": "auth", "access_token": "valid-token"},
-        {"type": "start"},
-    ]
-    websocket.messages[0:0] = [
-        {"type": "websocket.receive", "text": json.dumps(frame)} for frame in frames
-    ]
-    async with ChatChannel(websocket, _voice_authenticator()) as channel:
-        user = await channel.authenticate_async()
-        start_frame = await channel.receive_json_async()
-        assert start_frame is not None
-        recognizer = await provider.get_recognizer()
-        synthesizer = await provider.get_synthesizer()
-        run_provider = MagicMock()
-        run_provider.create_chat_run.return_value = chat_run
-        mutex = mutex_site.get_mutex("chats:message:chat-1") if mutex_site else None
-        async with recognizer, synthesizer:
-            processor = ChatVoiceProcessor(
-                channel,
-                user=user,
-                chat=ChatSnapshot("chat-1", "agent-1", {}, None),
-                recognizer=recognizer,
-                synthesizer=synthesizer,
-                run_provider=run_provider,
-                mutex=mutex,
-                timeout=timedelta(minutes=5),
-            )
-            await processor.process_async()
-    if mutex_site is not None:
-        mutex_site.get_mutex.assert_called_once_with("chats:message:chat-1")
+def _chat_session(
+    session_id: str = "chat-1",
+    agent_id: str = "agent-1",
+) -> AgentRunSession:
+    return AgentRunSession(id=session_id, agent_id=agent_id, context={}, description=None)
 
 
-def test_chat_voice_clean_strips_markdown_for_tts():
-    assert _chat_voice_clean("看[这里](https://example.com)重要") == "看这里重要"
+def test_voice_sample_rates():
+    assert INPUT_SAMPLE_RATE == 16000
+    assert OUTPUT_SAMPLE_RATE == 24000
 
 
 @pytest.mark.asyncio
@@ -112,7 +59,7 @@ async def test_router_resolves_realtime_voice_values():
             session,
             MagicMock(),
             user,
-            ChatSnapshot("chat-1", "agent-1", {}, None),
+            _chat_session(),
             {"asr_id": "chat-asr", "tts_id": "chat-tts"},
         )
 
@@ -148,7 +95,7 @@ async def test_router_defaults_to_realtime_config_ids():
             session,
             MagicMock(),
             user,
-            ChatSnapshot("chat-1", "agent-1", {}, None),
+            _chat_session(),
             {},
         )
 
@@ -158,316 +105,95 @@ async def test_router_defaults_to_realtime_config_ids():
     ]
 
 
-class FakeVoiceWebSocket:
-    def __init__(self, messages):
-        self.messages = list(messages)
-        self.sent = []
-        self.closed = None
-        self.turn_completed = asyncio.Event()
-        self.client_state = MagicMock()
-        self.client_state.name = "CONNECTED"
-
-    async def accept(self):
-        return None
-
-    async def receive(self):
-        if not self.messages:
-            await self.turn_completed.wait()
-            return {"type": "websocket.disconnect"}
-        await asyncio.sleep(0)
-        return self.messages.pop(0)
-
-    async def send_json(self, value):
-        self.sent.append(value)
-        if value.get("event") == "turn_completed":
-            self.turn_completed.set()
-
-    async def send_bytes(self, value):
-        self.sent.append(value)
-
-    async def close(self, code=1000, reason=None):
-        self.closed = code
-
-
 @pytest.mark.asyncio
-async def test_voice_session_recognizes_streams_and_synthesizes():
-    websocket = FakeVoiceWebSocket(
-        [
-            {"type": "websocket.receive", "bytes": b"pcm"},
-            {"type": "websocket.receive", "text": '{"type":"vad","event":"speech_end"}'},
-        ]
-    )
+async def test_process_chat_voice_sends_ready_and_runs_agent():
+    channel = MagicMock()
+    channel.socket = MagicMock(name="channel.socket")
+    channel.send_json_async = AsyncMock()
+    channel.shutdown = MagicMock()
+    channel.fail_async = AsyncMock(side_effect=AssertionError("fail_async should not be called"))
 
-    class FakeRecognizer(_Recognized):
-        async def __aenter__(self):
-            return self
+    recognizer = MagicMock(id="asr")
+    recognizer.get_option.return_value = MagicMock(format="pcm", sample_rate=16000)
+    synthesizer = MagicMock(id="tts")
+    synthesizer.get_option.return_value = MagicMock(format="pcm", sample_rate=24000)
 
-        async def __aexit__(self, *args):
-            return False
+    agent = MagicMock()
+    agent.run_async = AsyncMock(return_value=MagicMock())
+    agent_config = MagicMock(model_id="llm-1")
+    model_config = MagicMock(provider="openai")
 
-        async def stream_async(self, audio):
-            async for _ in audio:
-                pass
-            yield MagicMock(type="final", text="你好")
+    config_provider = MagicMock()
+    model_repo = MagicMock()
+    model_repo.get_model_config_async = AsyncMock(return_value=model_config)
+    agent_repo = MagicMock()
+    agent_repo.get_agent_config_async = AsyncMock(return_value=agent_config)
+    config_provider.get_model_repository.return_value = model_repo
+    config_provider.get_agent_repository.return_value = agent_repo
+    config_provider.get_embedding_repository.return_value = MagicMock()
+    config_provider.get_embedding_backend.return_value = MagicMock()
+    config_provider.get_tool_repository.return_value = MagicMock()
+    config_provider.get_skill_repository.return_value = MagicMock()
 
-    class FakeSynthesizer(_Spoken):
-        async def __aenter__(self):
-            return self
+    chat_provider = MagicMock()
+    chat_provider.get_chat_context.return_value = {"user_uuid": "user-1"}
+    chat_provider.get_chat_repository.return_value = MagicMock()
 
-        async def __aexit__(self, *args):
-            return False
+    mutex = MagicMock()
+    mutex.acquire_async = AsyncMock(return_value=True)
+    mutex.release_async = AsyncMock()
 
-        async def stream_async(self, text):
-            async for chunk in text:
-                assert chunk
-            yield b"tts-pcm"
-
-    asr = MagicMock(model="asr-model")
-    tts = MagicMock(model="tts-model")
-
-    start_run = MagicMock(id="run-1", delta=None)
-    start_run.model_dump.return_value = {"id": "run-1"}
-    stream_run = MagicMock(id="run-1", delta=MagicMock(text="你好"))
-    stream_run.model_dump.return_value = {"id": "run-1", "delta": {"text": "你好"}}
-    finish_run = MagicMock(id="run-1", delta=None, reply=MagicMock(text="你好"))
-    finish_run.model_dump.return_value = {"id": "run-1", "reply": {"text": "你好"}}
-
-    class FakeJob:
-        async def stream_async(self, *_args, **kwargs):
-            yield AgentRunEvent.START, start_run
-            yield AgentRunEvent.STREAM, stream_run
-            yield AgentRunEvent.FINISH, finish_run
-
-    await _run_voice_process(
-        websocket,
-        chat_run=FakeJob(),
-        asr=asr,
-        tts=tts,
-        provider=MagicMock(
-            get_recognizer=AsyncMock(return_value=FakeRecognizer()),
-            get_synthesizer=AsyncMock(return_value=FakeSynthesizer()),
+    with (
+        patch(
+            "fivccliche.utils.chats.speeches.create_agent_async",
+            new=AsyncMock(return_value=agent),
         ),
-    )
-
-    events = [item["event"] for item in websocket.sent if isinstance(item, dict)]
-    assert events[:2] == ["ready", "state"]
-    assert "transcript" in events
-    assert "audio_start" in events
-    assert "audio_end" in events
-    assert "turn_completed" in events
-    assert b"tts-pcm" in websocket.sent
-    assert websocket.closed == 1000
-    assert _INPUT_SAMPLE_RATE == 16000
-    assert _OUTPUT_SAMPLE_RATE == 24000
-
-
-def test_voice_processor_is_public_entrypoint():
-    processor = ChatVoiceProcessor(
-        MagicMock(),
-        user=MagicMock(),
-        chat=ChatSnapshot("chat-1", "agent-1", {}, None),
-        recognizer=MagicMock(),
-        synthesizer=MagicMock(),
-        run_provider=MagicMock(),
-        mutex=None,
-        timeout=timedelta(minutes=5),
-    )
-
-    assert isinstance(processor, ChatVoiceProcessor)
-
-
-@pytest.mark.asyncio
-async def test_voice_session_reports_tts_vendor_detail():
-    websocket = FakeVoiceWebSocket(
-        [
-            {"type": "websocket.receive", "text": '{"type":"vad","event":"speech_end"}'},
-        ]
-    )
-
-    class FakeRecognizer(_Recognized):
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        async def stream_async(self, audio):
-            async for _ in audio:
-                pass
-            yield MagicMock(type="final", text="你好")
-
-    class FailingSynthesizer(_Spoken):
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        async def stream_async(self, text):
-            raise SpeechRequestError("InvalidParameter: Request voice is invalid!")
-            yield b""
-
-    finish_run = MagicMock(id="run-1", delta=None, reply=MagicMock(text="你好"))
-    finish_run.model_dump.return_value = {"id": "run-1", "reply": {"text": "你好"}}
-    stream_run = MagicMock(id="run-1", delta=MagicMock(text="你好"))
-    stream_run.model_dump.return_value = {"id": "run-1", "delta": {"text": "你好"}}
-
-    class FakeJob:
-        async def stream_async(self, *_args, **kwargs):
-            yield AgentRunEvent.STREAM, stream_run
-            yield AgentRunEvent.FINISH, finish_run
-
-    await _run_voice_process(
-        websocket,
-        chat_run=FakeJob(),
-        asr=MagicMock(),
-        tts=MagicMock(),
-        provider=MagicMock(
-            get_recognizer=AsyncMock(return_value=FakeRecognizer()),
-            get_synthesizer=AsyncMock(return_value=FailingSynthesizer()),
+        patch(
+            "fivccliche.utils.chats.speeches.create_tool_retriever_async",
+            new=AsyncMock(return_value=MagicMock()),
         ),
-    )
-
-    errors = [
-        item["info"]
-        for item in websocket.sent
-        if isinstance(item, dict) and item.get("event") == "error"
-    ]
-    assert {
-        "code": "tts_failed",
-        "message": "Speech synthesis failed",
-        "detail": "InvalidParameter: Request voice is invalid!",
-    } in errors
-
-
-@pytest.mark.asyncio
-async def test_voice_session_streams_tts_while_agent_is_running():
-    websocket = FakeVoiceWebSocket(
-        [
-            {"type": "websocket.receive", "text": '{"type":"vad","event":"speech_end"}'},
-        ]
-    )
-    first_text_seen = asyncio.Event()
-    tts_chunks: list[str] = []
-
-    class FakeRecognizer(_Recognized):
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        async def stream_async(self, audio):
-            async for _ in audio:
-                pass
-            yield MagicMock(type="final", text="你好")
-
-    class StreamingSynthesizer(_Spoken):
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        async def stream_async(self, text):
-            async for chunk in text:
-                tts_chunks.append(chunk)
-                if len(tts_chunks) == 1:
-                    first_text_seen.set()
-                    yield b"tts-pcm"
-                else:
-                    yield b"unexpected"
-
-    stream_run = MagicMock(id="run-1", delta=MagicMock(text="你好。"))
-    stream_run.model_dump.return_value = {"id": "run-1", "delta": {"text": "你好。"}}
-    finish_run = MagicMock(id="run-1", delta=None, reply=MagicMock(text="你好"))
-    finish_run.model_dump.return_value = {"id": "run-1", "reply": {"text": "你好"}}
-
-    class FakeJob:
-        async def stream_async(self, *_args, **kwargs):
-            yield AgentRunEvent.START, MagicMock(id="run-1", delta=None)
-            yield AgentRunEvent.STREAM, stream_run
-            await first_text_seen.wait()
-            yield AgentRunEvent.FINISH, finish_run
-
-    await _run_voice_process(
-        websocket,
-        chat_run=FakeJob(),
-        asr=MagicMock(),
-        tts=MagicMock(),
-        provider=MagicMock(
-            get_recognizer=AsyncMock(return_value=FakeRecognizer()),
-            get_synthesizer=AsyncMock(return_value=StreamingSynthesizer()),
+        patch(
+            "fivccliche.utils.chats.speeches.create_skill_retriever_async",
+            new=AsyncMock(return_value=MagicMock()),
         ),
-    )
+        patch(
+            "fivccliche.utils.chats.speeches.FastAPIWebsocketTransport",
+        ) as transport_cls,
+        patch(
+            "fivccliche.utils.chats.speeches.SpeechSTTService",
+        ) as stt_cls,
+        patch(
+            "fivccliche.utils.chats.speeches.SpeechTTSService",
+        ) as tts_cls,
+    ):
+        transport_cls.return_value = MagicMock()
+        stt_cls.return_value = MagicMock()
+        tts_cls.return_value = MagicMock()
 
-    assert tts_chunks == ["你好。"]
-    indexes = {
-        item["event"]: index for index, item in enumerate(websocket.sent) if isinstance(item, dict)
-    }
-    audio_index = websocket.sent.index(b"tts-pcm")
-    assert audio_index < indexes["turn_completed"]
+        await process_chat_speech_async(
+            channel=channel,
+            user=MagicMock(uuid="user-1"),
+            chat=_chat_session(),
+            recognizer=recognizer,
+            synthesizer=synthesizer,
+            mutex=mutex,
+            timeout=timedelta(minutes=5),
+            config_provider=config_provider,
+            chat_provider=chat_provider,
+        )
 
-
-@pytest.mark.asyncio
-async def test_voice_session_ends_asr_when_partials_go_idle():
-    websocket = FakeVoiceWebSocket(
-        [
-            {"type": "websocket.receive", "bytes": b"pcm"},
-        ]
-    )
-
-    class IdleRecognizer(_Recognized):
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        async def stream_async(self, audio):
-            async for _chunk in audio:
-                yield MagicMock(type="final", text="你好")
-                for _ in range(5):
-                    yield MagicMock(type="partial", text="")
-                return
-
-    class FakeSynthesizer(_Spoken):
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        async def stream_async(self, text):
-            async for _chunk in text:
-                pass
-            yield b"tts-pcm"
-
-    finish_run = MagicMock(id="run-1", delta=None, reply=MagicMock(text="你好"))
-    finish_run.model_dump.return_value = {"id": "run-1", "reply": {"text": "你好"}}
-    stream_run = MagicMock(id="run-1", delta=MagicMock(text="你好"))
-    stream_run.model_dump.return_value = {"id": "run-1", "delta": {"text": "你好"}}
-
-    class FakeJob:
-        async def stream_async(self, *_args, **kwargs):
-            yield AgentRunEvent.START, MagicMock(id="run-1", delta=None)
-            yield AgentRunEvent.STREAM, stream_run
-            yield AgentRunEvent.FINISH, finish_run
-
-    await _run_voice_process(
-        websocket,
-        chat_run=FakeJob(),
-        asr=MagicMock(),
-        tts=MagicMock(),
-        provider=MagicMock(
-            get_recognizer=AsyncMock(return_value=IdleRecognizer()),
-            get_synthesizer=AsyncMock(return_value=FakeSynthesizer()),
-        ),
-    )
-
-    events = [item["event"] for item in websocket.sent if isinstance(item, dict)]
-    assert "transcript" in events
-    assert {"event": "state", "info": {"state": "responding"}} in websocket.sent
-    assert b"tts-pcm" in websocket.sent
-    assert "turn_completed" in events
-    assert websocket.closed == 1000
+    ready = channel.send_json_async.await_args.args[0]
+    assert ready["event"] == "ready"
+    assert ready["info"]["asr_id"] == "asr"
+    assert ready["info"]["tts_id"] == "tts"
+    channel.shutdown.assert_called_once()
+    transport_cls.assert_called_once()
+    assert transport_cls.call_args.kwargs["websocket"] is channel.socket
+    agent.run_async.assert_awaited_once()
+    run_kwargs = agent.run_async.await_args.kwargs
+    assert run_kwargs["agent_run_session_id"] == "chat-1"
+    assert run_kwargs["stt"] is stt_cls.return_value
+    assert run_kwargs["tts"] is tts_cls.return_value
+    assert run_kwargs["transport"] is transport_cls.return_value
+    mutex.acquire_async.assert_awaited_once()
+    mutex.release_async.assert_awaited_once()

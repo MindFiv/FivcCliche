@@ -16,7 +16,7 @@ __all__ = [
 ]
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -29,13 +29,13 @@ from fivcplayground.agents.types import (
 )
 
 
-class ChatOrderBy(str, Enum):
+class ChatOrderBy(StrEnum):
     updated_at = "updated_at"
     created_at = "created_at"
     agent_id = "agent_id"
 
 
-class ChatOrderDir(str, Enum):
+class ChatOrderDir(StrEnum):
     asc = "asc"
     desc = "desc"
 

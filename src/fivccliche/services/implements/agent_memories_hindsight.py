@@ -36,7 +36,7 @@ _DEFAULT_BASE_URL = "http://localhost:8888"
 _DEFAULT_TIMEOUT = 300.0
 
 
-def _import_hindsight() -> type:
+def _import_hindsight() -> Any:
     try:
         from hindsight_client import Hindsight
     except ImportError as exc:
@@ -47,7 +47,7 @@ def _import_hindsight() -> type:
     return Hindsight
 
 
-def _import_update_memory_request() -> type:
+def _import_update_memory_request() -> Any:
     try:
         from hindsight_client_api.models.update_memory_request import UpdateMemoryRequest
     except ImportError as exc:

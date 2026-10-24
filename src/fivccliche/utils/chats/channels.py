@@ -42,6 +42,10 @@ class ChatChannel:
         self._closed = False
 
     @property
+    def socket(self) -> WebSocket:
+        return self._ws
+
+    @property
     def closed(self) -> bool:
         return self._closed
 

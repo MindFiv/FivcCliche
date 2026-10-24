@@ -13,11 +13,11 @@ from fivccliche.modules.users.models import User
 from tests.conftest import make_api_client
 
 
-def test_chat_processors_receive_chat_values_without_session():
-    """Auth-time callers resolve chat rows; the voice processor consumes pure values."""
-    from fivccliche.utils.chats.processors import ChatVoiceProcessor
+def test_chat_voice_pipecat_receives_resolved_values_without_session():
+    """Router resolves chat/ASR/TTS; Pipecat session consumes pure values via channel."""
+    from fivccliche.utils.chats.speeches import process_chat_speech_async
 
-    voice_parameters = inspect.signature(ChatVoiceProcessor.__init__).parameters
+    voice_parameters = inspect.signature(process_chat_speech_async).parameters
 
     assert "session" not in voice_parameters
     assert {
@@ -26,20 +26,13 @@ def test_chat_processors_receive_chat_values_without_session():
         "chat",
         "recognizer",
         "synthesizer",
-        "run_provider",
         "mutex",
         "timeout",
     } <= voice_parameters.keys()
+    assert "websocket" not in voice_parameters
     assert "asr_id" not in voice_parameters
     assert "tts_id" not in voice_parameters
-    assert "chat_loader" not in voice_parameters
-    assert "voice_setup_loader" not in voice_parameters
-    assert "mutex_site" not in voice_parameters
-    assert "websocket" not in voice_parameters
-    assert "authenticator" not in voice_parameters
-    assert "auth_timeout" not in voice_parameters
-    assert "lock_expire" not in voice_parameters
-    assert "run_timeout" not in voice_parameters
+    assert "run_provider" not in voice_parameters
 
 
 async def _empty_events():

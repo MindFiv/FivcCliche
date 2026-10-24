@@ -2,11 +2,17 @@
 
 FivcCliche exposes an implementation-agnostic speech contract so chat and tools
 can transcribe audio without depending on a vendor SDK. `ISpeechProvider` is a
-factory; recognition runs on `ISpeechRecognizer` and one-shot synthesis runs on
+factory; recognition runs on `ISpeechRecognizer` and synthesis runs on
 `ISpeechSynthesizer`. Default YAML registers two DashScope providers:
 `dashscope` for native HTTP and `dashscope_realtime` for WebSocket protocols.
-Both providers expose recognizers and synthesizers. Continuous duplex voice and
-automatic TTS for chat replies remain out of scope.
+Both providers expose recognizers and synthesizers.
+
+Full-duplex chat voice (`WEBSOCKET /api/chats/{chat_uuid}/`) uses Pipecat
+(`fivcplayground[pipecat]`) with adapters in
+[`speeches.py`](../src/fivccliche/utils/chats/speeches.py) that wrap
+these `ISpeech*` objects as Pipecat `STTService` / `TTSService`. Probe routes and
+the `SpeechTranscribe` tool still call `ISpeech*` directly. Text chat SSE does
+not use speech.
 
 ## Status
 
@@ -14,7 +20,8 @@ automatic TTS for chat replies remain out of scope.
 - Fake provider for tests (`FakeSpeechProvider`)
 - DashScope HTTP and Realtime providers (each file is one implementation)
 - Function tool `SpeechTranscribe` for later `transport=function` wiring
-- DashScope TTS and `UserTTS` probe configuration
+- DashScope TTS and `UserTTS` / `UserASR` probe configuration
+- Chat voice WebSocket: Pipecat pipeline + `SpeechSTTService` / `SpeechTTSService`
 
 The native HTTP `dashscope` provider supports:
 
