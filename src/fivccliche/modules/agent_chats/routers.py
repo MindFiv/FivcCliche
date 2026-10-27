@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncGenerator
@@ -10,13 +12,13 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    WebSocket,
     responses,
     status,
-    WebSocket,
 )
 from fivcglue import IComponentSite
 from fivcglue.interfaces.mutexes import IMutexSite
-from fivccliche.services.interfaces.auth import IUserAuthenticator
+from fivcplayground.agents import AgentRunSession
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -24,13 +26,12 @@ from sqlmodel import col, select
 from fivccliche.services.implements import service_site
 from fivccliche.utils import deps
 from fivcglue.interfaces import configs
-from fivcplayground.agents import AgentRunSession
-from fivccliche.utils.chats import ChatChannel, ChatRunParser
+from fivccliche.utils.chats import ChatRunParser
 from fivccliche.utils.deps import (
     IUser,
     get_admin_user_async,
-    get_authenticator_async,
     get_authenticated_user_async,
+    get_authenticator_async,
     get_chat_run_provider_async,
     get_config_async,
     get_db_session_async,
@@ -47,6 +48,8 @@ from .filters import (
 from .jobs import ChatDescribeJob
 from .jobs.memorize import memorize_created_at_to
 
+logger = logging.getLogger(__name__)
+
 # ============================================================================
 # Chat Session Endpoints
 # ============================================================================
@@ -54,41 +57,27 @@ from .jobs.memorize import memorize_created_at_to
 router_chats = APIRouter(tags=["chats"], prefix="/chats")
 
 
-async def _load_chat_snapshot(
-    session: AsyncSession,
-    user: IUser,
-    chat_uuid: str,
-) -> AgentRunSession | None:
-    chat = await utils.get_chat_async(
-        session,
-        chat_uuid,
-        filters=ChatEditableFilterSet(user.uuid, is_superuser=user.is_superuser),
-    )
-    if chat is None:
-        return None
-    return AgentRunSession(
-        id=chat.uuid,
-        agent_id=chat.agent_id,
-        context=chat.context or {},
-        description=chat.description,
-        started_at=chat.created_at,
-    )
+class VoiceSetupError(Exception):
+    """Chat voice configuration failure mapped to a WebSocket close."""
+
+    def __init__(self, *, code: str, message: str, close_code: int) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.close_code = close_code
 
 
 async def _load_realtime_voice_setup(
     session: AsyncSession,
-    channel: ChatChannel,
     user: IUser,
     chat: AgentRunSession,
     start_frame: dict[str, Any],
 ) -> tuple[Any, Any]:
+    from fivcplayground.speeches import SpeechRecognizeOption, SpeechSynthesisOption
+
     from fivccliche.modules.agent_configs.filters import UserScopedReadableFilterSet
     from fivccliche.modules.agent_configs.models import UserASR, UserTTS
     from fivccliche.modules.agent_configs.utils import get_user_scoped_async
-    from fivccliche.services.interfaces.agent_speeches import (
-        SpeechRecognizeOptions,
-        SpeechSynthesisOptions,
-    )
     from fivccliche.utils.chats.speeches import INPUT_SAMPLE_RATE, OUTPUT_SAMPLE_RATE
     from fivccliche.utils.deps import get_speech_provider_async
 
@@ -96,8 +85,8 @@ async def _load_realtime_voice_setup(
     asr_id = start_frame.get("asr_id") or context.get("asr_id") or "realtime"
     tts_id = start_frame.get("tts_id") or context.get("tts_id") or "realtime"
     if not isinstance(asr_id, str) or not isinstance(tts_id, str):
-        await channel.fail_async(
-            code="invalid_frame",
+        raise VoiceSetupError(
+            code="invalid_start",
             message="asr_id and tts_id must be strings",
             close_code=1003,
         )
@@ -119,72 +108,61 @@ async def _load_realtime_voice_setup(
         config_id=tts_id,
     )
     if asr is None:
-        await channel.fail_async(
+        raise VoiceSetupError(
             code="asr_not_found",
             message="ASR config not found",
             close_code=4404,
         )
     if tts is None:
-        await channel.fail_async(
+        raise VoiceSetupError(
             code="tts_not_found",
             message="TTS config not found",
             close_code=4404,
         )
     if asr.model_type != "dashscope_realtime":
-        await channel.fail_async(
-            code="invalid_asr_model_type",
+        raise VoiceSetupError(
+            code="invalid_asr",
             message="ASR config must use dashscope_realtime",
             close_code=1003,
         )
     if tts.model_type != "dashscope_realtime":
-        await channel.fail_async(
-            code="invalid_tts_model_type",
+        raise VoiceSetupError(
+            code="invalid_tts",
             message="TTS config must use dashscope_realtime",
             close_code=1003,
         )
 
-    resolved_asr_id = asr.id
-    resolved_tts_id = tts.id
-    asr_model = asr.model
-    tts_model = tts.model
-    asr_api_key = asr.api_key
-    tts_api_key = tts.api_key
-    asr_base_url = asr.base_url
-    tts_base_url = tts.base_url
-    asr_model_type = asr.model_type
-    tts_model_type = tts.model_type
     language = start_frame.get("language")
     voice_name = start_frame.get("voice")
-
-    asr_provider = await get_speech_provider_async(asr_model_type)
-    tts_provider = await get_speech_provider_async(tts_model_type)
+    asr_provider = await get_speech_provider_async(asr.model_type)
+    tts_provider = await get_speech_provider_async(tts.model_type)
     if asr_provider is None or tts_provider is None:
-        await channel.fail_async(
-            code="speech_unavailable",
+        raise VoiceSetupError(
+            code="provider_unmounted",
             message="Speech provider is not mounted",
-            close_code=1011,
+            close_code=1013,
         )
     recognizer = await asr_provider.get_recognizer(
-        SpeechRecognizeOptions(
+        SpeechRecognizeOption(
             language=language if isinstance(language, str) and language else None,
             format="pcm",
             sample_rate=INPUT_SAMPLE_RATE,
         ),
-        api_key=asr_api_key,
-        model=asr_model,
-        base_url=asr_base_url,
-        id=resolved_asr_id,
+        api_key=asr.api_key,
+        model=asr.model,
+        base_url=asr.base_url,
+        id=asr.id,
     )
     synthesizer = await tts_provider.get_synthesizer(
-        SpeechSynthesisOptions(
+        SpeechSynthesisOption(
             voice=voice_name if isinstance(voice_name, str) and voice_name else "",
             format="pcm",
             sample_rate=OUTPUT_SAMPLE_RATE,
         ),
-        api_key=tts_api_key,
-        model=tts_model,
-        base_url=tts_base_url,
-        id=resolved_tts_id,
+        api_key=tts.api_key,
+        model=tts.model,
+        base_url=tts.base_url,
+        id=tts.id,
     )
     return recognizer, synthesizer
 
@@ -429,50 +407,215 @@ CHAT_MESSAGE_LOCK_EXPIRE = timedelta(minutes=15)
 CHAT_MESSAGE_RUN_TIMEOUT = timedelta(minutes=5)
 
 
+def _chat_webrtc_registry(websocket: WebSocket):
+    from fivccliche.utils.chats.speeches import ChatWebRTCRegistry
+
+    registry = getattr(websocket.app.state, "chat_webrtc", None)
+    if not isinstance(registry, ChatWebRTCRegistry):
+        registry = ChatWebRTCRegistry()
+        websocket.app.state.chat_webrtc = registry
+    return registry
+
+
 @router_chats.websocket("/{chat_uuid}/")
-async def create_chat_voice_ws_async(
-    websocket: WebSocket,
+async def start_chat_webrtc_async(
     chat_uuid: str,
-    auth: IUserAuthenticator = Depends(get_authenticator_async),
+    websocket: WebSocket,
     mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
 ) -> None:
-    """Run a full-duplex realtime voice session for one chat via Pipecat."""
+    """WebSocket signaling for a Pipecat SmallWebRTC voice session."""
+    from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
+    from pipecat.transports.smallwebrtc.request_handler import (
+        IceCandidate,
+        SmallWebRTCPatchRequest,
+        SmallWebRTCRequest,
+    )
+
+    from fivccliche.utils.chats import ChatChannel
     from fivccliche.utils.chats.speeches import process_chat_speech_async
 
-    async with ChatChannel(websocket, auth) as channel:
+    authenticator = await get_authenticator_async()
+    async with ChatChannel(websocket, authenticator) as channel:
         user = await channel.authenticate_async()
-        start_frame = await channel.receive_json_async()
-        if start_frame is None:
-            return
-        if start_frame.get("type") != "start":
-            await channel.fail_async(
-                code="invalid_message",
-                message="A start frame is required",
-                close_code=1003,
-            )
         async with deps.get_db_session_context_async() as session:
-            chat = await _load_chat_snapshot(session, user, chat_uuid)
+            chat_row = await utils.get_chat_async(
+                session,
+                chat_uuid,
+                filters=ChatEditableFilterSet(user.uuid, is_superuser=user.is_superuser),
+            )
+            chat = chat_row.to_schema() if chat_row is not None else None
         if chat is None:
             await channel.fail_async(
                 code="chat_not_found",
                 message="Chat not found",
                 close_code=4404,
             )
-        async with deps.get_db_session_context_async() as session:
-            recognizer, synthesizer = await _load_realtime_voice_setup(
-                session, channel, user, chat, start_frame
+
+        offer = await channel.receive_json_async()
+        if offer is None:
+            return
+        if (
+            not isinstance(offer, dict)
+            or offer.get("type") != "offer"
+            or not isinstance(offer.get("sdp"), str)
+        ):
+            await channel.fail_async(
+                code="invalid_offer",
+                message="An offer frame with sdp is required",
+                close_code=1003,
+            )
+        sdp_type = offer.get("sdp_type", "offer")
+        if not isinstance(sdp_type, str):
+            await channel.fail_async(
+                code="invalid_offer",
+                message="sdp_type must be a string",
+                close_code=1003,
             )
 
+        try:
+            async with deps.get_db_session_context_async() as session:
+                recognizer, synthesizer = await _load_realtime_voice_setup(
+                    session, user, chat, offer
+                )
+        except VoiceSetupError as exc:
+            await channel.fail_async(
+                code=exc.code,
+                message=exc.message,
+                close_code=exc.close_code,
+            )
+
+        registry = _chat_webrtc_registry(websocket)
         mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
-        async with recognizer, synthesizer:
-            await process_chat_speech_async(
-                channel=channel,
-                user=user,
-                chat=chat,
-                recognizer=recognizer,
-                synthesizer=synthesizer,
-                mutex=mutex,
-                timeout=CHAT_MESSAGE_RUN_TIMEOUT,
+
+        async def _on_connection(connection: SmallWebRTCConnection) -> None:
+            registry.remember(connection.pc_id, user.uuid, chat_uuid)
+
+            @connection.event_handler("closed")
+            async def _forget(closed_connection: SmallWebRTCConnection) -> None:
+                registry.forget(closed_connection.pc_id)
+
+            task = asyncio.create_task(
+                process_chat_speech_async(
+                    connection=connection,
+                    user=user,
+                    chat=chat,
+                    recognizer=recognizer,
+                    synthesizer=synthesizer,
+                    mutex=mutex,
+                    timeout=CHAT_MESSAGE_RUN_TIMEOUT,
+                )
+            )
+
+            def _log_failure(done: asyncio.Task[None]) -> None:
+                if done.cancelled():
+                    return
+                exc = done.exception()
+                if exc is not None:
+                    logger.error("Chat WebRTC session failed", exc_info=exc)
+
+            task.add_done_callback(_log_failure)
+
+        try:
+            answer = await registry.handler.handle_web_request(
+                SmallWebRTCRequest(
+                    sdp=offer["sdp"],
+                    type=sdp_type,
+                    pc_id=offer.get("pc_id") if isinstance(offer.get("pc_id"), str) else None,
+                    restart_pc=(
+                        offer.get("restart_pc")
+                        if isinstance(offer.get("restart_pc"), bool)
+                        else None
+                    ),
+                    request_data=offer,
+                ),
+                _on_connection,
+            )
+        except Exception as exc:
+            logger.exception("WebRTC offer failed")
+            await channel.fail_async(
+                code="webrtc_failed",
+                message=str(exc) or "WebRTC answer was not created",
+                close_code=1011,
+            )
+        if answer is None:
+            await channel.fail_async(
+                code="webrtc_failed",
+                message="WebRTC answer was not created",
+                close_code=1011,
+            )
+
+        recognize_opts = recognizer.get_option()
+        synthesis_opts = synthesizer.get_option()
+        await channel.send_json_async(
+            {
+                "event": "answer",
+                "info": {
+                    **answer,
+                    "asr_id": recognizer.id,
+                    "tts_id": synthesizer.id,
+                    "input": {
+                        "format": recognize_opts.format,
+                        "sample_rate": recognize_opts.sample_rate,
+                    },
+                    "output": {
+                        "format": synthesis_opts.format,
+                        "sample_rate": synthesis_opts.sample_rate,
+                    },
+                },
+            }
+        )
+
+        while True:
+            frame = await channel.receive_json_async()
+            if frame is None:
+                return
+            if not isinstance(frame, dict) or frame.get("type") != "ice":
+                await channel.fail_async(
+                    code="invalid_ice",
+                    message="ICE frames must use type ice",
+                    close_code=1003,
+                )
+            pc_id = frame.get("pc_id")
+            candidates = frame.get("candidates")
+            if not isinstance(pc_id, str) or not isinstance(candidates, list):
+                await channel.fail_async(
+                    code="invalid_ice",
+                    message="ICE frames require pc_id and candidates",
+                    close_code=1003,
+                )
+            if not registry.owned_by(pc_id, user.uuid, chat_uuid):
+                await channel.fail_async(
+                    code="peer_not_found",
+                    message="Peer connection not found",
+                    close_code=4404,
+                )
+            try:
+                ice_candidates = [
+                    IceCandidate(
+                        candidate=item["candidate"],
+                        sdp_mid=item["sdp_mid"],
+                        sdp_mline_index=item["sdp_mline_index"],
+                    )
+                    for item in candidates
+                    if isinstance(item, dict)
+                    and isinstance(item.get("candidate"), str)
+                    and isinstance(item.get("sdp_mid"), str)
+                    and isinstance(item.get("sdp_mline_index"), int)
+                ]
+            except (KeyError, TypeError):
+                await channel.fail_async(
+                    code="invalid_ice",
+                    message="Invalid ICE candidate payload",
+                    close_code=1003,
+                )
+            if len(ice_candidates) != len(candidates):
+                await channel.fail_async(
+                    code="invalid_ice",
+                    message="Invalid ICE candidate payload",
+                    close_code=1003,
+                )
+            await registry.handler.handle_patch_request(
+                SmallWebRTCPatchRequest(pc_id=pc_id, candidates=ice_candidates)
             )
 
 

@@ -10,16 +10,16 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 from fivcglue import IComponentSite
 
-from fivccliche.services.interfaces.agent_speeches import (
-    ISpeechProvider,
-    ISpeechRecognizer,
-    ISpeechSynthesizer,
-    SpeechAudioInput,
-    SpeechEvent,
-    SpeechRecognizeOptions,
-    SpeechRequestError,
-    SpeechSynthesisOptions,
+from fivcplayground.speeches import (
+    SpeechError,
+    SpeechRecognizeEvent,
+    SpeechRecognizeOption,
+    SpeechRecognizer,
+    SpeechSynthesisOption,
+    SpeechSynthesizer,
 )
+
+from fivccliche.services.interfaces.agent_speeches import ISpeechProvider
 
 _DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com"
 _DEFAULT_MODEL = "qwen3-asr-flash"
@@ -49,40 +49,37 @@ _AUDIO_MIME_TYPES = {
 }
 
 
-def _audio_content(audio: SpeechAudioInput) -> str:
-    if audio.url:
-        return audio.url
-
-    data = audio.data_b64 or ""
-    if data.startswith("data:"):
-        return data
-
-    mime = _AUDIO_MIME_TYPES.get(audio.format.lower(), "audio/wav")
-    return f"data:{mime};base64,{data}"
+def _audio_data_uri(payload: bytes, audio_format: str) -> str:
+    mime = _AUDIO_MIME_TYPES.get(audio_format.lower(), "audio/wav")
+    encoded = base64.b64encode(payload).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
 
 
-def _context_text(options: SpeechRecognizeOptions | None) -> str | None:
+def _context_text(options: SpeechRecognizeOption | None) -> str | None:
     if options is None:
         return None
 
     parts: list[str] = []
     if options.context:
         parts.append(options.context)
-    if options.hotwords:
-        parts.append("热词: " + ", ".join(options.hotwords))
+    if options.hot_words:
+        parts.append("热词: " + ", ".join(options.hot_words))
     return "\n".join(parts) if parts else None
 
 
 def _qwen3_request(
     model: str,
-    audio: SpeechAudioInput,
-    options: SpeechRecognizeOptions | None,
+    payload: bytes,
+    options: SpeechRecognizeOption | None,
 ) -> dict[str, Any]:
+    audio_format = options.format if options is not None else "wav"
     messages: list[dict[str, Any]] = []
     context = _context_text(options)
     if context:
         messages.append({"role": "system", "content": [{"text": context}]})
-    messages.append({"role": "user", "content": [{"audio": _audio_content(audio)}]})
+    messages.append(
+        {"role": "user", "content": [{"audio": _audio_data_uri(payload, audio_format)}]}
+    )
 
     asr_options: dict[str, Any] = {
         "enable_itn": bool(options.enable_itn) if options is not None else False,
@@ -96,10 +93,10 @@ def _qwen3_request(
     }
 
 
-def _qwen3_event(output: Any) -> SpeechEvent:
+def _qwen3_event(output: Any) -> SpeechRecognizeEvent:
     choices = (output or {}).get("choices") or []
     if not choices:
-        raise SpeechRequestError("DashScope ASR response missing output.choices")
+        raise SpeechError("DashScope ASR response missing output.choices")
 
     message = (choices[0] or {}).get("message") or {}
     text = next(
@@ -114,10 +111,16 @@ def _qwen3_event(output: Any) -> SpeechEvent:
     language = None
     if annotations and isinstance(annotations[0], dict):
         language = annotations[0].get("language")
-    return SpeechEvent(type="final", text=text, language=language)
+    return SpeechRecognizeEvent(type="final", text=text, language=language)
 
 
-def _qwen_audio_request(model: str, audio: SpeechAudioInput) -> dict[str, Any]:
+def _qwen_audio_request(
+    model: str,
+    payload: bytes,
+    *,
+    audio_format: str,
+    sample_rate: int,
+) -> dict[str, Any]:
     return {
         "model": model,
         "input": {
@@ -127,25 +130,25 @@ def _qwen_audio_request(model: str, audio: SpeechAudioInput) -> dict[str, Any]:
                     "content": [
                         {
                             "type": "input_audio",
-                            "input_audio": {"data": _audio_content(audio)},
+                            "input_audio": {"data": _audio_data_uri(payload, audio_format)},
                         }
                     ],
                 }
             ]
         },
-        "parameters": {"format": audio.format.lower(), "sample_rate": audio.sample_rate},
+        "parameters": {"format": audio_format.lower(), "sample_rate": sample_rate},
     }
 
 
-def _qwen_audio_event(output: Any) -> SpeechEvent:
+def _qwen_audio_event(output: Any) -> SpeechRecognizeEvent:
     output = output or {}
     sentence = output.get("sentence")
     text = output.get("text")
     if not text and isinstance(sentence, dict):
         text = sentence.get("text")
     if not text:
-        raise SpeechRequestError("DashScope ASR response missing transcript")
-    return SpeechEvent(type="final", text=str(text), language=None)
+        raise SpeechError("DashScope ASR response missing transcript")
+    return SpeechRecognizeEvent(type="final", text=str(text), language=None)
 
 
 def _qwen_audio_tts_url(base_url: str) -> str:
@@ -158,7 +161,7 @@ def _qwen_audio_tts_url(base_url: str) -> str:
         scheme = "http" if parsed.scheme == "ws" else "https"
         return urlunsplit((scheme, parsed.netloc, _QWEN_AUDIO_TTS_PATH, "", ""))
 
-    raise SpeechRequestError(f"Unsupported DashScope base URL: {base_url}")
+    raise SpeechError(f"Unsupported DashScope base URL: {base_url}")
 
 
 def _qwen_audio_tts_voice(model: str, voice: str) -> str:
@@ -174,7 +177,7 @@ def _qwen_audio_tts_voice(model: str, voice: str) -> str:
 def _qwen_audio_tts_request(
     model: str,
     text: str,
-    options: SpeechSynthesisOptions,
+    options: SpeechSynthesisOption,
 ) -> dict[str, Any]:
     input_data: dict[str, Any] = dict(options.extra)
     input_data.update(
@@ -191,7 +194,7 @@ def _qwen_audio_tts_request(
     return {"model": model, "input": input_data}
 
 
-class _DashScopeMultimodalRecognizer(ISpeechRecognizer):
+class _DashScopeMultimodalRecognizer(SpeechRecognizer):
     """Clip ASR using DashScope synchronous multimodal generation."""
 
     def __init__(
@@ -201,7 +204,7 @@ class _DashScopeMultimodalRecognizer(ISpeechRecognizer):
         model: str = _DEFAULT_MODEL,
         base_url: str = _DEFAULT_BASE_URL,
         http_client: httpx.AsyncClient | None = None,
-        options: SpeechRecognizeOptions | None = None,
+        options: SpeechRecognizeOption | None = None,
         speech_id: str = "",
     ) -> None:
         self._api_key = api_key
@@ -209,14 +212,14 @@ class _DashScopeMultimodalRecognizer(ISpeechRecognizer):
         self._base_url = base_url.rstrip("/")
         self._http_client = http_client
         self._owns_http_client = http_client is None
-        self._options = options or SpeechRecognizeOptions()
+        self._options = options or SpeechRecognizeOption()
         self._id = speech_id
 
     @property
     def id(self) -> str:
         return self._id
 
-    def get_option(self) -> SpeechRecognizeOptions:
+    def get_option(self) -> SpeechRecognizeOption:
         return self._options
 
     async def __aenter__(self) -> Self:
@@ -231,34 +234,30 @@ class _DashScopeMultimodalRecognizer(ISpeechRecognizer):
 
     async def stream_async(
         self,
-        audio: SpeechAudioInput | AsyncIterator[bytes],
-    ) -> AsyncIterator[SpeechEvent]:
-        if isinstance(audio, SpeechAudioInput):
-            yield await self._recognize_clip(audio)
-            return
-
+        audio: bytes | AsyncIterator[bytes],
+    ) -> AsyncIterator[SpeechRecognizeEvent]:
         buffer = bytearray()
-        async for chunk in audio:
-            buffer.extend(chunk)
+        if isinstance(audio, (bytes, bytearray)):
+            buffer.extend(audio)
+        else:
+            async for chunk in audio:
+                buffer.extend(chunk)
         if not buffer:
-            yield SpeechEvent(type="final", text="")
+            yield SpeechRecognizeEvent(type="final", text="")
             return
+        yield await self._recognize_clip(bytes(buffer))
 
-        audio_format = self._options.format if self._options is not None else "pcm"
-        yield await self._recognize_clip(
-            SpeechAudioInput(
-                data_b64=base64.b64encode(bytes(buffer)).decode("ascii"),
-                format=audio_format,
-                sample_rate=self._options.sample_rate if self._options is not None else 16000,
-            )
-        )
-
-    async def _recognize_clip(self, audio: SpeechAudioInput) -> SpeechEvent:
+    async def _recognize_clip(self, payload: bytes) -> SpeechRecognizeEvent:
         is_qwen_audio = self._model == _QWEN_AUDIO_MODEL
-        payload = (
-            _qwen_audio_request(self._model, audio)
+        request_payload = (
+            _qwen_audio_request(
+                self._model,
+                payload,
+                audio_format=self._options.format,
+                sample_rate=self._options.sample_rate,
+            )
             if is_qwen_audio
-            else _qwen3_request(self._model, audio, self._options)
+            else _qwen3_request(self._model, payload, self._options)
         )
         headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -268,32 +267,32 @@ class _DashScopeMultimodalRecognizer(ISpeechRecognizer):
             headers["X-DashScope-SSE"] = "disable"
 
         if self._http_client is None:
-            raise SpeechRequestError("DashScope ASR client is not started")
+            raise SpeechError("DashScope ASR client is not started")
 
         try:
             response = await self._http_client.post(
                 self._base_url + _GENERATION_PATH,
-                json=payload,
+                json=request_payload,
                 headers=headers,
             )
         except Exception as exc:
-            raise SpeechRequestError(f"DashScope ASR request failed: {exc}") from exc
+            raise SpeechError(f"DashScope ASR request failed: {exc}") from exc
 
         if not response.is_success:
             status = response.status_code
             detail = response.text
-            raise SpeechRequestError(f"DashScope ASR HTTP {status}: {detail}")
+            raise SpeechError(f"DashScope ASR HTTP {status}: {detail}")
 
         try:
             response_payload = response.json()
         except ValueError as exc:
-            raise SpeechRequestError(f"DashScope ASR returned invalid JSON: {exc}") from exc
+            raise SpeechError(f"DashScope ASR returned invalid JSON: {exc}") from exc
 
         event_parser = _qwen_audio_event if is_qwen_audio else _qwen3_event
         return event_parser(response_payload.get("output"))
 
 
-class _DashScopeQwenAudioTTSSynthesizer(ISpeechSynthesizer):
+class _DashScopeQwenAudioTTSSynthesizer(SpeechSynthesizer):
     """Non-realtime Qwen-Audio TTS using DashScope's HTTP task API."""
 
     def __init__(
@@ -303,11 +302,11 @@ class _DashScopeQwenAudioTTSSynthesizer(ISpeechSynthesizer):
         model: str = _TTS_DEFAULT_MODEL,
         base_url: str = _DEFAULT_BASE_URL,
         http_client: httpx.AsyncClient | None = None,
-        options: SpeechSynthesisOptions | None = None,
+        options: SpeechSynthesisOption | None = None,
         speech_id: str = "",
     ) -> None:
         if model not in _QWEN_AUDIO_TTS_MODELS:
-            raise SpeechRequestError(
+            raise SpeechError(
                 f"TTS model {model} is not supported by the dashscope provider; "
                 f"supported models: {', '.join(sorted(_QWEN_AUDIO_TTS_MODELS))}"
             )
@@ -316,7 +315,7 @@ class _DashScopeQwenAudioTTSSynthesizer(ISpeechSynthesizer):
         self._base_url = base_url
         self._http_client = http_client
         self._owns_http_client = http_client is None
-        self._options = options or SpeechSynthesisOptions(
+        self._options = options or SpeechSynthesisOption(
             voice="",
             format="wav",
             sample_rate=24000,
@@ -327,7 +326,7 @@ class _DashScopeQwenAudioTTSSynthesizer(ISpeechSynthesizer):
     def id(self) -> str:
         return self._id
 
-    def get_option(self) -> SpeechSynthesisOptions:
+    def get_option(self) -> SpeechSynthesisOption:
         return self._options
 
     async def __aenter__(self) -> Self:
@@ -351,7 +350,7 @@ class _DashScopeQwenAudioTTSSynthesizer(ISpeechSynthesizer):
 
         client = self._http_client
         if client is None:
-            raise SpeechRequestError("TTS client is not started")
+            raise SpeechError("TTS client is not started")
 
         try:
             response = await client.post(
@@ -363,25 +362,25 @@ class _DashScopeQwenAudioTTSSynthesizer(ISpeechSynthesizer):
                 },
             )
         except Exception as exc:
-            raise SpeechRequestError(f"DashScope TTS request failed: {exc}") from exc
+            raise SpeechError(f"DashScope TTS request failed: {exc}") from exc
 
         if not response.is_success:
-            raise SpeechRequestError(f"DashScope TTS HTTP {response.status_code}: {response.text}")
+            raise SpeechError(f"DashScope TTS HTTP {response.status_code}: {response.text}")
         try:
             response_payload = response.json()
         except ValueError as exc:
-            raise SpeechRequestError(f"DashScope TTS returned invalid JSON: {exc}") from exc
+            raise SpeechError(f"DashScope TTS returned invalid JSON: {exc}") from exc
 
         audio_url = (response_payload.get("output") or {}).get("audio", {}).get("url")
         if not audio_url:
-            raise SpeechRequestError("DashScope TTS response is missing audio URL")
+            raise SpeechError("DashScope TTS response is missing audio URL")
 
         try:
             audio_response = await client.get(audio_url)
         except Exception as exc:
-            raise SpeechRequestError(f"Failed to download DashScope TTS audio: {exc}") from exc
+            raise SpeechError(f"Failed to download DashScope TTS audio: {exc}") from exc
         if not audio_response.is_success:
-            raise SpeechRequestError(
+            raise SpeechError(
                 f"Failed to download DashScope TTS audio HTTP {audio_response.status_code}"
             )
         for offset in range(0, len(audio_response.content), _AUDIO_CHUNK_SIZE):
@@ -396,13 +395,13 @@ class DashScopeSpeechProvider(ISpeechProvider):
 
     async def get_recognizer(
         self,
-        options: SpeechRecognizeOptions | None = None,
+        options: SpeechRecognizeOption | None = None,
         *,
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
         **kwargs: Any,
-    ) -> ISpeechRecognizer:
+    ) -> SpeechRecognizer:
         api_key, model, base_url = self._credentials(
             capability="asr", api_key=api_key, model=model, base_url=base_url
         )
@@ -417,13 +416,13 @@ class DashScopeSpeechProvider(ISpeechProvider):
 
     async def get_synthesizer(
         self,
-        options: SpeechSynthesisOptions | None = None,
+        options: SpeechSynthesisOption | None = None,
         *,
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
         **kwargs: Any,
-    ) -> ISpeechSynthesizer:
+    ) -> SpeechSynthesizer:
         api_key, model, base_url = self._credentials(
             capability="tts", api_key=api_key, model=model, base_url=base_url
         )

@@ -1,5 +1,6 @@
 """Unit tests for speech function tools."""
 
+import base64
 import json
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -7,13 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from fivccliche.modules.agent_chats.tools import SpeechTranscribe
-from fivccliche.services.interfaces.agent_speeches import (
-    SpeechAudioInput,
-    SpeechEvent,
-    SpeechRecognizeOptions,
-)
+from fivcplayground.speeches import SpeechRecognizeEvent, SpeechRecognizeOption
 
 USER_UUID = "user-alice"
+AUDIO_B64 = base64.b64encode(b"\x00\x01").decode("ascii")
 
 
 def _mock_asr(
@@ -41,7 +39,7 @@ class TestSpeechTranscribe:
     async def test_raises_without_user_uuid(self):
         tool = SpeechTranscribe()
         with pytest.raises(ValueError, match="No user_uuid specified"):
-            await tool(url="https://example.com/a.wav")
+            await tool(data_b64=AUDIO_B64)
 
     @pytest.mark.asyncio
     async def test_raises_when_asr_config_missing(self):
@@ -57,7 +55,7 @@ class TestSpeechTranscribe:
             ) as get_asr,
         ):
             with pytest.raises(ValueError, match="No speech provider specified"):
-                await tool(url="https://example.com/a.wav")
+                await tool(data_b64=AUDIO_B64)
         assert get_asr.await_args.kwargs["config_id"] == "default"
 
     @pytest.mark.asyncio
@@ -78,7 +76,7 @@ class TestSpeechTranscribe:
             ),
         ):
             with pytest.raises(ValueError, match="No speech provider specified"):
-                await tool(url="https://example.com/a.wav")
+                await tool(data_b64=AUDIO_B64)
 
     @pytest.mark.asyncio
     async def test_transcribes_last_final_event(self):
@@ -86,7 +84,7 @@ class TestSpeechTranscribe:
 
         async def stream_async(audio):
             captured["audio"] = audio
-            yield SpeechEvent(type="final", text="hello", language="zh")
+            yield SpeechRecognizeEvent(type="final", text="hello", language="zh")
 
         recognizer = MagicMock()
         recognizer.stream_async = stream_async
@@ -117,15 +115,13 @@ class TestSpeechTranscribe:
                 new=get_provider,
             ),
         ):
-            result = await tool(url="https://example.com/a.wav", language="zh")
+            result = await tool(data_b64=AUDIO_B64, language="zh")
 
         payload = json.loads(result)
         assert payload == {"text": "hello", "language": "zh"}
-        audio = captured["audio"]
+        assert captured["audio"] == b"\x00\x01"
         options = captured["options"]
-        assert isinstance(audio, SpeechAudioInput)
-        assert audio.url == "https://example.com/a.wav"
-        assert isinstance(options, SpeechRecognizeOptions)
+        assert isinstance(options, SpeechRecognizeOption)
         assert options.language == "zh"
         assert captured["recognizer_kwargs"]["api_key"] == "sk-rt"
         assert captured["recognizer_kwargs"]["model"] == "rt-model"

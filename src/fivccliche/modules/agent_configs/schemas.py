@@ -12,9 +12,9 @@ __all__ = [
 ]
 
 from datetime import datetime
-from typing import Literal, Self
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from fivcplayground.embeddings.types import EmbeddingConfig
 from fivcplayground.models.types import ModelConfig
@@ -83,20 +83,11 @@ class UserASRSchema(BaseModel):
 class UserASRProbeRequest(BaseModel):
     """Request body for probing an ASR config with a clip."""
 
-    url: str | None = Field(default=None, description="Publicly reachable audio URL")
-    data_b64: str | None = Field(default=None, description="Base64-encoded audio")
+    data_b64: str = Field(..., description="Base64-encoded audio")
     format: str = Field(default="wav", description="Clip format, such as wav or mp3")
     language: str | None = Field(default=None, description="Optional language hint")
     hotwords: list[str] | None = Field(default=None, description="Optional hotwords")
     context: str | None = Field(default=None, description="Optional recognition context")
-
-    @model_validator(mode="after")
-    def require_one_source(self) -> Self:
-        has_url = bool(self.url)
-        has_data = bool(self.data_b64)
-        if has_url == has_data:
-            raise ValueError("Exactly one of url or data_b64 is required")
-        return self
 
 
 class UserTTSSchema(BaseModel):

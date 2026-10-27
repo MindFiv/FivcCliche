@@ -5,36 +5,20 @@ from collections.abc import AsyncIterator
 from unittest.mock import MagicMock, patch
 
 import pytest
-from pydantic import ValidationError
 
 from fivccliche.services.implements.agent_speeches.fake import (
     FakeSpeechProvider,
     FakeSpeechRecognizer,
 )
-from fivccliche.services.interfaces.agent_speeches import (
-    ISpeechProvider,
-    ISpeechRecognizer,
-    ISpeechSynthesizer,
-    SpeechAudioInput,
-    SpeechEvent,
-    SpeechRecognizeOptions,
-    SpeechSynthesisOptions,
+from fivcplayground.speeches import (
+    SpeechRecognizeEvent,
+    SpeechRecognizeOption,
+    SpeechRecognizer,
+    SpeechSynthesisOption,
+    SpeechSynthesizer,
 )
 
-
-class TestSpeechAudioInput:
-    def test_requires_exactly_one_source(self):
-        with pytest.raises(ValidationError):
-            SpeechAudioInput()
-        with pytest.raises(ValidationError):
-            SpeechAudioInput(url="https://example.com/a.wav", data_b64="abc")
-
-    def test_accepts_url_or_base64(self):
-        by_url = SpeechAudioInput(url="https://example.com/a.wav")
-        by_b64 = SpeechAudioInput(data_b64="abc", format="mp3")
-        assert by_url.url == "https://example.com/a.wav"
-        assert by_b64.data_b64 == "abc"
-        assert by_b64.format == "mp3"
+from fivccliche.services.interfaces.agent_speeches import ISpeechProvider
 
 
 class TestFakeSpeechProvider:
@@ -42,20 +26,14 @@ class TestFakeSpeechProvider:
     async def test_clip_yields_configured_final(self):
         provider = FakeSpeechProvider(transcript="recognized clip")
         async with await provider.get_recognizer(
-            SpeechRecognizeOptions(language="zh", context="project fivc")
+            SpeechRecognizeOption(language="zh", context="project fivc")
         ) as recognizer:
             assert isinstance(recognizer, FakeSpeechRecognizer)
-            events = [
-                event
-                async for event in recognizer.stream_async(
-                    SpeechAudioInput(url="https://example.com/a.wav"),
-                )
-            ]
+            events = [event async for event in recognizer.stream_async(b"\x00\x01\x02")]
         assert events == [
-            SpeechEvent(type="final", text="recognized clip", language="zh"),
+            SpeechRecognizeEvent(type="final", text="recognized clip", language="zh"),
         ]
-        assert recognizer.last_audio is not None
-        assert recognizer.last_audio.url == "https://example.com/a.wav"
+        assert recognizer.last_chunks == [b"\x00\x01\x02"]
         assert recognizer.last_options is not None
         assert recognizer.last_options.context == "project fivc"
 
@@ -70,7 +48,7 @@ class TestFakeSpeechProvider:
         async with await provider.get_recognizer() as recognizer:
             events = [event async for event in recognizer.stream_async(chunks())]
         assert events == [
-            SpeechEvent(type="final", text="streamed hello", language="zh"),
+            SpeechRecognizeEvent(type="final", text="streamed hello", language="zh"),
         ]
         assert recognizer.last_chunks == [b"\x00\x01", b"\x02"]
 
@@ -89,7 +67,7 @@ class TestFakeSpeechProvider:
         provider = FakeSpeechProvider(audio=(b"left ", b"right"))
 
         async with await provider.get_synthesizer(
-            SpeechSynthesisOptions(voice="longxiaochun")
+            SpeechSynthesisOption(voice="longxiaochun")
         ) as synthesizer:
             audio = [chunk async for chunk in synthesizer.stream_async("hello")]
 
@@ -104,7 +82,7 @@ class TestFakeSpeechProvider:
             yield "world"
 
         async with await provider.get_synthesizer(
-            SpeechSynthesisOptions(voice="longxiaochun")
+            SpeechSynthesisOption(voice="longxiaochun")
         ) as synthesizer:
             audio = [chunk async for chunk in synthesizer.stream_async(text())]
 
@@ -113,20 +91,21 @@ class TestFakeSpeechProvider:
 
 class TestSpeechRecognizerInterface:
     def test_stream_is_async_generator_and_lifecycle_is_abstract(self):
-        assert inspect.isasyncgenfunction(ISpeechRecognizer.stream_async)
-        assert ISpeechRecognizer.__aenter__.__isabstractmethod__
-        assert ISpeechRecognizer.__aexit__.__isabstractmethod__
-        assert ISpeechRecognizer.id.fget.__isabstractmethod__  # type: ignore[union-attr]
-        assert ISpeechRecognizer.get_option.__isabstractmethod__
-        assert ISpeechSynthesizer.id.fget.__isabstractmethod__  # type: ignore[union-attr]
-        assert ISpeechSynthesizer.get_option.__isabstractmethod__
+        assert inspect.isasyncgenfunction(FakeSpeechRecognizer.stream_async)
+        assert SpeechRecognizer.stream_async.__isabstractmethod__
+        assert SpeechRecognizer.__aenter__.__isabstractmethod__
+        assert SpeechRecognizer.__aexit__.__isabstractmethod__
+        assert SpeechRecognizer.id.fget.__isabstractmethod__  # type: ignore[union-attr]
+        assert SpeechRecognizer.get_option.__isabstractmethod__
+        assert SpeechSynthesizer.id.fget.__isabstractmethod__  # type: ignore[union-attr]
+        assert SpeechSynthesizer.get_option.__isabstractmethod__
 
-        class MissingLifecycle(ISpeechRecognizer):
+        class MissingLifecycle(SpeechRecognizer):
             async def stream_async(
                 self,
-                audio: SpeechAudioInput | AsyncIterator[bytes],
-            ) -> AsyncIterator[SpeechEvent]:
-                yield SpeechEvent(type="final")
+                audio: bytes | AsyncIterator[bytes],
+            ) -> AsyncIterator[SpeechRecognizeEvent]:
+                yield SpeechRecognizeEvent(type="final")
 
         with pytest.raises(TypeError, match="abstract"):
             MissingLifecycle()

@@ -5,29 +5,28 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any, Self
 
-from fivccliche.services.interfaces.agent_speeches import (
-    ISpeechProvider,
-    ISpeechRecognizer,
-    ISpeechSynthesizer,
-    SpeechAudioInput,
-    SpeechEvent,
-    SpeechRecognizeOptions,
-    SpeechSynthesisOptions,
+from fivcplayground.speeches import (
+    SpeechRecognizeEvent,
+    SpeechRecognizeOption,
+    SpeechRecognizer,
+    SpeechSynthesisOption,
+    SpeechSynthesizer,
 )
 
+from fivccliche.services.interfaces.agent_speeches import ISpeechProvider
 
-class FakeSpeechRecognizer(ISpeechRecognizer):
+
+class FakeSpeechRecognizer(SpeechRecognizer):
     """Yields one configured ``final`` event after consuming the audio input."""
 
     def __init__(
         self,
         transcript: str,
-        options: SpeechRecognizeOptions | None = None,
+        options: SpeechRecognizeOption | None = None,
         *,
         speech_id: str = "",
     ) -> None:
         self.transcript = transcript
-        self.last_audio: SpeechAudioInput | None = None
         self.last_options = options
         self.last_chunks: list[bytes] = []
         self._id = speech_id
@@ -36,8 +35,8 @@ class FakeSpeechRecognizer(ISpeechRecognizer):
     def id(self) -> str:
         return self._id
 
-    def get_option(self) -> SpeechRecognizeOptions:
-        return self.last_options or SpeechRecognizeOptions()
+    def get_option(self) -> SpeechRecognizeOption:
+        return self.last_options or SpeechRecognizeOption()
 
     async def __aenter__(self) -> Self:
         return self
@@ -47,19 +46,21 @@ class FakeSpeechRecognizer(ISpeechRecognizer):
 
     async def stream_async(
         self,
-        audio: SpeechAudioInput | AsyncIterator[bytes],
-    ) -> AsyncIterator[SpeechEvent]:
-        if isinstance(audio, SpeechAudioInput):
-            self.last_audio = audio
-            self.last_chunks = []
+        audio: bytes | AsyncIterator[bytes],
+    ) -> AsyncIterator[SpeechRecognizeEvent]:
+        if isinstance(audio, (bytes, bytearray)):
+            self.last_chunks = [bytes(audio)]
         else:
-            self.last_audio = None
             chunks: list[bytes] = []
             async for chunk in audio:
                 chunks.append(chunk)
             self.last_chunks = chunks
         language = self.last_options.language if self.last_options is not None else None
-        yield SpeechEvent(type="final", text=self.transcript, language=language or "zh")
+        yield SpeechRecognizeEvent(
+            type="final",
+            text=self.transcript,
+            language=language or "zh",
+        )
 
 
 class FakeSpeechProvider(ISpeechProvider):
@@ -78,13 +79,13 @@ class FakeSpeechProvider(ISpeechProvider):
 
     async def get_recognizer(
         self,
-        options: SpeechRecognizeOptions | None = None,
+        options: SpeechRecognizeOption | None = None,
         *,
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
         **kwargs: Any,
-    ) -> ISpeechRecognizer:
+    ) -> SpeechRecognizer:
         speech_id = kwargs.get("id")
         return FakeSpeechRecognizer(
             self.transcript,
@@ -94,13 +95,13 @@ class FakeSpeechProvider(ISpeechProvider):
 
     async def get_synthesizer(
         self,
-        options: SpeechSynthesisOptions | None = None,
+        options: SpeechSynthesisOption | None = None,
         *,
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
         **kwargs: Any,
-    ) -> ISpeechSynthesizer:
+    ) -> SpeechSynthesizer:
         speech_id = kwargs.get("id")
         return FakeSpeechSynthesizer(
             self.audio,
@@ -109,13 +110,13 @@ class FakeSpeechProvider(ISpeechProvider):
         )
 
 
-class FakeSpeechSynthesizer(ISpeechSynthesizer):
+class FakeSpeechSynthesizer(SpeechSynthesizer):
     """Yields configured audio after recording the synthesis input."""
 
     def __init__(
         self,
         audio: tuple[bytes, ...],
-        options: SpeechSynthesisOptions | None,
+        options: SpeechSynthesisOption | None,
         *,
         speech_id: str = "",
     ) -> None:
@@ -128,8 +129,8 @@ class FakeSpeechSynthesizer(ISpeechSynthesizer):
     def id(self) -> str:
         return self._id
 
-    def get_option(self) -> SpeechSynthesisOptions:
-        return self.options or SpeechSynthesisOptions(voice="")
+    def get_option(self) -> SpeechSynthesisOption:
+        return self.options or SpeechSynthesisOption(voice="")
 
     async def __aenter__(self) -> Self:
         return self

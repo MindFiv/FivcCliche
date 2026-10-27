@@ -8,12 +8,9 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from fivcplayground.speeches import SpeechError, SpeechRecognizeEvent, SpeechSynthesisOption
+
 from fivccliche.services.implements.agent_speeches.fake import FakeSpeechProvider
-from fivccliche.services.interfaces.agent_speeches import (
-    SpeechEvent,
-    SpeechRequestError,
-    SpeechSynthesisOptions,
-)
 from tests.conftest import make_api_client
 
 
@@ -655,7 +652,7 @@ class TestASRConfigAPI:
     def test_probe_asr_config_unauthorized(self, client: TestClient):
         response = client.post(
             "/configs/asrs/nonexistent/probe/",
-            json={"url": "https://example.com/a.wav"},
+            json={"data_b64": "YWJj"},
         )
         assert response.status_code == 401
 
@@ -689,7 +686,7 @@ class TestASRConfigAPI:
             response = client.post(
                 f"/configs/asrs/{config_uuid}/probe/",
                 headers={"Authorization": f"Bearer {auth_token}"},
-                json={"url": "https://example.com/a.wav", "language": "zh"},
+                json={"data_b64": "YWJj", "language": "zh"},
             )
 
         assert response.status_code == 200
@@ -711,7 +708,7 @@ class TestASRConfigAPI:
             response = client.post(
                 "/configs/asrs/nonexistent/probe/",
                 headers={"Authorization": f"Bearer {auth_token}"},
-                json={"url": "https://example.com/a.wav"},
+                json={"data_b64": "YWJj"},
             )
         assert response.status_code == 404
 
@@ -734,12 +731,12 @@ class TestASRConfigAPI:
             response = client.post(
                 f"/configs/asrs/{config_uuid}/probe/",
                 headers={"Authorization": f"Bearer {auth_token}"},
-                json={"url": "https://example.com/a.wav"},
+                json={"data_b64": "YWJj"},
             )
         assert response.status_code == 503
         get_provider.assert_awaited_once_with("dashscope_realtime")
 
-    def test_probe_asr_config_requires_one_source(self, client: TestClient, auth_token: str):
+    def test_probe_asr_config_requires_data_b64(self, client: TestClient, auth_token: str):
         create_response = client.post(
             "/configs/asrs/",
             headers={"Authorization": f"Bearer {auth_token}"},
@@ -757,13 +754,7 @@ class TestASRConfigAPI:
             headers=headers,
             json={},
         )
-        both = client.post(
-            f"/configs/asrs/{config_uuid}/probe/",
-            headers=headers,
-            json={"url": "https://example.com/a.wav", "data_b64": "abc"},
-        )
         assert missing.status_code == 422
-        assert both.status_code == 422
 
     def test_probe_asr_config_error_event(self, client: TestClient, auth_token: str):
         create_response = client.post(
@@ -779,7 +770,7 @@ class TestASRConfigAPI:
         config_uuid = create_response.json()["uuid"]
 
         async def stream_async(_audio):
-            yield SpeechEvent(type="error", message="boom")
+            yield SpeechRecognizeEvent(type="error", message="boom")
 
         recognizer = MagicMock()
         recognizer.stream_async = stream_async
@@ -798,7 +789,7 @@ class TestASRConfigAPI:
             response = client.post(
                 f"/configs/asrs/{config_uuid}/probe/",
                 headers={"Authorization": f"Bearer {auth_token}"},
-                json={"url": "https://example.com/a.wav"},
+                json={"data_b64": "YWJj"},
             )
 
         assert response.status_code == 200
@@ -822,8 +813,8 @@ class TestASRConfigAPI:
 
             async def stream_async(self, audio):
                 captured["chunks"] = [chunk async for chunk in audio]
-                yield SpeechEvent(type="partial", text="北", language="zh")
-                yield SpeechEvent(type="final", text="北京。", language="zh")
+                yield SpeechRecognizeEvent(type="partial", text="北", language="zh")
+                yield SpeechRecognizeEvent(type="final", text="北京。", language="zh")
 
         async def get_recognizer(options=None, **kwargs):
             captured["options"] = options
@@ -896,7 +887,7 @@ class TestASRConfigAPI:
                 async for chunk in audio:
                     captured.setdefault("chunks", []).append(chunk)
                 return
-                yield SpeechEvent(type="final")
+                yield SpeechRecognizeEvent(type="final")
 
         provider = MagicMock()
         provider.get_recognizer = AsyncMock(return_value=Recognizer())
@@ -927,7 +918,7 @@ class TestASRConfigAPI:
                 return None
 
             async def stream_async(self, _audio):
-                yield SpeechEvent(type="error", message="vendor failed")
+                yield SpeechRecognizeEvent(type="error", message="vendor failed")
 
         provider = MagicMock()
         provider.get_recognizer = AsyncMock(return_value=Recognizer())
@@ -1104,7 +1095,7 @@ class TestTTSConfigAPI:
         assert captured["kwargs"]["api_key"] == "sk-probe"
         assert captured["kwargs"]["model"] == "qwen-audio-3.1-tts-flash"
         assert captured["kwargs"]["base_url"] == "https://dashscope.aliyuncs.com"
-        assert captured["options"] == SpeechSynthesisOptions(
+        assert captured["options"] == SpeechSynthesisOption(
             voice="",
             format="pcm",
             sample_rate=24000,
@@ -1182,7 +1173,7 @@ class TestTTSConfigAPI:
         config_uuid = create_response.json()["uuid"]
 
         async def stream_async(_text):
-            raise SpeechRequestError("boom")
+            raise SpeechError("boom")
             yield b""
 
         synthesizer = MagicMock()
@@ -1245,7 +1236,7 @@ class TestTTSConfigAPI:
         assert captured["kwargs"]["api_key"] == "sk-probe"
         assert captured["kwargs"]["model"] == "qwen-tts-realtime"
         assert captured["kwargs"]["base_url"] == "wss://dashscope.example.com"
-        assert captured["options"] == SpeechSynthesisOptions(
+        assert captured["options"] == SpeechSynthesisOption(
             voice="",
             format="pcm",
             sample_rate=24000,
@@ -1357,7 +1348,7 @@ class TestTTSConfigAPI:
         config_uuid = self._create_realtime_tts(client, auth_token)
 
         async def stream_async(_text):
-            raise SpeechRequestError("vendor failed")
+            raise SpeechError("vendor failed")
             yield b""
 
         synthesizer = MagicMock()

@@ -21,12 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fivcplayground.tools import create_tool_retriever_async
 
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
-from fivccliche.services.interfaces.agent_speeches import (
-    SpeechAudioInput,
-    SpeechRecognizeOptions,
-    SpeechRequestError,
-    SpeechSynthesisOptions,
-)
+from fivcplayground.speeches import SpeechError, SpeechRecognizeOption, SpeechSynthesisOption
 from fivccliche.utils.deps import (
     IUser,
     get_authenticated_user_async,
@@ -59,6 +54,16 @@ def _reject_frozen_agent_delete(config, _user) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Agent config is frozen and cannot be deleted",
         )
+
+
+def _decode_audio_b64(data_b64: str) -> bytes:
+    payload = data_b64
+    if payload.startswith("data:"):
+        _, _, payload = payload.partition(",")
+    try:
+        return base64.b64decode(payload, validate=True)
+    except Exception as exc:
+        raise ValueError("Invalid Base64 audio") from exc
 
 
 # ============================================================================
@@ -406,9 +411,9 @@ async def probe_asr_config_async(
             detail="Speech provider is not mounted",
         )
 
-    options = SpeechRecognizeOptions(
+    options = SpeechRecognizeOption(
         language=probe.language,
-        hotwords=probe.hotwords,
+        hot_words=probe.hotwords,
         context=probe.context,
         format=probe.format,
     )
@@ -421,9 +426,21 @@ async def probe_asr_config_async(
                 model=model,
                 base_url=base_url,
             ) as recognizer:
-                async for event in recognizer.stream_async(
-                    SpeechAudioInput(url=probe.url, data_b64=probe.data_b64, format=probe.format),
-                ):
+                try:
+                    audio = _decode_audio_b64(probe.data_b64)
+                except ValueError as exc:
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "event": "error",
+                                "info": {"message": str(exc)},
+                            }
+                        )
+                        + "\n\n"
+                    )
+                    return
+                async for event in recognizer.stream_async(audio):
                     if event.type == "error":
                         yield (
                             "data: "
@@ -448,7 +465,7 @@ async def probe_asr_config_async(
                         )
                         + "\n\n"
                     )
-        except SpeechRequestError as exc:
+        except SpeechError as exc:
             yield (
                 "data: "
                 + json.dumps(
@@ -536,9 +553,9 @@ async def probe_realtime_asr_config_async(
             )
             return
 
-        options = SpeechRecognizeOptions(
+        options = SpeechRecognizeOption(
             language=start_frame.get("language"),
-            hotwords=start_frame.get("hotwords"),
+            hot_words=start_frame.get("hotwords"),
             context=start_frame.get("context"),
             format="pcm",
             sample_rate=16000,
@@ -550,7 +567,7 @@ async def probe_realtime_asr_config_async(
                 model=asr_model,
                 base_url=base_url,
             )
-        except SpeechRequestError as exc:
+        except SpeechError as exc:
             await channel.fail_async(
                 code="recognition_failed",
                 message=str(exc) or "Speech recognition failed",
@@ -620,9 +637,7 @@ async def probe_realtime_asr_config_async(
                         {"event": "complete", "info": {"text": "".join(final_parts)}}
                     )
             except Exception as exc:
-                message = (
-                    str(exc) if isinstance(exc, SpeechRequestError) else "Speech recognition failed"
-                )
+                message = str(exc) if isinstance(exc, SpeechError) else "Speech recognition failed"
                 await output_queue.put(
                     {
                         "event": "error",
@@ -810,7 +825,7 @@ async def probe_tts_config_async(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Speech provider is not mounted",
         )
-    options = SpeechSynthesisOptions(
+    options = SpeechSynthesisOption(
         voice=probe.voice,
         format=probe.format,
         sample_rate=probe.sample_rate,
@@ -833,7 +848,7 @@ async def probe_tts_config_async(
                         {"event": "audio", "info": {"data_b64": encoded}}
                     ) + "\n\n"
             yield "data: " + json.dumps({"event": "complete", "info": {}}) + "\n\n"
-        except SpeechRequestError as exc:
+        except SpeechError as exc:
             yield (
                 "data: " + json.dumps({"event": "error", "info": {"message": str(exc)}}) + "\n\n"
             )
@@ -916,7 +931,7 @@ async def probe_realtime_tts_config_async(
             )
             return
 
-        options = SpeechSynthesisOptions(
+        options = SpeechSynthesisOption(
             voice=probe.voice,
             format=probe.format,
             sample_rate=probe.sample_rate,
@@ -939,7 +954,7 @@ async def probe_realtime_tts_config_async(
             await channel.send_json_async({"event": "complete", "info": {}})
         except (RuntimeError, WebSocketDisconnect):
             return
-        except SpeechRequestError as exc:
+        except SpeechError as exc:
             await channel.fail_async(
                 code="synthesis_failed",
                 message=str(exc) or "Speech synthesis failed",

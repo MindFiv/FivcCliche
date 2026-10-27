@@ -1,9 +1,11 @@
+import base64
 import json
 
 from fivccliche.modules.agent_configs.filters import UserScopedReadableFilterSet
 from fivccliche.modules.agent_configs.models import UserASR
 from fivccliche.modules.agent_configs.utils import get_user_scoped_async
-from fivccliche.services.interfaces.agent_speeches import SpeechAudioInput, SpeechRecognizeOptions
+from fivcplayground.speeches import SpeechRecognizeOption
+
 from fivccliche.utils.deps import get_db_session_context_async, get_speech_provider_async
 
 
@@ -11,8 +13,7 @@ class SpeechTranscribe:
     """Transcribe a complete audio clip for the current user.
 
     Args:
-        url: Publicly reachable audio URL.
-        data_b64: Base64-encoded audio (without a URL).
+        data_b64: Base64-encoded audio.
         audio_format: Clip format, such as wav or mp3.
         language: Optional language hint.
         hotwords: Optional list of terms to bias recognition.
@@ -26,8 +27,7 @@ class SpeechTranscribe:
 
     async def __call__(
         self,
-        url: str | None = None,
-        data_b64: str | None = None,
+        data_b64: str,
         audio_format: str = "wav",
         language: str | None = None,
         hotwords: list[str] | None = None,
@@ -35,6 +35,14 @@ class SpeechTranscribe:
     ) -> str:
         if not self.user_uuid:
             raise ValueError("No user_uuid specified")
+
+        payload = data_b64
+        if payload.startswith("data:"):
+            _, _, payload = payload.partition(",")
+        try:
+            audio = base64.b64decode(payload, validate=True)
+        except Exception as exc:
+            raise ValueError("Invalid Base64 audio") from exc
 
         async with get_db_session_context_async() as session:
             asr = await get_user_scoped_async(
@@ -52,9 +60,9 @@ class SpeechTranscribe:
         if speech_provider is None:
             raise ValueError("No speech provider specified")
 
-        options = SpeechRecognizeOptions(
+        options = SpeechRecognizeOption(
             language=language,
-            hotwords=hotwords,
+            hot_words=hotwords,
             context=context,
             format=audio_format,
         )
@@ -66,9 +74,7 @@ class SpeechTranscribe:
             model=asr.model,
             base_url=asr.base_url,
         ) as recognizer:
-            async for event in recognizer.stream_async(
-                SpeechAudioInput(url=url, data_b64=data_b64, format=audio_format),
-            ):
+            async for event in recognizer.stream_async(audio):
                 if event.type == "final":
                     text = event.text
                     detected_language = event.language

@@ -68,7 +68,7 @@ Question list uses [`QuestionFilterSet`](../src/fivccliche/modules/agent_configs
 - `?description_contains=` case-insensitive literal substring match on `UserChat.description`; LIKE wildcards are escaped, empty values do not filter, and `NULL` descriptions do not match
 - `?created_at_from=` / `?created_at_to=` inclusive bounds (`>=` / `<=`) on `UserChat.created_at` (response field remains `started_at`)
 - `?updated_at_from=` / `?updated_at_to=` inclusive bounds (`>=` / `<=`) on `UserChat.updated_at`
-- `?context.<key>=<value>` exact match on a top-level JSON key of `context` (one level only). `UserChat.context` stays a persisted dict. `context.asr_id` selects the UserASR config id used for WebSocket audio (default `"default"`). `UserChatProviderImpl.get_chat_context` returns a copy of that JSON plus `user_uuid`, merged `**kwargs` (for example `chat_uuid`), default `timezone` (`Asia/Shanghai`), and a lazy `time` whose `__str__` computes a timezone-aware ISO string and is not persisted. `create_chat_run` binds the chat context; `UserChatRunImpl` calls `get_chat_context` when the run executes and passes the result to the agent stream.
+- `?context.<key>=<value>` exact match on a top-level JSON key of `context` (one level only). `UserChat.context` stays a persisted dict. `context.asr_id` / `context.tts_id` select the UserASR and UserTTS rows for WebRTC voice; when the offer omits them, the session falls back to `"realtime"`. `UserChatProviderImpl.get_chat_context` returns a copy of that JSON plus `user_uuid`, merged `**kwargs` (for example `chat_uuid`), default `timezone` (`Asia/Shanghai`), and a lazy `time` whose `__str__` computes a timezone-aware ISO string and is not persisted. `create_chat_run` binds the chat context; `UserChatRunImpl` calls `get_chat_context` when the run executes and passes the result to the agent stream.
 - Playground `AgentRunSession.context` maps to this persisted value. A repository-created session defaults to an empty JSON object; HTTP-created chats may omit context and remain null, while repository updates use the session context.
 - Repeated paths use the last value
 - Nested keys such as `context.profile.uuid` return 422; bare `context=` is invalid if passed into `parse`
@@ -90,17 +90,15 @@ The handler looks up the chat via Editable (404 if missing), acquires mutex `cha
 
 ### WebSocket `/{chat_uuid}/`
 
-Full-duplex voice sessions run on **Pipecat** (`fivcplayground.backends.pipecat`) via [`process_chat_speech_async`](../src/fivccliche/utils/chats/speeches.py). Text SSE still uses Strands `stream_async`; voice does **not**.
+Full-duplex voice uses **WebSocket signaling + Pipecat SmallWebRTC media** (`pipecat-ai[webrtc]`) via [`process_chat_speech_async`](../src/fivccliche/utils/chats/speeches.py). Text SSE still uses Strands `stream_async`. ASR and TTS probes stay on their own WebSockets; chat media does not ride the chat socket.
 
-Protocol (breaking vs the former JSON media loop):
+1. [`ChatChannel`](../src/fivccliche/utils/chats/channels.py) accepts `WEBSOCKET /api/chats/{chat_uuid}/` and requires a first-frame JWT `auth`, then a JSON `offer` (`sdp`, `sdp_type`, optional `pc_id` / `restart_pc`, plus `asr_id` / `tts_id` / `language` / `voice`). Missing ids fall back to `chat.context`, then `"realtime"`.
+2. The handler loads the chat with `get_chat_async` and uses `chat.to_schema()` as the session snapshot, then loads `dashscope_realtime` ASR/TTS in short DB sessions. Failures use `channel.fail_async` before the SDP answer: missing chat or config `4404`, bad params / non-realtime `model_type` `1003`, missing provider `1013`.
+3. `SmallWebRTCRequestHandler` (one per process, on `app.state.chat_webrtc`) builds the answer. The connection callback only schedules `process_chat_speech_async`; it does not wait for the call to end. The socket sends `{"event":"answer","info":{...}}` with `sdp`, `type`, `pc_id`, `asr_id`, `tts_id`, and `input` / `output` format and sample rate (PCM 16 kHz in, PCM 24 kHz out).
+4. Later `{"type":"ice","pc_id":"...","candidates":[...]}` frames call `handle_patch_request`. The peer must belong to the same user and chat; otherwise the socket closes `4404`.
+5. The background task builds `SmallWebRTCTransport` and calls `agent.run_async(transport=..., stt=recognizer, tts=synthesizer, vad=SileroVADAnalyzer(sample_rate=16000), ...)`. Playground enters and exits the recognizer and synthesizer when the pipeline starts and cleans up. The mutex `chats:message:{uuid}` is acquired inside that task. If the agent, model, or mutex is unavailable after the answer, the task disconnects the peer.
 
-1. [`ChatChannel`](../src/fivccliche/utils/chats/channels.py) accepts the socket and requires a first-frame JWT `auth`, then a JSON `start` (`asr_id` / `tts_id` / `language` / `voice`; defaults from `chat.context` then `"realtime"`).
-2. The router loads chat + `dashscope_realtime` ASR/TTS inside short DB sessions, opens `ISpeechRecognizer` / `ISpeechSynthesizer`, and fails with `channel.fail_async` on missing configs or wrong `model_type`.
-3. The session sends a JSON `ready` (`asr_id`, `tts_id`, `input` / `output` format and sample rate), acquires `chats:message:{uuid}` (same mutex as SSE), then hands the WebSocket to `FastAPIWebsocketTransport` with `ProtobufFrameSerializer`.
-4. Media after `ready` is **Protobuf** (Pipecat frames). Clients must not send the old `vad` / `stop` JSON control frames for audio turn-taking; Silero VAD lives inside [`SpeechSTTService`](../src/fivccliche/utils/chats/speeches.py).
-5. ASR/TTS adapters wrap the opened `ISpeech*` objects. The agent LLM must use provider `openai` or `ollama` (Pipecat model backend). Optional `AgentConfig.extra` keys `pipeline_params` / `idle_timeout_secs` are honored by playground.
-
-Startup failures raise `ChatChannelError`. Disconnect or idle timeout ends `run_async`.
+The voice LLM must use provider `openai` or `ollama` (Pipecat model backend). A Pipecat OpenAI model with `base_url` set defaults `supports_developer_role` to false, because compatible gateways reject the `developer` role. Set `ModelConfig.extra["supports_developer_role"]` to true to turn it back on. Optional `AgentConfig.extra` keys `pipeline_params` / `idle_timeout_secs` are honored by playground.
 
 `UserChat.updated_at` is set equal to `created_at` on create. It is refreshed when a new message is created (`create_chat_message_async`) and when a description is written (`PATCH /{chat_uuid}/`, `ChatDescribeJob`, and repository session description updates). Updating an existing message does not refresh it. List order stays `created_at` descending.
 

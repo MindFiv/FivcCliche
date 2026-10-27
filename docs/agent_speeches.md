@@ -1,27 +1,38 @@
 # Speech recognition and synthesis
 
-FivcCliche exposes an implementation-agnostic speech contract so chat and tools
-can transcribe audio without depending on a vendor SDK. `ISpeechProvider` is a
-factory; recognition runs on `ISpeechRecognizer` and synthesis runs on
-`ISpeechSynthesizer`. Default YAML registers two DashScope providers:
-`dashscope` for native HTTP and `dashscope_realtime` for WebSocket protocols.
-Both providers expose recognizers and synthesizers.
+FivcCliche exposes a multi-user speech factory so chat and tools can transcribe
+and synthesize audio. Recognition and synthesis types come from
+`fivcplayground.speeches` (`SpeechRecognizer`, `SpeechSynthesizer`,
+`SpeechRecognizeOption`, `SpeechSynthesisOption`, `SpeechRecognizeEvent`,
+`SpeechError`). `ISpeechProvider` creates those objects from a caller-supplied
+`api_key`, `model`, and `base_url`. `stream_async` accepts
+`bytes | AsyncIterator[bytes]`. HTTP probes and `SpeechTranscribe` decode
+Base64 to `bytes` before calling; audio fragment URLs are not supported.
+Vendor failures raise `SpeechError`.
 
-Full-duplex chat voice (`WEBSOCKET /api/chats/{chat_uuid}/`) uses Pipecat
-(`fivcplayground[pipecat]`) with adapters in
-[`speeches.py`](../src/fivccliche/utils/chats/speeches.py) that wrap
-these `ISpeech*` objects as Pipecat `STTService` / `TTSService`. Probe routes and
-the `SpeechTranscribe` tool still call `ISpeech*` directly. Text chat SSE does
-not use speech.
+Default YAML registers two DashScope providers: `dashscope` for native HTTP and
+`dashscope_realtime` for the DashScope SDK streaming ASR and TTS. Both expose
+recognizers and synthesizers.
+
+Full-duplex chat voice is WebSocket signaling plus Pipecat SmallWebRTC media
+(`WEBSOCKET /api/chats/{chat_uuid}/`).
+[`process_chat_speech_async`](../src/fivccliche/utils/chats/speeches.py) passes
+the playground recognizer and synthesizer as `stt` / `tts` and a Silero
+`SileroVADAnalyzer` as `vad`. Probe routes and `SpeechTranscribe` still call
+`stream_async` directly. Text chat SSE does not use speech.
+
+A Pipecat OpenAI model with `base_url` set defaults `supports_developer_role` to
+false, because compatible gateways reject the `developer` role. Set
+`ModelConfig.extra["supports_developer_role"]` to true to turn it back on.
 
 ## Status
 
-- Interface + optional `ISpeechProvider` (DI + `get_speech_provider_async`)
+- `ISpeechProvider` (DI + `get_speech_provider_async`) plus playground speech types
 - Fake provider for tests (`FakeSpeechProvider`)
-- DashScope HTTP and Realtime providers (each file is one implementation)
-- Function tool `SpeechTranscribe` for later `transport=function` wiring
+- DashScope HTTP provider and DashScope SDK realtime provider
+- Function tool `SpeechTranscribe` for `transport=function` wiring
 - DashScope TTS and `UserTTS` / `UserASR` probe configuration
-- Chat voice WebSocket: Pipecat pipeline + `SpeechSTTService` / `SpeechTTSService`
+- Chat voice: Pipecat SmallWebRTC, with VAD passed through `vad=`
 
 The native HTTP `dashscope` provider supports:
 
@@ -33,53 +44,41 @@ The native HTTP `dashscope` provider supports:
   `qwen-audio-3.1-tts-flash`, and `qwen-audio-3.0-tts-flash`. Other TTS model
   families are rejected by this provider.
 
-The `dashscope_realtime` provider currently supports the DashScope Recognition
-WebSocket protocol with `qwen-audio-3.1-asr-flash-streaming` and two TTS
-protocols: Qwen-TTS Realtime and the DashScope SpeechSynthesizer task protocol.
-Fun-ASR realtime,
-Paraformer realtime, and asynchronous file transcription are not integrated
-yet. Recognition currently sends only audio format, sample rate, and
-`SpeechRecognizeOptions.extra`; language, ITN, hotwords, and context are not
-sent for this protocol.
+The `dashscope_realtime` provider uses `dashscope.audio.asr.Recognition`
+(default model `qwen-audio-3.1-asr-flash-streaming`, PCM 16 kHz) and
+`dashscope.audio.tts_v2.SpeechSynthesizer` (default model
+`qwen-audio-3.1-tts-flash`, voice `longanhuan_v3.1`, PCM 24 kHz). The
+recognizer implements `begin_utterance` / `push_audio` / `end_utterance` /
+`cancel_utterance` so playground's Pipecat STT service can push audio while the
+user is speaking. `stream_async` uses the same utterance API with
+`bytes | AsyncIterator[bytes]` and sends PCM frames. Fun-ASR realtime,
+Paraformer realtime, and asynchronous file transcription are not integrated.
+Recognition sends audio format, sample rate, and the resolved WebSocket URL;
+language, ITN, hotwords, and context stay on `SpeechRecognizeOption` and are not
+forwarded to the SDK.
 
 ## Interfaces
 
-Defined in `src/fivccliche/services/interfaces/agent_speeches.py`:
+Playground types live in `fivcplayground.speeches`. This repository adds the
+factory in `src/fivccliche/services/interfaces/agent_speeches.py`:
 
-- `ISpeechProvider.get_recognizer(options=None, *, api_key=None, model=None, base_url=None)`
-  — abstract factory. Optional `api_key` / `model` / `base_url` are supplied by
-  the caller, normally from a database config row.
-- `ISpeechRecognizer` is an async context manager (`async with`)
-- `ISpeechRecognizer.id` is the caller-supplied config id (`id=` on the factory)
-- `ISpeechRecognizer.get_option()` returns the `SpeechRecognizeOptions` captured
-  at construction
-- `ISpeechRecognizer.stream_async(audio)` — async iterator of `SpeechEvent`
-  (`partial` / `final` / `error`)
-- `ISpeechProvider.get_synthesizer(options=None, *, api_key=None, model=None, base_url=None)`
-  — abstract factory; providers that do not support synthesis reject it with
-  `SpeechRequestError`
-- `ISpeechSynthesizer` is an async context manager and
-  `stream_async(text)` is an async iterator of encoded audio bytes; `text` is
-  either a string or an `AsyncIterator[str]`
-- `ISpeechSynthesizer.id` is the caller-supplied config id
-- `ISpeechSynthesizer.get_option()` returns the `SpeechSynthesisOptions`
-  captured at construction, including provider defaults when options were omitted
-- `SpeechSynthesisOptions` are passed at factory time. A provider may apply
-  defaults when they are omitted; when supplied, `voice` is required, and
-  format, sample rate, volume, speech rate, pitch, and vendor extras are
+- `ISpeechProvider.get_recognizer(options=None, *, api_key=None, model=None, base_url=None, id=...)`
+  returns a `SpeechRecognizer`. Optional `api_key` / `model` / `base_url` come
+  from a database config row. `id` is that row's config id.
+- `SpeechRecognizer` is an async context manager. `id` and `get_option()`
+  expose the config id and the captured `SpeechRecognizeOption` (`hot_words`,
+  not `hotwords`). `stream_async` yields `SpeechRecognizeEvent` (`partial` /
+  `final` / `error`).
+- `ISpeechProvider.get_synthesizer(...)` returns a `SpeechSynthesizer`.
+  `stream_async(text)` yields encoded audio bytes; `text` is a string or an
+  `AsyncIterator[str]`.
+- `SpeechSynthesisOption` is captured at factory time. An empty `voice` selects
+  the provider default. Format, sample rate, volume, speech rate, and pitch are
   request parameters and are not persisted on `UserTTS`.
-- `audio` is either `SpeechAudioInput` (URL or Base64 clip) or
-  `AsyncIterator[bytes]` (one utterance; exhaustion is the commit)
-- `SpeechRecognizeOptions` are passed at factory time (language, ITN, hotwords,
-  context, PCM format hints)
-- Vendor HTTP/WS failures raise `SpeechRequestError`
-
-Callers do not choose clip vs stream at the recognizer API. Lookup a named
-provider via `get_speech_provider_async`. Flash buffers a byte stream and POSTs
-it; URL clips are passed through to DashScope. Realtime constructs in
-`get_recognizer` and opens the vendor session in `__aenter__`. Realtime converts
-`data_b64` to bytes and fetches `url` before sending audio as binary frames in
-12800-byte chunks. Business code should not import DashScope response types.
+- HTTP probe bodies keep the field name `hotwords`. Callers map it to
+  `SpeechRecognizeOption.hot_words`. ASR probe bodies require `data_b64`
+  (decoded to `bytes` before recognition).
+- Vendor failures raise `SpeechError`.
 
 ```python
 async with await speech_provider.get_recognizer(options) as recognizer:
@@ -92,6 +91,9 @@ async with await speech_provider.get_synthesizer(options) as synthesizer:
     async for audio_chunk in synthesizer.stream_async("你好"):
         ...
 ```
+
+Chat voice does not enter the recognizer in the route. Playground enters and
+exits it when the Pipecat pipeline starts and cleans up.
 
 ## Configuration
 
@@ -111,18 +113,17 @@ two DashScope providers:
 
 ```
 
-`get_speech_provider_async(name)` looks up a named DashScope implementation.
-Each provider keeps ASR and TTS defaults separate in `ASR_*` and `TTS_*`
-settings.
-Chat WebSocket ASR, `SpeechTranscribe`, and ASR probe do **not** use the default
-name directly: they load a [`UserASR`](../src/fivccliche/modules/agent_configs/models.py)
-row (`POST /api/configs/asrs/`) and pass `model_type` as `name`. If that row or
-provider is missing, WebSocket audio fails with `speech_unavailable`,
-`SpeechTranscribe` raises `ValueError`, and probe returns 503.
+`get_speech_provider_async(name)` looks up a named implementation.
+`SpeechTranscribe` and the ASR probe do **not** use a hard-coded name: they
+load a [`UserASR`](../src/fivccliche/modules/agent_configs/models.py) row
+(`POST /api/configs/asrs/`) and pass `model_type` as `name`. If that row or
+provider is missing, WebRTC voice returns 404 or 503, `SpeechTranscribe` raises
+`ValueError`, and the HTTP probe returns 503.
 
 `POST /api/configs/asrs/{config_uuid}/probe/` transcribes one clip against that
-config (`url` or `data_b64`, optional `format` / `language` / `hotwords` /
-`context`) as SSE (`text/event-stream`), one `SpeechEvent` per `data:` line:
+config (required `data_b64`, optional `format` / `language` / `hotwords` /
+`context`) as SSE (`text/event-stream`), one `SpeechRecognizeEvent` per `data:`
+line:
 
 ```
 data: {"event": "partial", "info": {"text": "...", "language": "zh"}}
@@ -135,26 +136,20 @@ data: {"event": "error", "info": {"message": "..."}}
 Missing config is 404; missing provider is 503. Recognition failures after the
 stream starts are SSE `error` events (HTTP 200), not 400.
 
-DashScope WebSocket requests send only an instance-specific Bearer API key.
-For a MaaS host, the workspace is encoded in the host itself as
-`<workspace>.<region>.maas.aliyuncs.com`; do not send
-`X-DashScope-WorkSpace`. Handshake failures include the DashScope response
-body when the gateway supplies one; API keys are never included. A 403 with
-`Endpoint.AccessDenied` means the workspace endpoint rejected the key or its
-model access—verify the workspace ID in the host, key membership, and model
-authorization.
+`dashscope_realtime` resolves `base_url` to the DashScope inference WebSocket
+(`wss://.../api-ws/v1/inference`). An HTTP origin becomes that socket; a
+`ws` / `wss` URL that already has a path is kept. `Recognition` receives
+`api_key` and `base_address` per session. `tts_v2` reads `dashscope.api_key`
+when the client is constructed and accepts `url=`, so the provider sets the key
+only inside a lock, passes the resolved URL, then restores the previous key.
+It does not call playground's process-global WebSocket URL helper. An empty
+realtime API key raises `SpeechError`. The HTTP provider still allows an empty
+key.
 
-`dashscope_realtime` defaults to `qwen-tts-realtime`, which uses DashScope's
-Qwen-TTS Realtime event protocol at `wss://.../api-ws/v1/realtime`. The
-provider adds `?model=<model>` to an HTTP origin or origin-only WebSocket URL
-and keeps a model already present in a complete URL.
-Its supported output formats are `pcm`, `wav`, `mp3`, and `opus`; PCM is the
-default and the sample rate must be 24000. The default voice is `Cherry`.
-
-Other realtime models such as `qwen-audio-3.1-tts-flash` continue to use the
-`wss://.../api-ws/v1/inference` task protocol and `finish-task`. That model
-defaults to `longanhuan_v3.1`; `Cherry` is rejected before opening a synthesis
-task.
+Realtime TTS passes `volume`, `speech_rate`, and `pitch_rate` from
+`SpeechSynthesisOption`. PCM sample rates supported by the SDK format enum are
+8000, 16000, 22050, 24000, 44100, and 48000. An empty voice selects
+`longanhuan_v3.1`.
 
 `dashscope` defaults to `qwen-audio-3.0-tts-flash` and POSTs to
 `/api/v1/services/audio/tts/SpeechSynthesizer`. It uses a non-streaming task
@@ -184,19 +179,20 @@ Missing config is 404, missing provider is 503, and synthesis failures after
 the stream starts are SSE `error` events.
 
 `dashscope_realtime` configs can also probe through
-`WEBSOCKET /api/configs/tts/{config_uuid}/probe/`. After first-frame JWT
-authentication, send one `start` JSON frame with the same request fields as the
-SSE probe:
+`WEBSOCKET /api/configs/tts/{config_uuid}/probe/` and
+`WEBSOCKET /api/configs/asrs/{config_uuid}/probe/`. The ASR socket still feeds a
+PCM async iterator into `stream_async`. The TTS socket still consumes
+`stream_async(text)`. After first-frame JWT authentication, the TTS probe
+expects one `start` JSON frame:
 
 ```json
 {"type":"start","text":"你好","voice":"","format":"pcm","sample_rate":24000,"volume":50,"speech_rate":1.0,"pitch_rate":1.0}
 ```
 
-The server emits JSON `{event, info}` events in the same envelope as the
-realtime ASR probe: `ready`, Base64 `audio`, then `complete`; it closes with
-`1000` on success. It closes `4404` for a missing config, `1003` for a
-non-realtime config or invalid start frame, `1013` when the provider is not
-mounted, and `1011` for synthesis failure. Errors use
+The server emits JSON `{event, info}` events: `ready`, Base64 `audio`, then
+`complete`; it closes with `1000` on success. It closes `4404` for a missing
+config, `1003` for a non-realtime config or invalid start frame, `1013` when
+the provider is not mounted, and `1011` for synthesis failure. Errors use
 `{"event":"error","info":{"code":"...","message":"..."}}`.
 
 ASR and TTS credentials are caller-supplied. Production callers load
@@ -209,24 +205,40 @@ speech_provider.get_recognizer(
     api_key=asr.api_key,
     model=asr.model,
     base_url=asr.base_url,
+    id=asr.id,
 )
 ```
 
 | Argument | Default when `None` | Meaning |
 |-----|---------|---------|
-| `api_key` | empty | DashScope API key |
-| `model` | Flash: `qwen3-asr-flash`; Realtime: `qwen-audio-3.1-asr-flash-streaming` | Model id for that provider |
-| `base_url` | `https://dashscope.aliyuncs.com` | HTTP origin or complete `ws://` / `wss://` endpoint; Flash derives its generation URL, Realtime derives `wss://.../api-ws/v1/inference` from an HTTP origin |
+| `api_key` | empty | DashScope API key. Realtime rejects an empty key |
+| `model` | HTTP: `qwen3-asr-flash`; Realtime: `qwen-audio-3.1-asr-flash-streaming` | Model id for that provider |
+| `base_url` | `https://dashscope.aliyuncs.com` | HTTP origin or complete `ws://` / `wss://` endpoint. HTTP ASR derives its generation URL. Realtime derives `wss://.../api-ws/v1/inference` |
 
 TTS uses the same arguments from a `UserTTS` row:
 
 | Argument | Default when `None` | Meaning |
 |-----|---------|---------|
-| `api_key` | empty | DashScope API key |
-| `model` | HTTP: `qwen-audio-3.0-tts-flash`; Realtime: `qwen-tts-realtime` | Model id for that provider |
-| `base_url` | `https://dashscope.aliyuncs.com` | HTTP origin or complete `ws://` / `wss://` endpoint; HTTP TTS derives the SpeechSynthesizer URL, Qwen-TTS Realtime derives `wss://.../api-ws/v1/realtime`, while other realtime models derive `wss://.../api-ws/v1/inference` |
+| `api_key` | empty | DashScope API key. Realtime rejects an empty key |
+| `model` | HTTP: `qwen-audio-3.0-tts-flash`; Realtime: `qwen-audio-3.1-tts-flash` | Model id for that provider |
+| `base_url` | `https://dashscope.aliyuncs.com` | HTTP origin or complete `ws://` / `wss://` endpoint. HTTP TTS derives the SpeechSynthesizer URL. Realtime derives `wss://.../api-ws/v1/inference` and passes it as `url=` |
 
 For tests, instantiate `FakeSpeechProvider(transcript="...")` directly.
+
+## Chat voice
+
+`WEBSOCKET /api/chats/{chat_uuid}/` uses [`ChatChannel`](../src/fivccliche/utils/chats/channels.py)
+first-frame JWT `auth`, then an `offer` JSON frame (`sdp`, `sdp_type`, optional
+`pc_id` / `restart_pc`, plus `asr_id` / `tts_id` / `language` / `voice`).
+Missing ids use `chat.context`, then `"realtime"`. Both rows must use
+`model_type=dashscope_realtime`. The server replies with
+`{"event":"answer","info":{...}}` (SDP answer plus `asr_id`, `tts_id`, and
+input/output format and sample rate). Later `ice` frames carry trickle ICE
+candidates for the `pc_id` created on that socket.
+
+The session task acquires `chats:message:{uuid}`, then runs
+`agent.run_async` with `SmallWebRTCTransport`, the SDK recognizer, the SDK
+synthesizer, and `vad=SileroVADAnalyzer(sample_rate=16000)`.
 
 ## Agent tool
 
@@ -238,14 +250,10 @@ a tool config (`transport=function`) whose `functions` point at the dotted path:
 `SpeechTranscribe` takes `**context` (expects `user_uuid`; optional `asr_id`,
 default `"default"`). It loads that UserASR row, calls
 `get_speech_provider_async(model_type)`, then `get_recognizer` with
-`api_key` / `model` / `base_url`, then `stream_async` with a `SpeechAudioInput`.
-Arguments: `url` or `data_b64`, optional `audio_format`, `language`, `hotwords`,
-`context`. Returns JSON `{ "text", "language" }` from the last `final` event.
+`api_key` / `model` / `base_url`, decodes `data_b64` to `bytes`, and calls
+`stream_async`. Arguments: required `data_b64`, optional `audio_format`,
+`language`, `hotwords`, `context`. `hotwords` is mapped to
+`SpeechRecognizeOption.hot_words`. Returns JSON `{ "text", "language" }` from
+the last `final` event.
 
-There is no separate listen tool. Streaming ASR is used by the voice chat WebSocket.
-
-## Later (not implemented)
-
-Reuse `ISpeechRecognizer.stream_async` with a long-lived PCM generator (no
-exhaustion until the voice session ends) for duplex turns. Do not turn the
-current one-shot WS into a duplex connection in this phase.
+Streaming duplex audio is the WebRTC session above, not this tool.

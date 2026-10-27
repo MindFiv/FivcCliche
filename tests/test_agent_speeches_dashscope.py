@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
-import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from websockets.datastructures import Headers
-from websockets.exceptions import InvalidStatus
-from websockets.http11 import Response
-
 import pytest
+
+from fivcplayground.speeches import (
+    SpeechError,
+    SpeechRecognizeEvent,
+    SpeechRecognizeOption,
+    SpeechSynthesisOption,
+)
 
 from fivccliche.services.implements.agent_speeches.dashscope import (
     _DEFAULT_GENERATION_URL,
@@ -28,24 +29,7 @@ from fivccliche.services.implements.agent_speeches.dashscope import (
     DashScopeSpeechProvider,
 )
 from fivccliche.services.implements.agent_speeches.dashscope_realtime import (
-    _connect_websockets,
-    _is_qwen_tts_realtime_model,
-    _qwen_tts_websocket_url,
-    _tts_start_frame,
-    _websocket_url,
-    _websocket_headers,
-    _DashScopeRealtimeRecognizer,
     DashScopeRealtimeSpeechProvider,
-)
-from fivccliche.services.implements.agent_speeches.dashscope_realtime import (
-    _DashScopeTTSSynthesizer,
-)
-from fivccliche.services.interfaces.agent_speeches import (
-    SpeechAudioInput,
-    SpeechEvent,
-    SpeechRecognizeOptions,
-    SpeechSynthesisOptions,
-    SpeechRequestError,
 )
 
 
@@ -84,7 +68,7 @@ def _qwen_audio_response(output: dict[str, Any]):
     return response
 
 
-async def _collect(recognizer, audio) -> list[SpeechEvent]:
+async def _collect(recognizer, audio) -> list[SpeechRecognizeEvent]:
     return [event async for event in recognizer.stream_async(audio)]
 
 
@@ -94,20 +78,19 @@ async def _collect_bytes(synthesizer, text) -> list[bytes]:
 
 class TestDashScopeMultimodalRecognizer:
     @pytest.mark.asyncio
-    async def test_recognize_posts_url_and_maps_transcript(self):
+    async def test_recognize_posts_bytes_as_data_uri(self):
         http_client = MagicMock()
         http_client.post = AsyncMock(return_value=_flash_response())
         recognizer = _DashScopeMultimodalRecognizer(
             api_key="sk-test",
             model="qwen3-asr-flash",
             http_client=http_client,
-            options=SpeechRecognizeOptions(language="zh", enable_itn=True, context="fivc"),
+            options=SpeechRecognizeOption(
+                language="zh", enable_itn=True, context="fivc", format="mp3"
+            ),
         )
         async with recognizer:
-            events = await _collect(
-                recognizer,
-                SpeechAudioInput(url="https://example.com/a.mp3", format="mp3"),
-            )
+            events = await _collect(recognizer, b"clip-bytes")
 
         http_client.post.assert_awaited_once()
         args, kwargs = http_client.post.call_args
@@ -118,25 +101,31 @@ class TestDashScopeMultimodalRecognizer:
         assert payload["model"] == "qwen3-asr-flash"
         messages = payload["input"]["messages"]
         assert messages[0] == {"role": "system", "content": [{"text": "fivc"}]}
-        assert messages[1]["content"][0]["audio"] == "https://example.com/a.mp3"
+        assert messages[1]["content"][0]["audio"] == (
+            "data:audio/mpeg;base64," + base64.b64encode(b"clip-bytes").decode("ascii")
+        )
         assert payload["parameters"]["asr_options"]["language"] == "zh"
         assert payload["parameters"]["asr_options"]["enable_itn"] is True
         assert events == [
-            SpeechEvent(type="final", text="欢迎使用阿里云。", language="zh"),
+            SpeechRecognizeEvent(type="final", text="欢迎使用阿里云。", language="zh"),
         ]
 
     @pytest.mark.asyncio
-    async def test_recognize_wraps_base64_as_data_uri(self):
+    async def test_recognize_uses_option_format_for_data_uri(self):
         http_client = MagicMock()
         http_client.post = AsyncMock(return_value=_flash_response(text="hi"))
-        recognizer = _DashScopeMultimodalRecognizer(api_key="sk-test", http_client=http_client)
+        recognizer = _DashScopeMultimodalRecognizer(
+            api_key="sk-test",
+            http_client=http_client,
+            options=SpeechRecognizeOption(format="wav"),
+        )
         async with recognizer:
-            await _collect(recognizer, SpeechAudioInput(data_b64="abc123", format="wav"))
+            await _collect(recognizer, b"abc123")
 
         audio = http_client.post.call_args.kwargs["json"]["input"]["messages"][0]["content"][0][
             "audio"
         ]
-        assert audio == "data:audio/wav;base64,abc123"
+        assert audio == "data:audio/wav;base64," + base64.b64encode(b"abc123").decode("ascii")
 
     @pytest.mark.asyncio
     async def test_custom_model_uses_qwen3_payload(self):
@@ -146,20 +135,17 @@ class TestDashScopeMultimodalRecognizer:
             api_key="sk-test",
             model="custom-flash",
             http_client=http_client,
-            options=SpeechRecognizeOptions(language="zh", enable_itn=True),
+            options=SpeechRecognizeOption(language="zh", enable_itn=True, format="wav"),
         )
 
         async with recognizer:
-            events = await _collect(
-                recognizer,
-                SpeechAudioInput(url="https://example.com/a.wav", format="wav"),
-            )
+            events = await _collect(recognizer, b"wav-bytes")
 
         kwargs = http_client.post.call_args.kwargs
         assert kwargs["headers"]["Authorization"] == "Bearer sk-test"
         assert "X-DashScope-SSE" not in kwargs["headers"]
         assert kwargs["json"]["input"]["messages"][-1]["content"] == [
-            {"audio": "https://example.com/a.wav"}
+            {"audio": "data:audio/wav;base64," + base64.b64encode(b"wav-bytes").decode("ascii")}
         ]
         assert kwargs["json"]["parameters"] == {
             "asr_options": {"enable_itn": True, "language": "zh"}
@@ -173,7 +159,7 @@ class TestDashScopeMultimodalRecognizer:
         recognizer = _DashScopeMultimodalRecognizer(
             api_key="sk-test",
             http_client=http_client,
-            options=SpeechRecognizeOptions(format="pcm"),
+            options=SpeechRecognizeOption(format="pcm"),
         )
 
         async def chunks():
@@ -198,14 +184,14 @@ class TestDashScopeMultimodalRecognizer:
         http_client.post = AsyncMock(return_value=response)
         recognizer = _DashScopeMultimodalRecognizer(api_key="bad", http_client=http_client)
         async with recognizer:
-            with pytest.raises(SpeechRequestError, match="401"):
-                await _collect(recognizer, SpeechAudioInput(url="https://example.com/a.wav"))
+            with pytest.raises(SpeechError, match="401"):
+                await _collect(recognizer, b"clip")
 
     @pytest.mark.asyncio
     async def test_recognize_requires_http_client(self):
         recognizer = _DashScopeMultimodalRecognizer(api_key="sk-test")
-        with pytest.raises(SpeechRequestError, match="not started"):
-            await _collect(recognizer, SpeechAudioInput(data_b64="abc", format="wav"))
+        with pytest.raises(SpeechError, match="not started"):
+            await _collect(recognizer, b"abc")
 
     @pytest.mark.asyncio
     async def test_owned_http_client_closes_on_exit(self):
@@ -227,14 +213,13 @@ class TestDashScopeQwenAudioRecognizer:
             api_key="sk-test",
             model="qwen-audio-3.0-asr-flash",
             http_client=http_client,
-            options=SpeechRecognizeOptions(language="zh", enable_itn=True, context="fivc"),
+            options=SpeechRecognizeOption(
+                language="zh", enable_itn=True, context="fivc", format="mp3"
+            ),
         )
 
         async with recognizer:
-            events = await _collect(
-                recognizer,
-                SpeechAudioInput(url="https://example.com/a.mp3", format="mp3"),
-            )
+            events = await _collect(recognizer, b"mp3-bytes")
 
         http_client.post.assert_awaited_once()
         args, kwargs = http_client.post.call_args
@@ -251,7 +236,8 @@ class TestDashScopeQwenAudioRecognizer:
                             {
                                 "type": "input_audio",
                                 "input_audio": {
-                                    "data": "https://example.com/a.mp3",
+                                    "data": "data:audio/mpeg;base64,"
+                                    + base64.b64encode(b"mp3-bytes").decode("ascii"),
                                 },
                             }
                         ],
@@ -260,7 +246,9 @@ class TestDashScopeQwenAudioRecognizer:
             },
             "parameters": {"format": "mp3", "sample_rate": 16000},
         }
-        assert events == [SpeechEvent(type="final", text="欢迎使用阿里云。", language=None)]
+        assert events == [
+            SpeechRecognizeEvent(type="final", text="欢迎使用阿里云。", language=None)
+        ]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -277,19 +265,19 @@ class TestDashScopeQwenAudioRecognizer:
             api_key="sk-test",
             model="qwen-audio-3.0-asr-flash",
             http_client=http_client,
+            options=SpeechRecognizeOption(format="wav"),
         )
 
         async with recognizer:
-            events = await _collect(
-                recognizer,
-                SpeechAudioInput(data_b64="abc123", format="wav"),
-            )
+            events = await _collect(recognizer, b"abc123")
 
         payload = http_client.post.call_args.kwargs["json"]
         content = payload["input"]["messages"][0]["content"][0]
-        assert content["input_audio"]["data"].startswith("data:audio/wav;base64,")
+        assert content["input_audio"]["data"] == (
+            "data:audio/wav;base64," + base64.b64encode(b"abc123").decode("ascii")
+        )
         assert payload["parameters"] == {"format": "wav", "sample_rate": 16000}
-        assert events == [SpeechEvent(type="final", text=expected_text, language=None)]
+        assert events == [SpeechRecognizeEvent(type="final", text=expected_text, language=None)]
 
     @pytest.mark.asyncio
     async def test_recognize_streamed_pcm_uses_recognizer_sample_rate(self):
@@ -299,7 +287,7 @@ class TestDashScopeQwenAudioRecognizer:
             api_key="sk-test",
             model="qwen-audio-3.0-asr-flash",
             http_client=http_client,
-            options=SpeechRecognizeOptions(format="pcm", sample_rate=24000),
+            options=SpeechRecognizeOption(format="pcm", sample_rate=24000),
         )
 
         async def audio() -> AsyncIterator[bytes]:
@@ -310,7 +298,7 @@ class TestDashScopeQwenAudioRecognizer:
 
         payload = http_client.post.call_args.kwargs["json"]
         assert payload["parameters"] == {"format": "pcm", "sample_rate": 24000}
-        assert events == [SpeechEvent(type="final", text="audio", language=None)]
+        assert events == [SpeechRecognizeEvent(type="final", text="audio", language=None)]
 
 
 def _json_response(payload: Any | None = None, *, status_code: int = 200) -> MagicMock:
@@ -359,7 +347,7 @@ class TestDashScopeQwenAudioTTS:
         assert _qwen_audio_tts_voice(model, "custom-voice") == "custom-voice"
 
     def test_builds_qwen_audio_tts_request(self):
-        options = SpeechSynthesisOptions(
+        options = SpeechSynthesisOption(
             voice="custom-voice",
             format="WAV",
             sample_rate=24000,
@@ -388,7 +376,7 @@ class TestDashScopeQwenAudioTTS:
             "cosyvoice-v2",
             "qwen3-tts-flash-realtime",
         } - _QWEN_AUDIO_TTS_MODELS:
-            with pytest.raises(SpeechRequestError, match="not supported"):
+            with pytest.raises(SpeechError, match="not supported"):
                 _DashScopeQwenAudioTTSSynthesizer(api_key="sk-test", model=model)
 
     @pytest.mark.asyncio
@@ -407,7 +395,7 @@ class TestDashScopeQwenAudioTTS:
             model="qwen-audio-3.0-tts-flash",
             base_url=_qwen_audio_tts_url("https://example.com"),
             http_client=http_client,
-            options=SpeechSynthesisOptions(voice="", format="wav", sample_rate=24000),
+            options=SpeechSynthesisOption(voice="", format="wav", sample_rate=24000),
         )
 
         async with synthesizer:
@@ -433,7 +421,7 @@ class TestDashScopeQwenAudioTTS:
         synthesizer = _DashScopeQwenAudioTTSSynthesizer(
             api_key="sk-test",
             http_client=http_client,
-            options=SpeechSynthesisOptions(voice="voice"),
+            options=SpeechSynthesisOption(voice="voice"),
         )
 
         async def text():
@@ -484,542 +472,22 @@ class TestDashScopeQwenAudioTTS:
             synthesizer = _DashScopeQwenAudioTTSSynthesizer(
                 api_key="sk-test",
                 http_client=http_client,
-                options=SpeechSynthesisOptions(voice="voice"),
+                options=SpeechSynthesisOption(voice="voice"),
             )
             async with synthesizer:
-                with pytest.raises(SpeechRequestError, match=message.replace("?", "\\?")):
+                with pytest.raises(SpeechError, match=message.replace("?", "\\?")):
                     await _collect_bytes(synthesizer, "hello")
 
     @pytest.mark.asyncio
     async def test_owned_http_client_closes_on_exit(self):
         synthesizer = _DashScopeQwenAudioTTSSynthesizer(
             api_key="sk-test",
-            options=SpeechSynthesisOptions(voice="voice"),
+            options=SpeechSynthesisOption(voice="voice"),
         )
         async with synthesizer:
             assert synthesizer._http_client is not None
             owned_client = synthesizer._http_client
         assert owned_client.is_closed
-
-
-class _FakeDashScopeWs:
-    def __init__(self, *, result_sentences: list[dict] | None = None) -> None:
-        self.result_sentences = result_sentences or []
-        self.messages: list[dict] = []
-        self.audio_frames: list[bytes] = []
-        self.send_audio: Callable[[bytes], Awaitable[None]] | None = None
-        self._incoming: asyncio.Queue[str | bytes] = asyncio.Queue()
-        self.closed = False
-
-    async def send(self, data: str | bytes) -> None:
-        if isinstance(data, bytes):
-            if self.send_audio is None:
-                self.audio_frames.append(data)
-            else:
-                await self.send_audio(data)
-            return
-
-        message = json.loads(data)
-        self.messages.append(message)
-        action = message["header"]["action"]
-        if action == "run-task":
-            await self._incoming.put(
-                json.dumps(
-                    {
-                        "header": {
-                            "event": "task-started",
-                            "task_id": message["header"]["task_id"],
-                        },
-                        "payload": {"input": {}},
-                    }
-                )
-            )
-            return
-        if action == "finish-task":
-            await self._emit_results()
-
-    async def _emit_results(self) -> None:
-        task_id = self.messages[0]["header"]["task_id"]
-        for sentence in self.result_sentences:
-            await self._incoming.put(
-                json.dumps(
-                    {
-                        "header": {
-                            "event": "result-generated",
-                            "task_id": task_id,
-                        },
-                        "payload": {"output": {"sentence": sentence}},
-                    }
-                )
-            )
-        await self._incoming.put(
-            json.dumps(
-                {
-                    "header": {"event": "task-finished", "task_id": task_id},
-                    "payload": {"output": {}},
-                }
-            )
-        )
-
-    async def fail(self, code: str, message: str) -> None:
-        task_id = self.messages[0]["header"]["task_id"]
-        await self._incoming.put(
-            json.dumps(
-                {
-                    "header": {
-                        "event": "task-failed",
-                        "task_id": task_id,
-                        "error_code": code,
-                        "error_message": message,
-                    },
-                    "payload": {"input": {}},
-                }
-            )
-        )
-
-    async def recv(self) -> str:
-        return await self._incoming.get()
-
-    async def close(self) -> None:
-        self.closed = True
-
-
-class TestWebSocketUrl:
-    @pytest.mark.parametrize(
-        ("base_url", "expected_url"),
-        [
-            (
-                "https://dashscope.aliyuncs.com",
-                "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
-            ),
-            ("https://host/compatible-mode/v1", "wss://host/api-ws/v1/inference"),
-            ("wss://host", "wss://host/api-ws/v1/inference"),
-            ("wss://host/", "wss://host/api-ws/v1/inference"),
-            ("wss://host/api-ws/v1/inference", "wss://host/api-ws/v1/inference"),
-            ("wss://host/custom/path?model=x", "wss://host/custom/path?model=x"),
-        ],
-    )
-    def test_normalizes_dashscope_base_url(self, base_url: str, expected_url: str):
-        assert _websocket_url(base_url) == expected_url
-
-    @pytest.mark.parametrize(
-        ("base_url", "expected_url"),
-        [
-            (
-                "https://dashscope.aliyuncs.com",
-                "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen-tts-realtime",
-            ),
-            (
-                "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
-                "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen-tts-realtime",
-            ),
-            (
-                "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=custom",
-                "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=custom",
-            ),
-            (
-                "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference",
-                "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen-tts-realtime",
-            ),
-        ],
-    )
-    def test_normalizes_qwen_tts_realtime_url(self, base_url: str, expected_url: str):
-        assert _qwen_tts_websocket_url(base_url, "qwen-tts-realtime") == expected_url
-
-    def test_qwen_tts_realtime_models_use_the_specialized_protocol(self):
-        assert _is_qwen_tts_realtime_model("qwen-tts-realtime") is True
-        assert _is_qwen_tts_realtime_model("qwen3-tts-flash-realtime") is True
-        assert _is_qwen_tts_realtime_model("qwen-audio-3.1-tts-flash") is False
-
-
-class TestWebSocketHandshake:
-    @pytest.mark.asyncio
-    async def test_realtime_sends_clean_api_key_only(self):
-        fake_ws = _FakeDashScopeWs()
-        connections: list[tuple[str, dict[str, str]]] = []
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeWs:
-            connections.append((url, headers))
-            return fake_ws
-
-        recognizer = _DashScopeRealtimeRecognizer(
-            api_key=" Bearer sk-test \n",
-            ws_url=(
-                "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com" "/api-ws/v1/inference"
-            ),
-            connect=connect,
-            options=SpeechRecognizeOptions(format="pcm"),
-        )
-        async with recognizer:
-            pass
-
-        assert connections == [
-            (
-                "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference",
-                {"Authorization": "Bearer sk-test"},
-            )
-        ]
-
-    @pytest.mark.asyncio
-    async def test_synthesizer_sends_clean_api_key_only(self):
-        fake_ws = _FakeDashScopeTtsWs()
-        connections: list[tuple[str, dict[str, str]]] = []
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeTtsWs:
-            connections.append((url, headers))
-            return fake_ws
-
-        synthesizer = _DashScopeTTSSynthesizer(
-            api_key=" Bearer sk-test \n",
-            model="qwen-audio-3.1-tts-flash",
-            ws_url=(
-                "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com" "/api-ws/v1/inference"
-            ),
-            options=SpeechSynthesisOptions(voice="longanhuan_v3.1"),
-            connect=connect,
-        )
-        async with synthesizer:
-            pass
-
-        assert connections == [
-            (
-                "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference",
-                {"Authorization": "Bearer sk-test"},
-            )
-        ]
-
-    def test_headers_contain_authorization_only(self):
-        headers = _websocket_headers("sk-test")
-        assert headers == {"Authorization": "Bearer sk-test"}
-
-    @pytest.mark.asyncio
-    async def test_connection_failure_includes_dashscope_response_body(self):
-        response = Response(
-            403,
-            "Forbidden",
-            Headers(),
-            body=(
-                b'{"code":"AccessDenied","message":"The model is not authorized.",'
-                b'"request_id":"req-403"}'
-            ),
-        )
-        url = "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com" "/api-ws/v1/inference"
-        with (
-            patch(
-                "websockets.connect",
-                new_callable=AsyncMock,
-                side_effect=InvalidStatus(response),
-            ),
-            pytest.raises(
-                SpeechRequestError,
-                match=(
-                    rf"Failed to connect to DashScope \({url}\): "
-                    r"HTTP 403 AccessDenied: The model is not authorized."
-                ),
-            ),
-        ):
-            await _connect_websockets(url, {"Authorization": "Bearer sk-test"})
-
-
-def _sentence(text: str, *, end_time: int | None = None) -> dict:
-    sentence: dict[str, Any] = {"text": text}
-    if end_time is not None:
-        sentence["end_time"] = end_time
-    return sentence
-
-
-class _FakeDashScopeTtsWs:
-    def __init__(self, audio_chunks: list[bytes] | None = None) -> None:
-        self.audio_chunks = audio_chunks or []
-        self.messages: list[dict] = []
-        self.texts: list[str] = []
-        self.closed = False
-        self.finish_sent = False
-        self.audio_sent = False
-        self._incoming: asyncio.Queue[str | bytes] = asyncio.Queue()
-
-    async def send(self, data: str) -> None:
-        message = json.loads(data)
-        self.messages.append(message)
-        action = message["header"]["action"]
-        if action == "run-task":
-            await self._incoming.put(json.dumps({"header": {"event": "task-started"}}))
-        elif action == "continue-task":
-            self.texts.append(message["payload"]["input"]["text"])
-            if not self.audio_sent:
-                self.audio_sent = True
-                for chunk in self.audio_chunks:
-                    await self._incoming.put(chunk)
-        elif action == "finish-task":
-            self.finish_sent = True
-            await self._incoming.put(json.dumps({"header": {"event": "task-finished"}}))
-
-    async def recv(self) -> str | bytes:
-        return await self._incoming.get()
-
-    async def fail(self, code: str, message: str) -> None:
-        await self._incoming.put(
-            json.dumps(
-                {
-                    "header": {
-                        "event": "task-failed",
-                        "error_code": code,
-                        "error_message": message,
-                    }
-                }
-            )
-        )
-
-    async def close(self) -> None:
-        self.closed = True
-
-
-class _FakeQwenTtsWs:
-    def __init__(self, audio_chunks: list[bytes] | None = None) -> None:
-        self.audio_chunks = audio_chunks or [b"pcm-audio"]
-        self.messages: list[dict[str, Any]] = []
-        self.texts: list[str] = []
-        self.session: dict[str, Any] | None = None
-        self.closed = False
-        self.finish_sent = False
-        self._incoming: asyncio.Queue[str] = asyncio.Queue()
-        self._incoming.put_nowait(
-            json.dumps({"event_id": "event-created", "type": "session.created"})
-        )
-
-    async def send(self, data: str) -> None:
-        message = json.loads(data)
-        self.messages.append(message)
-        event_type = message["type"]
-        if event_type == "session.update":
-            self.session = message["session"]
-            await self._incoming.put(
-                json.dumps({"event_id": "event-updated", "type": "session.updated"})
-            )
-        elif event_type == "input_text_buffer.append":
-            self.texts.append(message["text"])
-        elif event_type == "session.finish":
-            self.finish_sent = True
-            for chunk in self.audio_chunks:
-                await self._incoming.put(
-                    json.dumps(
-                        {
-                            "event_id": "event-audio",
-                            "type": "response.audio.delta",
-                            "delta": base64.b64encode(chunk).decode("ascii"),
-                        }
-                    )
-                )
-            await self._incoming.put(
-                json.dumps({"event_id": "event-done", "type": "response.done"})
-            )
-            await self._incoming.put(
-                json.dumps({"event_id": "event-finished", "type": "session.finished"})
-            )
-
-    async def recv(self) -> str:
-        return await self._incoming.get()
-
-    async def fail(self, code: str, message: str) -> None:
-        await self._incoming.put(
-            json.dumps(
-                {"event_id": "event-error", "type": "error", "code": code, "message": message}
-            )
-        )
-
-    async def close(self) -> None:
-        self.closed = True
-
-
-class TestDashScopeRealtimeRecognizer:
-    @pytest.mark.asyncio
-    async def test_starts_recognition_task_and_maps_sentences(self):
-        fake_ws = _FakeDashScopeWs(
-            result_sentences=[
-                _sentence("北"),
-                _sentence("北京", end_time=1234),
-                _sentence("北京。", end_time=2345),
-            ]
-        )
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeWs:
-            connect.last_url = url  # type: ignore[attr-defined]
-            connect.last_headers = headers  # type: ignore[attr-defined]
-            return fake_ws
-
-        recognizer = _DashScopeRealtimeRecognizer(
-            api_key="sk-test",
-            model="qwen-audio-3.1-asr-flash-streaming",
-            connect=connect,
-            options=SpeechRecognizeOptions(
-                format="pcm",
-                sample_rate=16000,
-                extra={"disfluency_removal_enabled": True},
-            ),
-        )
-
-        async def chunks():
-            yield b"x" * 12800
-            yield b"end"
-
-        async with recognizer:
-            start = fake_ws.messages[0]
-            assert start["header"]["action"] == "run-task"
-            assert start["header"]["streaming"] == "duplex"
-            assert start["header"]["task_id"]
-            assert start["payload"]["model"] == "qwen-audio-3.1-asr-flash-streaming"
-            assert start["payload"]["task_group"] == "audio"
-            assert start["payload"]["task"] == "recognition"
-            assert start["payload"]["function"] == "recognition"
-            assert start["payload"]["parameters"] == {
-                "format": "pcm",
-                "sample_rate": 16000,
-                "disfluency_removal_enabled": True,
-            }
-            assert start["payload"]["input"] == {}
-            assert connect.last_headers["Authorization"] == "Bearer sk-test"  # type: ignore[attr-defined]
-            assert connect.last_url == "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
-            events = await asyncio.wait_for(_collect(recognizer, chunks()), timeout=2)
-
-        assert fake_ws.audio_frames == [b"x" * 12800, b"end"]
-        finish = fake_ws.messages[-1]
-        assert finish["header"]["action"] == "finish-task"
-        assert finish["payload"] == {"input": {}}
-        assert [event.type for event in events] == ["partial", "final", "final"]
-        assert events[0].text == "北"
-        assert events[1].text == "北京"
-        assert events[2].text == "北京。"
-        assert fake_ws.closed is True
-
-    @pytest.mark.asyncio
-    async def test_streams_source_chunks_without_buffering(self):
-        fake_ws = _FakeDashScopeWs()
-        first_sent = asyncio.Event()
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeWs:
-            return fake_ws
-
-        async def original_send_audio(data: bytes) -> None:
-            fake_ws.audio_frames.append(data)
-            first_sent.set()
-
-        fake_ws.send_audio = original_send_audio
-        recognizer = _DashScopeRealtimeRecognizer(
-            api_key="sk-test",
-            connect=connect,
-            options=SpeechRecognizeOptions(format="pcm"),
-        )
-
-        async def chunks():
-            yield b"first"
-            try:
-                await asyncio.wait_for(first_sent.wait(), timeout=0.1)
-            except TimeoutError as exc:
-                raise AssertionError("first audio chunk was buffered") from exc
-            yield b"second"
-
-        async with recognizer:
-            await asyncio.wait_for(_collect(recognizer, chunks()), timeout=2)
-
-        assert fake_ws.audio_frames == [b"first", b"second"]
-
-    @pytest.mark.asyncio
-    async def test_source_error_is_not_hidden_by_event_wait(self):
-        fake_ws = _FakeDashScopeWs()
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeWs:
-            return fake_ws
-
-        async def failing_send_audio(_data: bytes) -> None:
-            raise RuntimeError("audio upload failed")
-
-        fake_ws.send_audio = failing_send_audio
-        recognizer = _DashScopeRealtimeRecognizer(
-            api_key="sk-test",
-            connect=connect,
-            options=SpeechRecognizeOptions(format="pcm"),
-        )
-
-        async def chunks():
-            yield b"first"
-            yield b"second"
-
-        async with recognizer:
-            with pytest.raises(SpeechRequestError, match="audio upload failed"):
-                await asyncio.wait_for(_collect(recognizer, chunks()), timeout=2)
-
-    @pytest.mark.asyncio
-    async def test_finish_without_result_yields_empty_final(self):
-        fake_ws = _FakeDashScopeWs(result_sentences=[])
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeWs:
-            return fake_ws
-
-        recognizer = _DashScopeRealtimeRecognizer(
-            api_key="sk-test",
-            connect=connect,
-            options=SpeechRecognizeOptions(format="wav"),
-        )
-        payload = base64.b64encode(b"clip-bytes").decode("ascii")
-        async with recognizer:
-            events = await asyncio.wait_for(
-                _collect(recognizer, SpeechAudioInput(data_b64=payload, format="wav")),
-                timeout=2,
-            )
-        assert fake_ws.audio_frames == [b"clip-bytes"]
-        assert [(event.type, event.text) for event in events] == [("final", "")]
-
-    @pytest.mark.asyncio
-    async def test_task_failed_yields_error_event(self):
-        fake_ws = _FakeDashScopeWs(result_sentences=[])
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeWs:
-            return fake_ws
-
-        recognizer = _DashScopeRealtimeRecognizer(api_key="sk-test", connect=connect)
-        async with recognizer:
-            await fake_ws.fail("InvalidParameter", "format is invalid")
-            events = await asyncio.wait_for(
-                _collect(
-                    recognizer,
-                    SpeechAudioInput(data_b64="Y2h1bms=", format="wav"),
-                ),
-                timeout=2,
-            )
-        assert len(events) == 1
-        assert events[0].type == "error"
-        assert events[0].message == "InvalidParameter: format is invalid"
-
-    @pytest.mark.asyncio
-    async def test_clip_url_is_fetched(self):
-        fake_ws = _FakeDashScopeWs()
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeWs:
-            return fake_ws
-
-        response = MagicMock()
-        response.is_success = True
-        response.content = b"from-url"
-        http_client = MagicMock()
-        http_client.get = AsyncMock(return_value=response)
-        recognizer = _DashScopeRealtimeRecognizer(
-            api_key="sk-test",
-            connect=connect,
-            http_client=http_client,
-        )
-        async with recognizer:
-            await asyncio.wait_for(
-                _collect(recognizer, SpeechAudioInput(url="https://example.com/a.wav")),
-                timeout=2,
-            )
-        http_client.get.assert_awaited_once_with("https://example.com/a.wav")
-        assert fake_ws.audio_frames == [b"from-url"]
-
-    @pytest.mark.asyncio
-    async def test_recognize_before_aenter_raises(self):
-        recognizer = _DashScopeRealtimeRecognizer(api_key="sk-test", connect=AsyncMock())
-        with pytest.raises(SpeechRequestError, match="not started"):
-            await _collect(recognizer, SpeechAudioInput(data_b64="abc"))
 
 
 class TestDashScopeSpeechProvider:
@@ -1042,7 +510,7 @@ class TestDashScopeSpeechProvider:
     async def test_get_synthesizer_ignores_global_speech_config(self):
         component_site = MagicMock()
         component_site.query_component.return_value = MagicMock()
-        options = SpeechSynthesisOptions(voice="", format="wav", sample_rate=24000)
+        options = SpeechSynthesisOption(voice="", format="wav", sample_rate=24000)
         with patch(
             "fivccliche.services.implements.agent_speeches.dashscope._DashScopeQwenAudioTTSSynthesizer",
         ) as synthesizer_cls:
@@ -1058,7 +526,7 @@ class TestDashScopeSpeechProvider:
 
     @pytest.mark.asyncio
     async def test_get_recognizer_builds_flash(self):
-        options = SpeechRecognizeOptions(language="zh")
+        options = SpeechRecognizeOption(language="zh")
         with patch(
             "fivccliche.services.implements.agent_speeches.dashscope._DashScopeMultimodalRecognizer",
         ) as clip_cls:
@@ -1077,7 +545,7 @@ class TestDashScopeSpeechProvider:
 
     @pytest.mark.asyncio
     async def test_get_recognizer_overrides_credentials(self):
-        options = SpeechRecognizeOptions(language="zh")
+        options = SpeechRecognizeOption(language="zh")
         with patch(
             "fivccliche.services.implements.agent_speeches.dashscope._DashScopeMultimodalRecognizer",
         ) as clip_cls:
@@ -1105,7 +573,7 @@ class TestDashScopeSpeechProvider:
 
     @pytest.mark.asyncio
     async def test_get_synthesizer_uses_tts_defaults_and_overrides(self):
-        options = SpeechSynthesisOptions(voice="", format="wav", sample_rate=24000)
+        options = SpeechSynthesisOption(voice="", format="wav", sample_rate=24000)
         with patch(
             "fivccliche.services.implements.agent_speeches.dashscope._DashScopeQwenAudioTTSSynthesizer",
         ) as synthesizer_cls:
@@ -1132,718 +600,194 @@ class TestDashScopeSpeechProvider:
         assert override_call.kwargs["base_url"] == ("https://example.com" + _QWEN_AUDIO_TTS_PATH)
 
 
-class TestDashScopeRealtimeSpeechProvider:
+class _ScriptedRecognition:
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+        self.frames: list[bytes] = []
+        self.callback = kwargs["callback"]
+
+    def start(self) -> None:
+        self.callback.on_open()
+
+    def send_audio_frame(self, frame: bytes) -> None:
+        self.frames.append(frame)
+        if frame == b"final-frame":
+            result = MagicMock()
+            result.get_sentence.return_value = {"text": "你好", "end_time": 10}
+            self.callback.on_event(result)
+
+    def stop(self) -> None:
+        self.callback.on_complete()
+        self.callback.on_close()
+
+
+class _ScriptedSynthesizer:
+    last: _ScriptedSynthesizer | None = None
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+        _ScriptedSynthesizer.last = self
+
+    def streaming_call(self, content: str) -> None:
+        self.content = content
+        self.kwargs["callback"].on_data(b"pcm-a")
+
+    def streaming_complete(self) -> None:
+        self.kwargs["callback"].on_complete()
+
+
+class TestDashScopeRealtimeSDK:
+    def test_websocket_url_from_http_origin(self):
+        from fivccliche.services.implements.agent_speeches.dashscope_realtime import (
+            _websocket_url,
+        )
+
+        assert (
+            _websocket_url("https://dashscope.aliyuncs.com")
+            == "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
+        )
+        assert (
+            _websocket_url("wss://ws.example.com/api-ws/v1/inference")
+            == "wss://ws.example.com/api-ws/v1/inference"
+        )
+
     @pytest.mark.asyncio
-    async def test_get_recognizer_ignores_global_speech_config(self):
-        component_site = MagicMock()
-        component_site.query_component.return_value = MagicMock()
-        with patch(
-            "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeRealtimeRecognizer",
-        ) as stream_cls:
-            provider = DashScopeRealtimeSpeechProvider(component_site)
+    async def test_missing_api_key(self):
+        provider = DashScopeRealtimeSpeechProvider(MagicMock())
+        with pytest.raises(SpeechError, match="empty"):
             await provider.get_recognizer()
-
-        component_site.query_component.assert_not_called()
-        assert stream_cls.call_args.kwargs["api_key"] == ""
-        assert stream_cls.call_args.kwargs["model"] == ("qwen-audio-3.1-asr-flash-streaming")
-        assert stream_cls.call_args.kwargs["ws_url"] == (
-            "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
-        )
-
-    @pytest.mark.asyncio
-    async def test_get_synthesizer_ignores_global_speech_config(self):
-        component_site = MagicMock()
-        component_site.query_component.return_value = MagicMock()
-        options = SpeechSynthesisOptions(voice="Cherry")
-        with patch(
-            "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeTTSSynthesizer",
-        ) as synthesizer_cls:
-            provider = DashScopeRealtimeSpeechProvider(component_site)
-            await provider.get_synthesizer(options)
-
-        component_site.query_component.assert_not_called()
-        assert synthesizer_cls.call_args.kwargs["api_key"] == ""
-        assert synthesizer_cls.call_args.kwargs["model"] == "qwen-tts-realtime"
-        assert synthesizer_cls.call_args.kwargs["ws_url"] == (
-            "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen-tts-realtime"
-        )
-
-    @pytest.mark.asyncio
-    async def test_get_recognizer_only_constructs(self):
-        stream = MagicMock()
-        stream.start_async = AsyncMock()
-        stream.__aenter__ = AsyncMock(return_value=stream)
-        stream.__aexit__ = AsyncMock(return_value=None)
-        options = SpeechRecognizeOptions(format="pcm")
-        with patch(
-            "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeRealtimeRecognizer",
-            return_value=stream,
-        ) as stream_cls:
-            provider = DashScopeRealtimeSpeechProvider(MagicMock())
-            recognizer = await provider.get_recognizer(
-                options,
-                api_key="sk-x",
-                model="qwen-audio-3.1-asr-flash-streaming",
-            )
-
-        stream_cls.assert_called_once()
-        assert recognizer is stream
-        stream.start_async.assert_not_called()
-        stream.__aenter__.assert_not_called()
-        assert stream_cls.call_args.kwargs["model"] == ("qwen-audio-3.1-asr-flash-streaming")
-        assert stream_cls.call_args.kwargs["ws_url"] == (
-            "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
-        )
-        assert stream_cls.call_args.kwargs["options"] is options
-
-        async with recognizer:
-            pass
-        stream.__aenter__.assert_awaited_once()
-        stream.start_async.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_get_recognizer_overrides_credentials(self):
-        stream = MagicMock()
-        options = SpeechRecognizeOptions(format="pcm")
-        with patch(
-            "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeRealtimeRecognizer",
-            return_value=stream,
-        ) as stream_cls:
-            provider = DashScopeRealtimeSpeechProvider(MagicMock())
-            await provider.get_recognizer(
-                options,
-                api_key="sk-override",
-                model="custom-rt",
-                base_url="https://example.com",
-            )
-
-        assert stream_cls.call_args.kwargs["api_key"] == "sk-override"
-        assert stream_cls.call_args.kwargs["model"] == "custom-rt"
-        assert stream_cls.call_args.kwargs["ws_url"] == ("wss://example.com/api-ws/v1/inference")
-        assert stream_cls.call_args.kwargs["options"] is options
-
-    @pytest.mark.asyncio
-    async def test_get_recognizer_accepts_websocket_base_url(self):
-        stream = MagicMock()
-        with patch(
-            "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeRealtimeRecognizer",
-            return_value=stream,
-        ) as stream_cls:
-            provider = DashScopeRealtimeSpeechProvider(MagicMock())
-            await provider.get_recognizer(
-                base_url=(
-                    "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com" "/api-ws/v1/inference"
-                )
-            )
-
-        assert stream_cls.call_args.kwargs["ws_url"] == (
-            "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com" "/api-ws/v1/inference"
-        )
-
-    @pytest.mark.asyncio
-    async def test_recognizer_and_synthesizer_share_maas_origin_url(self):
-        base_url = "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com/"
-        with (
-            patch(
-                "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeRealtimeRecognizer"
-            ) as recognizer_cls,
-            patch(
-                "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeTTSSynthesizer"
-            ) as synthesizer_cls,
-        ):
-            provider = DashScopeRealtimeSpeechProvider(MagicMock())
-            await provider.get_recognizer(base_url=base_url)
-            await provider.get_synthesizer(
-                SpeechSynthesisOptions(voice="longanhuan_v3.1"),
-                base_url=base_url,
-                model="qwen-audio-3.1-tts-flash",
-            )
-
-        expected_url = "wss://llm-pbm19qg9671grxpg.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference"
-        assert recognizer_cls.call_args.kwargs["ws_url"] == expected_url
-        assert synthesizer_cls.call_args.kwargs["ws_url"] == expected_url
-
-
-class TestDashScopeTTS:
-    @pytest.mark.asyncio
-    async def test_get_synthesizer_defaults_without_options(self):
-        with patch(
-            "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeTTSSynthesizer",
-        ) as synthesizer_cls:
-            provider = DashScopeRealtimeSpeechProvider(MagicMock())
+        with pytest.raises(SpeechError, match="empty"):
             await provider.get_synthesizer()
 
-        assert synthesizer_cls.call_args.kwargs["options"] is None
-
     @pytest.mark.asyncio
-    async def test_synthesizer_defaults_to_compatible_voice(self):
-        fake_ws = _FakeDashScopeTtsWs()
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeTtsWs:
-            return fake_ws
-
-        synthesizer = _DashScopeTTSSynthesizer(
-            api_key="sk-test",
-            model="qwen-audio-3.1-tts-flash",
-            options=None,
-            connect=connect,
+    async def test_stream_async_bytes_uses_recognition(self):
+        from fivccliche.services.implements.agent_speeches.dashscope_realtime import (
+            _DashScopeRealtimeRecognizer,
         )
-        async with synthesizer:
-            assert synthesizer._options.voice == "longanhuan_v3.1"
 
-    @pytest.mark.parametrize(
-        ("model", "expected_voice"),
-        [
-            ("qwen-tts-realtime", "Cherry"),
-            ("qwen-audio-3.1-tts-flash", "longanhuan_v3.1"),
-            ("qwen-audio-3.0-tts-flash", "longanhuan_v3.6"),
-        ],
-    )
-    @pytest.mark.asyncio
-    async def test_supplied_empty_voice_uses_model_family_default(
-        self, model: str, expected_voice: str
-    ):
-        if _is_qwen_tts_realtime_model(model):
-            fake_ws = _FakeQwenTtsWs()
-            ws_url = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
-        else:
-            fake_ws = _FakeDashScopeTtsWs()
-            ws_url = "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
+        created: list[_ScriptedRecognition] = []
 
-        async def connect(url: str, headers: dict[str, str]):
-            return fake_ws
+        def factory(**kwargs: Any) -> _ScriptedRecognition:
+            recognition = _ScriptedRecognition(**kwargs)
+            created.append(recognition)
+            return recognition
 
-        synthesizer = _DashScopeTTSSynthesizer(
+        recognizer = _DashScopeRealtimeRecognizer(
             api_key="sk-test",
-            model=model,
-            ws_url=ws_url,
-            options=SpeechSynthesisOptions(
-                voice="",
-                format="pcm",
-                sample_rate=24000,
-            ),
-            connect=connect,
+            ws_url="wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+            speech_id="asr-1",
         )
-        async with synthesizer:
-            if _is_qwen_tts_realtime_model(model):
-                session = fake_ws.messages[0]["session"]
-                assert session["voice"] == expected_voice
-            else:
-                start = fake_ws.messages[0]
-                assert start["payload"]["parameters"]["voice"] == expected_voice
-
-    @pytest.mark.asyncio
-    async def test_unknown_model_requires_voice_without_connecting(self):
-        async def connect(url: str, headers: dict[str, str]) -> None:
-            raise AssertionError("empty voice must not open a WebSocket")
-
-        with pytest.raises(
-            SpeechRequestError,
-            match=r"TTS model custom-tts requires a voice; use a qwen-tts or qwen-audio model",
+        with patch(
+            "fivccliche.services.implements.agent_speeches.dashscope_realtime.Recognition",
+            side_effect=factory,
         ):
-            _DashScopeTTSSynthesizer(
-                api_key="sk-test",
-                model="custom-tts",
-                options=SpeechSynthesisOptions(voice=""),
-                connect=connect,
-            )
+            async with recognizer:
+                await recognizer.begin_utterance()
+                await recognizer.push_audio(b"final-frame")
+                events = [event async for event in recognizer.end_utterance()]
 
-    def test_default_voice_is_compatible_with_qwen_audio_tts(self):
-        options = SpeechSynthesisOptions(voice="longanhuan_v3.1")
-        frame = _tts_start_frame("qwen-audio-3.1-tts-flash", options, "task-id")
-
-        assert frame["payload"]["parameters"]["voice"] == "longanhuan_v3.1"
+        assert recognizer.id == "asr-1"
+        assert created[0].kwargs["api_key"] == "sk-test"
+        assert created[0].kwargs["base_address"].endswith("/api-ws/v1/inference")
+        assert created[0].kwargs["model"] == "qwen-audio-3.1-asr-flash-streaming"
+        assert created[0].frames == [b"final-frame"]
+        assert events[-1].type == "final"
+        assert events[-1].text == "你好"
 
     @pytest.mark.asyncio
-    async def test_rejects_cherry_for_qwen_audio_tts_without_connecting(self):
-        async def connect(url: str, headers: dict[str, str]) -> None:
-            raise AssertionError("incompatible voice must not open a WebSocket")
-
-        synthesizer = _DashScopeTTSSynthesizer(
-            api_key="sk-test",
-            model="qwen-audio-3.1-tts-flash",
-            options=SpeechSynthesisOptions(voice="Cherry"),
-            connect=connect,
+    async def test_stream_async_bytes_clip(self):
+        from fivccliche.services.implements.agent_speeches.dashscope_realtime import (
+            _DashScopeRealtimeRecognizer,
         )
-        with pytest.raises(
-            SpeechRequestError,
-            match=(
-                r"voice Cherry is not supported by qwen-audio-3\.1-tts-flash; "
-                r"use longanhuan_v3\.1"
-            ),
+
+        created: list[_ScriptedRecognition] = []
+
+        def factory(**kwargs: Any) -> _ScriptedRecognition:
+            recognition = _ScriptedRecognition(**kwargs)
+            created.append(recognition)
+            return recognition
+
+        clip = b"\x00\x01" * 80
+        recognizer = _DashScopeRealtimeRecognizer(
+            api_key="sk-test",
+            ws_url="wss://example.invalid/api-ws/v1/inference",
+        )
+        with patch(
+            "fivccliche.services.implements.agent_speeches.dashscope_realtime.Recognition",
+            side_effect=factory,
         ):
-            await synthesizer.__aenter__()
+            async with recognizer:
+                events = [event async for event in recognizer.stream_async(clip)]
+        assert created[0].frames
+        assert events[-1].type == "final"
 
     @pytest.mark.asyncio
-    async def test_starts_native_websocket_tts_task(self):
-        fake_ws = _FakeDashScopeTtsWs()
+    async def test_synthesizer_uses_option_and_resolved_url(self):
+        import dashscope
 
-        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeTtsWs:
-            connect.last_url = url  # type: ignore[attr-defined]
-            connect.last_headers = headers  # type: ignore[attr-defined]
-            return fake_ws
+        from fivccliche.services.implements.agent_speeches.dashscope_realtime import (
+            _DashScopeRealtimeSynthesizer,
+        )
 
-        options = SpeechSynthesisOptions(
-            voice="longanhuan_v3.1",
-            format="wav",
+        previous = dashscope.api_key
+        option = SpeechSynthesisOption(
+            voice="",
+            format="pcm",
             sample_rate=24000,
             volume=70,
             speech_rate=1.2,
-            pitch_rate=0.9,
-            extra={"enable_ssml": True},
+            pitch_rate=0.8,
         )
-
-        synthesizer = _DashScopeTTSSynthesizer(
-            api_key="sk-test",
-            model="qwen-audio-3.1-tts-flash",
-            ws_url="wss://dashscope.aliyuncs.com/api-ws/v1/inference",
-            options=options,
-            connect=connect,
+        synthesizer = _DashScopeRealtimeSynthesizer(
+            api_key="sk-tts",
+            ws_url="wss://ws.example.com/api-ws/v1/inference",
+            options=option,
+            speech_id="tts-1",
         )
-        async with synthesizer:
-            start = fake_ws.messages[0]
-
-        assert start["header"]["action"] == "run-task"
-        assert start["header"]["streaming"] == "duplex"
-        assert start["payload"]["model"] == "qwen-audio-3.1-tts-flash"
-        assert start["payload"]["task_group"] == "audio"
-        assert start["payload"]["task"] == "tts"
-        assert start["payload"]["function"] == "SpeechSynthesizer"
-        assert start["payload"]["input"] == {}
-        assert start["payload"]["parameters"] == {
-            "voice": "longanhuan_v3.1",
-            "volume": 70,
-            "text_type": "PlainText",
-            "sample_rate": 24000,
-            "rate": 1.2,
-            "format": "wav",
-            "pitch": 0.9,
-            "seed": 0,
-            "type": 0,
-            "enable_ssml": True,
-        }
-        assert connect.last_headers["Authorization"] == "Bearer sk-test"  # type: ignore[attr-defined]
-        assert connect.last_url == "wss://dashscope.aliyuncs.com/api-ws/v1/inference"  # type: ignore[attr-defined]
-        assert fake_ws.messages[-1]["header"]["action"] == "finish-task"
-        assert fake_ws.closed is True
+        with patch(
+            "fivccliche.services.implements.agent_speeches.dashscope_realtime.DashScopeTTSV2Client",
+            _ScriptedSynthesizer,
+        ):
+            async with synthesizer:
+                audio = [chunk async for chunk in synthesizer.stream_async("你好")]
+        assert synthesizer.id == "tts-1"
+        assert synthesizer.get_option().voice == "longanhuan_v3.1"
+        assert audio == [b"pcm-a"]
+        client = _ScriptedSynthesizer.last
+        assert client is not None
+        assert client.kwargs["url"] == "wss://ws.example.com/api-ws/v1/inference"
+        assert client.kwargs["voice"] == "longanhuan_v3.1"
+        assert client.kwargs["volume"] == 70
+        assert client.kwargs["speech_rate"] == 1.2
+        assert client.kwargs["pitch_rate"] == 0.8
+        assert client.content == "你好"
+        assert dashscope.api_key == previous
 
     @pytest.mark.asyncio
-    async def test_synthesizes_complete_text(self):
-        fake_ws = _FakeDashScopeTtsWs([b"left ", b"right"])
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeTtsWs:
-            return fake_ws
-
-        synthesizer = _DashScopeTTSSynthesizer(
-            api_key="sk-test",
-            model="qwen-audio-3.1-tts-flash",
-            ws_url="wss://dashscope.aliyuncs.com/api-ws/v1/inference",
-            options=SpeechSynthesisOptions(voice="longanhuan_v3.1"),
-            connect=connect,
+    async def test_provider_defaults(self):
+        from fivccliche.services.implements.agent_speeches.dashscope_realtime import (
+            _DashScopeRealtimeRecognizer,
+            _DashScopeRealtimeSynthesizer,
         )
 
-        async with synthesizer:
-            audio = await asyncio.wait_for(_collect_bytes(synthesizer, "你好"), timeout=2)
-
-        assert audio == [b"left ", b"right"]
-        assert [message["header"]["action"] for message in fake_ws.messages] == [
-            "run-task",
-            "continue-task",
-            "finish-task",
-        ]
-        assert fake_ws.messages[1]["payload"]["input"] == {"text": "你好"}
-        assert fake_ws.texts == ["你好"]
-        assert fake_ws.finish_sent is True
-        assert fake_ws.closed is True
-
-    @pytest.mark.asyncio
-    async def test_synthesizes_qwen_tts_realtime_events(self):
-        fake_ws = _FakeQwenTtsWs([b"left", b"right"])
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeQwenTtsWs:
-            connect.last_url = url  # type: ignore[attr-defined]
-            return fake_ws
-
-        synthesizer = _DashScopeTTSSynthesizer(
-            api_key="sk-test",
-            model="qwen-tts-realtime",
-            ws_url="wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen-tts-realtime",
-            options=None,
-            connect=connect,
-        )
-
-        async with synthesizer:
-            audio = await asyncio.wait_for(_collect_bytes(synthesizer, "你好"), timeout=2)
-
-        assert audio == [b"left", b"right"]
-        assert connect.last_url == (  # type: ignore[attr-defined]
-            "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen-tts-realtime"
-        )
-        assert [message["type"] for message in fake_ws.messages] == [
-            "session.update",
-            "input_text_buffer.append",
-            "input_text_buffer.commit",
-            "session.finish",
-        ]
-        assert fake_ws.session == {
-            "voice": "Cherry",
-            "mode": "server_commit",
-            "response_format": "pcm",
-            "sample_rate": 24000,
-            "speech_rate": 1.0,
-        }
-        assert fake_ws.texts == ["你好"]
-        assert fake_ws.finish_sent is True
-        assert fake_ws.closed is True
-
-    @pytest.mark.asyncio
-    async def test_wraps_qwen_tts_realtime_error(self):
-        fake_ws = _FakeQwenTtsWs()
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeQwenTtsWs:
-            return fake_ws
-
-        synthesizer = _DashScopeTTSSynthesizer(
-            api_key="sk-test",
-            model="qwen-tts-realtime",
-            options=SpeechSynthesisOptions(
-                voice="Cherry",
-                format="pcm",
-                sample_rate=24000,
-            ),
-            connect=connect,
-        )
-        async with synthesizer:
-            await fake_ws.fail("ModelNotFound", "unknown model")
-            with pytest.raises(SpeechRequestError, match="ModelNotFound: unknown model"):
-                await _collect_bytes(synthesizer, "你好")
-        assert fake_ws.closed is True
-
-    @pytest.mark.asyncio
-    async def test_synthesizes_streamed_text(self):
-        fake_ws = _FakeDashScopeTtsWs([b"streamed"])
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeTtsWs:
-            return fake_ws
-
-        synthesizer = _DashScopeTTSSynthesizer(
-            api_key="sk-test",
-            model="qwen-audio-3.1-tts-flash",
-            options=SpeechSynthesisOptions(voice="longanhuan_v3.1"),
-            connect=connect,
-        )
-
-        async def text():
-            yield "你好"
-            yield "世界"
-
-        async with synthesizer:
-            audio = await asyncio.wait_for(_collect_bytes(synthesizer, text()), timeout=2)
-
-        assert audio == [b"streamed"]
-        assert fake_ws.texts == ["你好", "世界"]
-        assert fake_ws.finish_sent is True
-
-    @pytest.mark.asyncio
-    async def test_wraps_task_failure(self):
-        fake_ws = _FakeDashScopeTtsWs()
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeTtsWs:
-            return fake_ws
-
-        synthesizer = _DashScopeTTSSynthesizer(
-            api_key="sk-test",
-            model="qwen-audio-3.1-tts-flash",
-            options=SpeechSynthesisOptions(voice="longanhuan_v3.1"),
-            connect=connect,
-        )
-        async with synthesizer:
-            await fake_ws.fail("BadTTS", "synthesis failed")
-            with pytest.raises(SpeechRequestError, match="BadTTS: synthesis failed"):
-                await _collect_bytes(synthesizer, "你好")
-        assert fake_ws.closed is True
-
-    @pytest.mark.asyncio
-    async def test_wraps_connection_failure(self):
-        synthesizer = _DashScopeTTSSynthesizer(
-            api_key="sk-test",
-            model="qwen-audio-3.1-tts-flash",
-            options=SpeechSynthesisOptions(voice="longanhuan_v3.1"),
-        )
+        provider = DashScopeRealtimeSpeechProvider(MagicMock())
         with (
             patch(
-                "websockets.connect",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("connection refused"),
-            ),
-            pytest.raises(
-                SpeechRequestError,
-                match=r"Failed to connect to DashScope \(wss://[^)]+\): connection refused",
-            ),
+                "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeRealtimeRecognizer",
+                wraps=_DashScopeRealtimeRecognizer,
+            ) as recognizer_cls,
+            patch(
+                "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeRealtimeSynthesizer",
+                wraps=_DashScopeRealtimeSynthesizer,
+            ) as synthesizer_cls,
         ):
-            await synthesizer.__aenter__()
+            await provider.get_recognizer(api_key="sk", id="asr")
+            await provider.get_synthesizer(api_key="sk", id="tts")
 
-    @pytest.mark.asyncio
-    async def test_get_synthesizer_uses_tts_defaults_and_overrides(self):
-        options = SpeechSynthesisOptions(voice="longanhuan_v3.1")
-        with patch(
-            "fivccliche.services.implements.agent_speeches.dashscope_realtime._DashScopeTTSSynthesizer",
-        ) as synthesizer_cls:
-            provider = DashScopeRealtimeSpeechProvider(MagicMock())
-            await provider.get_synthesizer(options)
-            await provider.get_synthesizer(
-                options,
-                api_key="sk-override",
-                model="custom-tts",
-                base_url="https://example.com",
-            )
-
-        default_call, override_call = synthesizer_cls.call_args_list
-
-        assert default_call.kwargs["api_key"] == ""
-        assert default_call.kwargs["model"] == "qwen-tts-realtime"
-        assert default_call.kwargs["ws_url"] == (
-            "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen-tts-realtime"
+        assert recognizer_cls.call_args.kwargs["model"] == "qwen-audio-3.1-asr-flash-streaming"
+        assert recognizer_cls.call_args.kwargs["ws_url"] == (
+            "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
         )
-        assert default_call.kwargs["options"] is options
-
-        assert override_call.kwargs["api_key"] == "sk-override"
-        assert override_call.kwargs["model"] == "custom-tts"
-        assert override_call.kwargs["ws_url"] == ("wss://example.com/api-ws/v1/inference")
-
-
-class TestDashScopeConcurrency:
-    @pytest.mark.asyncio
-    async def test_multimodal_recognizers_are_isolated(self):
-        barrier = asyncio.Barrier(2)
-        requests: list[dict[str, Any]] = []
-
-        async def post(url: str, json: dict[str, Any], headers: dict[str, str]):
-            requests.append({"url": url, "json": json, "headers": headers})
-            await barrier.wait()
-            return _flash_response(text=headers["Authorization"])
-
-        recognizers = []
-        for index in range(2):
-            http_client = MagicMock()
-            http_client.post = post
-            recognizers.append(
-                _DashScopeMultimodalRecognizer(
-                    api_key=f"sk-{index}",
-                    http_client=http_client,
-                    options=SpeechRecognizeOptions(format="wav"),
-                )
-            )
-
-        async def recognize(index: int) -> list[SpeechEvent]:
-            async with recognizers[index]:
-                return await _collect(
-                    recognizers[index],
-                    SpeechAudioInput(
-                        data_b64=base64.b64encode(f"audio-{index}".encode()).decode("ascii"),
-                        format="wav",
-                    ),
-                )
-
-        results = await asyncio.gather(recognize(0), recognize(1))
-
-        assert [result[0].text for result in results] == ["Bearer sk-0", "Bearer sk-1"]
-        assert [request["url"] for request in requests] == [
-            _DEFAULT_GENERATION_URL,
-            _DEFAULT_GENERATION_URL,
-        ]
-        assert [request["headers"]["Authorization"] for request in requests] == [
-            "Bearer sk-0",
-            "Bearer sk-1",
-        ]
-        assert [request["json"]["model"] for request in requests] == [
-            "qwen3-asr-flash",
-            "qwen3-asr-flash",
-        ]
-
-    @pytest.mark.asyncio
-    async def test_multimodal_http_request_failure_is_wrapped(self):
-        http_client = MagicMock()
-        http_client.post = AsyncMock(side_effect=RuntimeError("connection refused"))
-        recognizer = _DashScopeMultimodalRecognizer(
-            api_key="sk-test",
-            http_client=http_client,
-            options=SpeechRecognizeOptions(format="wav"),
-        )
-
-        async with recognizer:
-            with pytest.raises(SpeechRequestError, match="connection refused"):
-                await _collect(
-                    recognizer,
-                    SpeechAudioInput(
-                        data_b64=base64.b64encode(b"audio").decode("ascii"),
-                        format="wav",
-                    ),
-                )
-
-        http_client.post.assert_awaited_once_with(
-            _DEFAULT_GENERATION_URL,
-            json={
-                "model": "qwen3-asr-flash",
-                "input": {
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [{"audio": "data:audio/wav;base64,YXVkaW8="}],
-                        }
-                    ]
-                },
-                "parameters": {"asr_options": {"enable_itn": False}},
-            },
-            headers={
-                "Authorization": "Bearer sk-test",
-                "Content-Type": "application/json",
-            },
-        )
-
-    @pytest.mark.asyncio
-    async def test_multimodal_recognizers_use_custom_base_url(self):
-        http_client = MagicMock()
-        http_client.post = AsyncMock(return_value=_flash_response(text="hi"))
-        recognizer = _DashScopeMultimodalRecognizer(
-            api_key="sk-test",
-            base_url="https://example.com/",
-            http_client=http_client,
-            options=SpeechRecognizeOptions(format="wav"),
-        )
-
-        async with recognizer:
-            await _collect(
-                recognizer,
-                SpeechAudioInput(data_b64="YXVkaW8=", format="wav"),
-            )
-
-        assert http_client.post.call_args.args[0] == (
-            "https://example.com/api/v1/services/aigc/multimodal-generation/generation"
-        )
-
-    @pytest.mark.asyncio
-    async def test_realtime_recognizers_are_isolated(self):
-        sockets = [
-            _FakeDashScopeWs(result_sentences=[_sentence("first", end_time=1)]),
-            _FakeDashScopeWs(result_sentences=[_sentence("second", end_time=2)]),
-        ]
-        connections: list[tuple[str, dict[str, str]]] = []
-
-        async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeWs:
-            connection = (url, headers)
-            connections.append(connection)
-            return sockets[len(connections) - 1]
-
-        recognizers = [
-            _DashScopeRealtimeRecognizer(
-                api_key=f"sk-{index}",
-                connect=connect,
-                options=SpeechRecognizeOptions(format="pcm"),
-            )
-            for index in range(2)
-        ]
-
-        async def recognize(index: int) -> list[SpeechEvent]:
-            async with recognizers[index]:
-
-                async def chunks():
-                    yield f"audio-{index}".encode()
-
-                return await asyncio.wait_for(_collect(recognizers[index], chunks()), timeout=2)
-
-        results = await asyncio.gather(recognize(0), recognize(1))
-
-        assert [result[0].text for result in results] == ["first", "second"]
-        assert [headers["Authorization"] for _, headers in connections] == [
-            "Bearer sk-0",
-            "Bearer sk-1",
-        ]
-        assert sockets[0].audio_frames == [b"audio-0"]
-        assert sockets[1].audio_frames == [b"audio-1"]
-        assert all(socket.closed for socket in sockets)
-
-    @pytest.mark.asyncio
-    async def test_tts_synthesizers_are_isolated(self):
-        fake_wss = [
-            _FakeDashScopeTtsWs([b"first-0", b"first-1"]),
-            _FakeDashScopeTtsWs([b"second-0", b"second-1"]),
-        ]
-        connections: list[dict[str, str]] = []
-
-        def build_synthesizer(api_key: str, text: str, index: int) -> _DashScopeTTSSynthesizer:
-            fake_ws = fake_wss[index]
-
-            async def connect(url: str, headers: dict[str, str]) -> _FakeDashScopeTtsWs:
-                connections.append(headers)
-                return fake_ws
-
-            return _DashScopeTTSSynthesizer(
-                api_key=api_key,
-                model="qwen-audio-3.1-tts-flash",
-                options=SpeechSynthesisOptions(voice="longanhuan_v3.1"),
-                connect=connect,
-            )
-
-        async def synthesize(api_key: str, text: str, index: int) -> list[bytes]:
-            synthesizer = build_synthesizer(api_key, text, index)
-            async with synthesizer:
-                return await asyncio.wait_for(_collect_bytes(synthesizer, text), timeout=2)
-
-        results = await asyncio.gather(
-            synthesize("sk-0", "first", 0),
-            synthesize("sk-1", "second", 1),
-        )
-
-        assert results == [
-            [b"first-0", b"first-1"],
-            [b"second-0", b"second-1"],
-        ]
-        assert [headers["Authorization"] for headers in connections] == [
-            "Bearer sk-0",
-            "Bearer sk-1",
-        ]
-        assert fake_wss[0].texts == ["first"]
-        assert fake_wss[1].texts == ["second"]
-        assert all(fake_ws.finish_sent for fake_ws in fake_wss)
-        assert all(fake_ws.closed for fake_ws in fake_wss)
-
-    @pytest.mark.asyncio
-    async def test_http_tts_synthesizers_are_isolated(self):
-        barrier = asyncio.Barrier(2)
-
-        def build_client(index: int) -> MagicMock:
-            client = MagicMock()
-
-            async def post(url: str, json: dict[str, Any], headers: dict[str, str]):
-                await barrier.wait()
-                return _json_response({"output": {"audio": {"url": f"https://audio/{index}.wav"}}})
-
-            async def get(url: str):
-                response = MagicMock()
-                response.is_success = True
-                response.content = f"audio-{index}".encode()
-                return response
-
-            client.post = post
-            client.get = get
-            return client
-
-        synthesizers = [
-            _DashScopeQwenAudioTTSSynthesizer(
-                api_key=f"sk-{index}",
-                model="qwen-audio-3.0-tts-flash",
-                base_url=_qwen_audio_tts_url("https://example.com"),
-                http_client=build_client(index),
-                options=SpeechSynthesisOptions(voice="voice"),
-            )
-            for index in range(2)
-        ]
-
-        async def synthesize(index: int) -> list[bytes]:
-            async with synthesizers[index]:
-                return await _collect_bytes(synthesizers[index], f"text-{index}")
-
-        results = await asyncio.gather(synthesize(0), synthesize(1))
-
-        assert results == [[b"audio-0"], [b"audio-1"]]
+        assert recognizer_cls.call_args.kwargs["speech_id"] == "asr"
+        assert synthesizer_cls.call_args.kwargs["model"] == "qwen-audio-3.1-tts-flash"
+        assert synthesizer_cls.call_args.kwargs["speech_id"] == "tts"

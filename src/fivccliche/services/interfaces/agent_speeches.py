@@ -1,159 +1,35 @@
-"""Speech recognition interfaces.
+"""Speech provider factory.
 
-Implementation-agnostic ASR so chat and tools can transcribe audio without
-depending on a vendor SDK. ``ISpeechProvider`` is a factory; recognition runs
-on ``ISpeechRecognizer``.
+Recognition and synthesis types live in ``fivcplayground.speeches``.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
-from typing import Any, Literal, Self
-
-from pydantic import BaseModel, Field, model_validator
+from abc import abstractmethod
+from typing import Any
 
 from fivcglue import IComponent
-
-SpeechEventType = Literal["partial", "final", "error"]
-
-
-class SpeechError(Exception):
-    """Base error for speech recognition."""
-
-
-class SpeechRequestError(SpeechError):
-    """Raised when a vendor request fails."""
-
-
-class SpeechAudioInput(BaseModel):
-    """One clip: a URL or Base64 payload."""
-
-    url: str | None = None
-    data_b64: str | None = None
-    format: str = "wav"
-    sample_rate: int = 16000
-    channels: int = 1
-
-    @model_validator(mode="after")
-    def require_one_source(self) -> SpeechAudioInput:
-        has_url = bool(self.url)
-        has_data = bool(self.data_b64)
-        if has_url == has_data:
-            raise ValueError("Exactly one of url or data_b64 is required")
-        return self
-
-
-class SpeechRecognizeOptions(BaseModel):
-    """Optional hints captured when the recognizer is created."""
-
-    language: str | None = None
-    enable_itn: bool = False
-    hotwords: list[str] | None = None
-    context: str | None = None
-    format: str = "pcm"
-    sample_rate: int = 16000
-    channels: int = 1
-    extra: dict[str, Any] = Field(default_factory=dict)
-
-
-class SpeechSynthesisOptions(BaseModel):
-    """Optional synthesis parameters captured when the synthesizer is created."""
-
-    voice: str
-    format: str = "mp3"
-    sample_rate: int = 22050
-    volume: int = Field(default=50, ge=0, le=100)
-    speech_rate: float = Field(default=1.0, ge=0.5, le=2.0)
-    pitch_rate: float = Field(default=1.0, ge=0.5, le=2.0)
-    extra: dict[str, Any] = Field(default_factory=dict)
-
-
-class SpeechEvent(BaseModel):
-    """One recognition event. ``text`` is set for partial/final; ``message`` for error."""
-
-    type: SpeechEventType
-    text: str = ""
-    language: str | None = None
-    message: str | None = None
-
-
-class ISpeechRecognizer(ABC):
-    """One recognition turn. Created by ``ISpeechProvider.get_recognizer``."""
-
-    @property
-    @abstractmethod
-    def id(self) -> str:
-        """ """
-
-    @abstractmethod
-    def get_option(self) -> SpeechRecognizeOptions:
-        """Return the recognition options."""
-
-    @abstractmethod
-    async def __aenter__(self) -> Self:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def __aexit__(self, *exc: object) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def stream_async(
-        self,
-        audio: SpeechAudioInput | AsyncIterator[bytes],
-    ) -> AsyncIterator[SpeechEvent]:
-        """Yield ``partial`` / ``final`` / ``error`` events.
-
-        ``SpeechAudioInput`` is a complete clip (URL may be passed through or
-        fetched by the adapter). An async byte iterator is one utterance;
-        exhaustion is the commit.
-        """
-        yield SpeechEvent(type="final")
-
-
-class ISpeechSynthesizer(ABC):
-    """One synthesis turn. Created by ``ISpeechProvider.get_synthesizer``."""
-
-    @property
-    @abstractmethod
-    def id(self) -> str:
-        """ """
-
-    @abstractmethod
-    def get_option(self) -> SpeechSynthesisOptions:
-        """Return the synthesis options."""
-
-    @abstractmethod
-    async def __aenter__(self) -> Self:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def __aexit__(self, *exc: object) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def stream_async(
-        self,
-        text: str | AsyncIterator[str],
-    ) -> AsyncIterator[bytes]:
-        """Yield encoded audio for one text or streamed-text turn."""
-        yield b""
+from fivcplayground.speeches import (
+    SpeechRecognizeOption,
+    SpeechRecognizer,
+    SpeechSynthesisOption,
+    SpeechSynthesizer,
+)
 
 
 class ISpeechProvider(IComponent):
-    """Factory for speech recognizers (and later synthesizers)."""
+    """Factory for speech recognizers and synthesizers."""
 
     @abstractmethod
     async def get_recognizer(
         self,
-        options: SpeechRecognizeOptions | None = None,
+        options: SpeechRecognizeOption | None = None,
         *,
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
         **kwargs: Any,
-    ) -> ISpeechRecognizer:
+    ) -> SpeechRecognizer:
         """Create a recognizer.
 
         ``api_key``, ``model``, and ``base_url`` are caller-supplied values,
@@ -164,11 +40,11 @@ class ISpeechProvider(IComponent):
     @abstractmethod
     async def get_synthesizer(
         self,
-        options: SpeechSynthesisOptions | None = None,
+        options: SpeechSynthesisOption | None = None,
         *,
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
         **kwargs: Any,
-    ) -> ISpeechSynthesizer:
+    ) -> SpeechSynthesizer:
         """Create a synthesizer when the provider supports TTS."""
