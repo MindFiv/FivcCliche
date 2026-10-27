@@ -1,4 +1,4 @@
-"""Pipecat WebRTC sessions for full-duplex chat voice."""
+"""Pipecat Protobuf WebSocket sessions for full-duplex chat voice."""
 
 from __future__ import annotations
 
@@ -11,14 +11,16 @@ from fivcplayground.skills import create_skill_retriever_async
 from fivcplayground.speeches import SpeechRecognizer, SpeechSynthesizer
 from fivcplayground.tools import create_tool_retriever_async
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.transports.base_transport import TransportParams
-from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
-from pipecat.transports.smallwebrtc.request_handler import SmallWebRTCRequestHandler
-from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
+from pipecat.serializers.protobuf import ProtobufFrameSerializer
+from pipecat.transports.websocket.fastapi import (
+    FastAPIWebsocketParams,
+    FastAPIWebsocketTransport,
+)
 
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.services.interfaces.auth import IUser
+from fivccliche.utils.chats.channels import ChatChannel
 from fivccliche.utils.deps import get_chat_provider_async, get_config_provider_async
 
 logger = logging.getLogger(__name__)
@@ -27,26 +29,9 @@ INPUT_SAMPLE_RATE = 16_000
 OUTPUT_SAMPLE_RATE = 24_000
 
 
-class ChatWebRTCRegistry:
-    """Process-local WebRTC peers so ICE patches can find the connection."""
-
-    def __init__(self) -> None:
-        self.handler = SmallWebRTCRequestHandler()
-        self.owners: dict[str, tuple[str, str]] = {}
-
-    def remember(self, pc_id: str, user_uuid: str, chat_uuid: str) -> None:
-        self.owners[pc_id] = (user_uuid, chat_uuid)
-
-    def owned_by(self, pc_id: str, user_uuid: str, chat_uuid: str) -> bool:
-        return self.owners.get(pc_id) == (user_uuid, chat_uuid)
-
-    def forget(self, pc_id: str) -> None:
-        self.owners.pop(pc_id, None)
-
-
 async def process_chat_speech_async(
     *,
-    connection: SmallWebRTCConnection,
+    channel: ChatChannel,
     user: IUser,
     chat: AgentRunSession,
     recognizer: SpeechRecognizer,
@@ -56,7 +41,7 @@ async def process_chat_speech_async(
     config_provider: IUserConfigProvider | None = None,
     chat_provider: IUserChatProvider | None = None,
 ) -> None:
-    """Run a Pipecat WebRTC pipeline until the peer disconnects."""
+    """Send ``ready``, then run a Pipecat Protobuf WebSocket pipeline until disconnect."""
     from fivcplayground.backends.pipecat.agents import PipecatAgentBackend
     from fivcplayground.backends.pipecat.models import PipecatModelBackend
     from fivcplayground.backends.pipecat.tools import PipecatToolBackend
@@ -74,14 +59,18 @@ async def process_chat_speech_async(
     agent_repository = config_provider.get_agent_repository(user_uuid=user.uuid)
     agent_config = await agent_repository.get_agent_config_async(chat.agent_id)
     if agent_config is None:
-        logger.error("Agent config %s not found", chat.agent_id)
-        await connection.disconnect()
-        return
+        await channel.fail_async(
+            code="agent_not_found",
+            message="Agent config not found",
+            close_code=4404,
+        )
     model_config = await model_repository.get_model_config_async(agent_config.model_id)
     if model_config is None:
-        logger.error("LLM config %s not found", agent_config.model_id)
-        await connection.disconnect()
-        return
+        await channel.fail_async(
+            code="model_not_found",
+            message="LLM config not found",
+            close_code=4404,
+        )
 
     embedding_repository = config_provider.get_embedding_repository(user_uuid=user.uuid)
     embedding_backend = config_provider.get_embedding_backend()
@@ -117,6 +106,26 @@ async def process_chat_speech_async(
     )
     chat_repository = chat_provider.get_chat_repository(user_uuid=user.uuid)
 
+    recognize_opts = recognizer.get_option()
+    synthesis_opts = synthesizer.get_option()
+    await channel.send_json_async(
+        {
+            "event": "ready",
+            "info": {
+                "asr_id": recognizer.id,
+                "tts_id": synthesizer.id,
+                "input": {
+                    "format": recognize_opts.format,
+                    "sample_rate": recognize_opts.sample_rate,
+                },
+                "output": {
+                    "format": synthesis_opts.format,
+                    "sample_rate": synthesis_opts.sample_rate,
+                },
+            },
+        }
+    )
+
     mutex_acquired = False
     if mutex is not None:
         # Mutex TTL is slightly longer than the session timeout so the lock does not
@@ -126,19 +135,26 @@ async def process_chat_speech_async(
             timeout=None,
         )
         if not mutex_acquired:
-            logger.warning("Chat %s is already processing", chat.id)
-            await connection.disconnect()
-            return
+            await channel.fail_async(
+                code="chat_busy",
+                message="Chat is already processing",
+                close_code=1008,
+            )
 
-    transport = SmallWebRTCTransport(
-        webrtc_connection=connection,
-        params=TransportParams(
+    transport = FastAPIWebsocketTransport(
+        websocket=channel.socket,
+        params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
+            add_wav_header=False,
+            serializer=ProtobufFrameSerializer(),
             audio_in_sample_rate=INPUT_SAMPLE_RATE,
             audio_out_sample_rate=OUTPUT_SAMPLE_RATE,
         ),
     )
+
+    # ChatChannel must not keep reading; Pipecat owns the socket after ready.
+    channel.shutdown()
     try:
         await agent.run_async(
             transport=transport,

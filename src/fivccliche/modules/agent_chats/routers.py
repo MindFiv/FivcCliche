@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -407,36 +406,29 @@ CHAT_MESSAGE_LOCK_EXPIRE = timedelta(minutes=15)
 CHAT_MESSAGE_RUN_TIMEOUT = timedelta(minutes=5)
 
 
-def _chat_webrtc_registry(websocket: WebSocket):
-    from fivccliche.utils.chats.speeches import ChatWebRTCRegistry
-
-    registry = getattr(websocket.app.state, "chat_webrtc", None)
-    if not isinstance(registry, ChatWebRTCRegistry):
-        registry = ChatWebRTCRegistry()
-        websocket.app.state.chat_webrtc = registry
-    return registry
-
-
 @router_chats.websocket("/{chat_uuid}/")
-async def start_chat_webrtc_async(
-    chat_uuid: str,
+async def create_chat_voice_ws_async(
     websocket: WebSocket,
+    chat_uuid: str,
     mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
 ) -> None:
-    """WebSocket signaling for a Pipecat SmallWebRTC voice session."""
-    from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
-    from pipecat.transports.smallwebrtc.request_handler import (
-        IceCandidate,
-        SmallWebRTCPatchRequest,
-        SmallWebRTCRequest,
-    )
-
+    """Run a full-duplex realtime voice session for one chat via Pipecat."""
     from fivccliche.utils.chats import ChatChannel
     from fivccliche.utils.chats.speeches import process_chat_speech_async
 
     authenticator = await get_authenticator_async()
     async with ChatChannel(websocket, authenticator) as channel:
         user = await channel.authenticate_async()
+        start_frame = await channel.receive_json_async()
+        if start_frame is None:
+            return
+        if not isinstance(start_frame, dict) or start_frame.get("type") != "start":
+            await channel.fail_async(
+                code="invalid_message",
+                message="A start frame is required",
+                close_code=1003,
+            )
+
         async with deps.get_db_session_context_async() as session:
             chat_row = await utils.get_chat_async(
                 session,
@@ -451,31 +443,10 @@ async def start_chat_webrtc_async(
                 close_code=4404,
             )
 
-        offer = await channel.receive_json_async()
-        if offer is None:
-            return
-        if (
-            not isinstance(offer, dict)
-            or offer.get("type") != "offer"
-            or not isinstance(offer.get("sdp"), str)
-        ):
-            await channel.fail_async(
-                code="invalid_offer",
-                message="An offer frame with sdp is required",
-                close_code=1003,
-            )
-        sdp_type = offer.get("sdp_type", "offer")
-        if not isinstance(sdp_type, str):
-            await channel.fail_async(
-                code="invalid_offer",
-                message="sdp_type must be a string",
-                close_code=1003,
-            )
-
         try:
             async with deps.get_db_session_context_async() as session:
                 recognizer, synthesizer = await _load_realtime_voice_setup(
-                    session, user, chat, offer
+                    session, user, chat, start_frame
                 )
         except VoiceSetupError as exc:
             await channel.fail_async(
@@ -484,139 +455,16 @@ async def start_chat_webrtc_async(
                 close_code=exc.close_code,
             )
 
-        registry = _chat_webrtc_registry(websocket)
         mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
-
-        async def _on_connection(connection: SmallWebRTCConnection) -> None:
-            registry.remember(connection.pc_id, user.uuid, chat_uuid)
-
-            @connection.event_handler("closed")
-            async def _forget(closed_connection: SmallWebRTCConnection) -> None:
-                registry.forget(closed_connection.pc_id)
-
-            task = asyncio.create_task(
-                process_chat_speech_async(
-                    connection=connection,
-                    user=user,
-                    chat=chat,
-                    recognizer=recognizer,
-                    synthesizer=synthesizer,
-                    mutex=mutex,
-                    timeout=CHAT_MESSAGE_RUN_TIMEOUT,
-                )
-            )
-
-            def _log_failure(done: asyncio.Task[None]) -> None:
-                if done.cancelled():
-                    return
-                exc = done.exception()
-                if exc is not None:
-                    logger.error("Chat WebRTC session failed", exc_info=exc)
-
-            task.add_done_callback(_log_failure)
-
-        try:
-            answer = await registry.handler.handle_web_request(
-                SmallWebRTCRequest(
-                    sdp=offer["sdp"],
-                    type=sdp_type,
-                    pc_id=offer.get("pc_id") if isinstance(offer.get("pc_id"), str) else None,
-                    restart_pc=(
-                        offer.get("restart_pc")
-                        if isinstance(offer.get("restart_pc"), bool)
-                        else None
-                    ),
-                    request_data=offer,
-                ),
-                _on_connection,
-            )
-        except Exception as exc:
-            logger.exception("WebRTC offer failed")
-            await channel.fail_async(
-                code="webrtc_failed",
-                message=str(exc) or "WebRTC answer was not created",
-                close_code=1011,
-            )
-        if answer is None:
-            await channel.fail_async(
-                code="webrtc_failed",
-                message="WebRTC answer was not created",
-                close_code=1011,
-            )
-
-        recognize_opts = recognizer.get_option()
-        synthesis_opts = synthesizer.get_option()
-        await channel.send_json_async(
-            {
-                "event": "answer",
-                "info": {
-                    **answer,
-                    "asr_id": recognizer.id,
-                    "tts_id": synthesizer.id,
-                    "input": {
-                        "format": recognize_opts.format,
-                        "sample_rate": recognize_opts.sample_rate,
-                    },
-                    "output": {
-                        "format": synthesis_opts.format,
-                        "sample_rate": synthesis_opts.sample_rate,
-                    },
-                },
-            }
+        await process_chat_speech_async(
+            channel=channel,
+            user=user,
+            chat=chat,
+            recognizer=recognizer,
+            synthesizer=synthesizer,
+            mutex=mutex,
+            timeout=CHAT_MESSAGE_RUN_TIMEOUT,
         )
-
-        while True:
-            frame = await channel.receive_json_async()
-            if frame is None:
-                return
-            if not isinstance(frame, dict) or frame.get("type") != "ice":
-                await channel.fail_async(
-                    code="invalid_ice",
-                    message="ICE frames must use type ice",
-                    close_code=1003,
-                )
-            pc_id = frame.get("pc_id")
-            candidates = frame.get("candidates")
-            if not isinstance(pc_id, str) or not isinstance(candidates, list):
-                await channel.fail_async(
-                    code="invalid_ice",
-                    message="ICE frames require pc_id and candidates",
-                    close_code=1003,
-                )
-            if not registry.owned_by(pc_id, user.uuid, chat_uuid):
-                await channel.fail_async(
-                    code="peer_not_found",
-                    message="Peer connection not found",
-                    close_code=4404,
-                )
-            try:
-                ice_candidates = [
-                    IceCandidate(
-                        candidate=item["candidate"],
-                        sdp_mid=item["sdp_mid"],
-                        sdp_mline_index=item["sdp_mline_index"],
-                    )
-                    for item in candidates
-                    if isinstance(item, dict)
-                    and isinstance(item.get("candidate"), str)
-                    and isinstance(item.get("sdp_mid"), str)
-                    and isinstance(item.get("sdp_mline_index"), int)
-                ]
-            except (KeyError, TypeError):
-                await channel.fail_async(
-                    code="invalid_ice",
-                    message="Invalid ICE candidate payload",
-                    close_code=1003,
-                )
-            if len(ice_candidates) != len(candidates):
-                await channel.fail_async(
-                    code="invalid_ice",
-                    message="Invalid ICE candidate payload",
-                    close_code=1003,
-                )
-            await registry.handler.handle_patch_request(
-                SmallWebRTCPatchRequest(pc_id=pc_id, candidates=ice_candidates)
-            )
 
 
 # ============================================================================

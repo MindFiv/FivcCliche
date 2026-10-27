@@ -442,8 +442,5 @@ class ModuleImpl(IModule):
 
     def mount(self, app: FastAPI, **kwargs) -> None:
         logger.info("agent_chats module mounted")
-        from fivccliche.utils.chats.speeches import ChatWebRTCRegistry
-
-        app.state.chat_webrtc = ChatWebRTCRegistry()
         app.include_router(routers.router_chats, **kwargs)
         app.include_router(routers.router_messages, **kwargs)

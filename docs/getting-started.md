@@ -60,4 +60,4 @@ Create and list user-scoped configs under `/api/configs/` (embeddings, models, a
 - [Architecture](architecture.md) — module layering, ownership, HTTP CRUD
 - [Scheduled Tasks](scheduler.md) — per-module APScheduler jobs
 - [Agent Memories](agent-memories.md) — optional Hindsight memory API
-- [Speech recognition](agent_speeches.md) — optional ASR/TTS, chat WebRTC voice
+- [Speech recognition](agent_speeches.md) — optional ASR/TTS, chat Protobuf WebSocket voice

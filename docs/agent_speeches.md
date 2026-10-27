@@ -14,10 +14,11 @@ Default YAML registers two DashScope providers: `dashscope` for native HTTP and
 `dashscope_realtime` for the DashScope SDK streaming ASR and TTS. Both expose
 recognizers and synthesizers.
 
-Full-duplex chat voice is WebSocket signaling plus Pipecat SmallWebRTC media
+Full-duplex chat voice is a Pipecat Protobuf WebSocket
 (`WEBSOCKET /api/chats/{chat_uuid}/`).
-[`process_chat_speech_async`](../src/fivccliche/utils/chats/speeches.py) passes
-the playground recognizer and synthesizer as `stt` / `tts` and a Silero
+[`process_chat_speech_async`](../src/fivccliche/utils/chats/speeches.py) sends
+`ready`, hands the socket to `FastAPIWebsocketTransport`, and passes the
+playground recognizer and synthesizer as `stt` / `tts` plus a Silero
 `SileroVADAnalyzer` as `vad`. Probe routes and `SpeechTranscribe` still call
 `stream_async` directly. Text chat SSE does not use speech.
 
@@ -32,7 +33,7 @@ false, because compatible gateways reject the `developer` role. Set
 - DashScope HTTP provider and DashScope SDK realtime provider
 - Function tool `SpeechTranscribe` for `transport=function` wiring
 - DashScope TTS and `UserTTS` / `UserASR` probe configuration
-- Chat voice: Pipecat SmallWebRTC, with VAD passed through `vad=`
+- Chat voice: Pipecat Protobuf WebSocket, with VAD passed through `vad=`
 
 The native HTTP `dashscope` provider supports:
 
@@ -117,7 +118,7 @@ two DashScope providers:
 `SpeechTranscribe` and the ASR probe do **not** use a hard-coded name: they
 load a [`UserASR`](../src/fivccliche/modules/agent_configs/models.py) row
 (`POST /api/configs/asrs/`) and pass `model_type` as `name`. If that row or
-provider is missing, WebRTC voice returns 404 or 503, `SpeechTranscribe` raises
+provider is missing, chat voice returns 404 or 503, `SpeechTranscribe` raises
 `ValueError`, and the HTTP probe returns 503.
 
 `POST /api/configs/asrs/{config_uuid}/probe/` transcribes one clip against that
@@ -228,17 +229,17 @@ For tests, instantiate `FakeSpeechProvider(transcript="...")` directly.
 ## Chat voice
 
 `WEBSOCKET /api/chats/{chat_uuid}/` uses [`ChatChannel`](../src/fivccliche/utils/chats/channels.py)
-first-frame JWT `auth`, then an `offer` JSON frame (`sdp`, `sdp_type`, optional
-`pc_id` / `restart_pc`, plus `asr_id` / `tts_id` / `language` / `voice`).
-Missing ids use `chat.context`, then `"realtime"`. Both rows must use
-`model_type=dashscope_realtime`. The server replies with
-`{"event":"answer","info":{...}}` (SDP answer plus `asr_id`, `tts_id`, and
-input/output format and sample rate). Later `ice` frames carry trickle ICE
-candidates for the `pc_id` created on that socket.
+first-frame JWT `auth`, then a `start` JSON frame (`asr_id` / `tts_id` /
+`language` / `voice`). Missing ids use `chat.context`, then `"realtime"`. Both
+rows must use `model_type=dashscope_realtime`. The server replies with
+`{"event":"ready","info":{...}}` (`asr_id`, `tts_id`, and input/output format
+and sample rate), acquires `chats:message:{uuid}`, then hands the socket to
+`FastAPIWebsocketTransport` with `ProtobufFrameSerializer`. Media after
+`ready` is Protobuf; clients must not send JSON `vad` / `stop` / `offer` /
+`ice` frames for turn-taking.
 
-The session task acquires `chats:message:{uuid}`, then runs
-`agent.run_async` with `SmallWebRTCTransport`, the SDK recognizer, the SDK
-synthesizer, and `vad=SileroVADAnalyzer(sample_rate=16000)`.
+The session runs `agent.run_async` with that transport, the SDK recognizer, the
+SDK synthesizer, and `vad=SileroVADAnalyzer(sample_rate=16000)`.
 
 ## Agent tool
 
@@ -256,4 +257,4 @@ default `"default"`). It loads that UserASR row, calls
 `SpeechRecognizeOption.hot_words`. Returns JSON `{ "text", "language" }` from
 the last `final` event.
 
-Streaming duplex audio is the WebRTC session above, not this tool.
+Streaming duplex audio is the Protobuf WebSocket session above, not this tool.

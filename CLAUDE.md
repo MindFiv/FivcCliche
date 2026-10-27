@@ -51,7 +51,7 @@ Key interfaces (in `src/fivccliche/services/interfaces/`):
 - `IUserConfigProvider` → `UserConfigProviderImpl` — LLM/embedding/tool/agent config repos
 - `IUserChatProvider` → `UserChatProviderImpl` — conversation repos and chat context
 - `IUserMemoryProvider` → optional `UserMemoryProviderImpl` (Hindsight; requires separate `hindsight-client`)
-- `ISpeechProvider` → named DashScope providers `dashscope` (native HTTP) and `dashscope_realtime` (DashScope SDK streaming ASR/TTS). `get_speech_provider_async(name=...)` returns `fivcplayground.speeches.SpeechRecognizer` / `SpeechSynthesizer`. Chat voice is WebSocket signaling (`WEBSOCKET /api/chats/{chat_uuid}/`) plus Pipecat SmallWebRTC media (`pipecat-ai[webrtc]`); VAD is passed as `vad=`. Text SSE stays on Strands. Chat audio uses `UserASR.model_type` as `name`; TTS probes use `UserTTS.model_type`. A Pipecat OpenAI model with `base_url` defaults `supports_developer_role` to false; `ModelConfig.extra["supports_developer_role"]` turns it on.
+- `ISpeechProvider` → named DashScope providers `dashscope` (native HTTP) and `dashscope_realtime` (DashScope SDK streaming ASR/TTS). `get_speech_provider_async(name=...)` returns `fivcplayground.speeches.SpeechRecognizer` / `SpeechSynthesizer`. Chat voice is a Protobuf WebSocket (`WEBSOCKET /api/chats/{chat_uuid}/`) via Pipecat `FastAPIWebsocketTransport`; VAD is passed as `vad=`. Text SSE stays on Strands. Chat audio uses `UserASR.model_type` as `name`; TTS probes use `UserTTS.model_type`. A Pipecat OpenAI model with `base_url` defaults `supports_developer_role` to false; `ModelConfig.extra["supports_developer_role"]` turns it on.
 - `IModule` / `IModuleSite` → module registration and FastAPI app mounting
 
 ### Module Pattern
