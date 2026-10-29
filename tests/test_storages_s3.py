@@ -179,3 +179,21 @@ async def test_aws_style_public_url_without_endpoint() -> None:
         filename="demo.txt",
     )
     assert link.url == "https://example-bucket.s3.us-east-1.amazonaws.com/storages/a"
+
+
+async def test_key_prefix_is_applied_to_backend_keys() -> None:
+    client = FakeS3Client()
+    provider = make_provider(configured_values(), client)
+    storage = provider.get_storage(key_prefix="/users/u1/")
+    assert storage is not None
+    signed = await storage.upload_async("file-uuid", "text/plain")
+    assert "users/u1/file-uuid" in signed.url
+    client.objects["users/u1/file-uuid"] = {
+        "ContentLength": 1,
+        "ContentType": "text/plain",
+        "ETag": '"e"',
+    }
+    head = await storage.peek_async("file-uuid")
+    assert head is not None
+    await storage.delete_async("file-uuid")
+    assert "users/u1/file-uuid" not in client.objects

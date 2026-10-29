@@ -30,6 +30,18 @@ def _expires_seconds(value: timedelta | None, default: int) -> int:
     return seconds if seconds > 0 else default
 
 
+def _normalize_key_prefix(key_prefix: str | None) -> str:
+    if not key_prefix:
+        return ""
+    return key_prefix.strip("/")
+
+
+def _validate_relative_key(object_key: str) -> str:
+    if not object_key or object_key.startswith("/") or ".." in object_key.split("/"):
+        raise StorageError("Invalid storage object key")
+    return object_key
+
+
 class OssStorage(IStorage):
     """Object operations against one OSS bucket."""
 
@@ -41,21 +53,30 @@ class OssStorage(IStorage):
         endpoint: str,
         upload_expires_in: int,
         download_expires_in: int,
+        key_prefix: str = "",
     ) -> None:
         self._bucket = bucket
         self._bucket_name = bucket_name
         self._endpoint = endpoint.removeprefix("https://").removeprefix("http://")
         self._upload_expires_in = upload_expires_in
         self._download_expires_in = download_expires_in
+        self._key_prefix = key_prefix
+
+    def _full_key(self, object_key: str) -> str:
+        relative = _validate_relative_key(object_key)
+        if not self._key_prefix:
+            return relative
+        return f"{self._key_prefix}/{relative}"
 
     def _sign_put(self, object_key: str, content_type: str, *, is_public: bool) -> StorageUpLink:
         headers = {
             "Content-Type": content_type,
             "x-oss-object-acl": "public-read" if is_public else "private",
         }
+        full_key = self._full_key(object_key)
         url = self._bucket.sign_url(
             "PUT",
-            object_key,
+            full_key,
             self._upload_expires_in,
             headers=headers,
             slash_safe=True,
@@ -78,9 +99,10 @@ class OssStorage(IStorage):
             "response-content-type": content_type,
             "response-content-disposition": f"attachment; filename*=UTF-8''{quoted}",
         }
+        full_key = self._full_key(object_key)
         url = self._bucket.sign_url(
             "GET",
-            object_key,
+            full_key,
             self._download_expires_in,
             params=params,
             slash_safe=True,
@@ -92,13 +114,13 @@ class OssStorage(IStorage):
         )
 
     def _public_url(self, object_key: str) -> StorageDownLink:
-        key = quote(object_key, safe="/")
+        key = quote(self._full_key(object_key), safe="/")
         url = f"https://{self._bucket_name}.{self._endpoint}/{key}"
         return StorageDownLink(method="GET", url=url, expires_at=None)
 
     def _peek(self, object_key: str) -> StorageInfo | None:
         try:
-            result = self._bucket.head_object(object_key)
+            result = self._bucket.head_object(self._full_key(object_key))
         except oss2.exceptions.NoSuchKey:
             return None
         except oss2.exceptions.OssError as exc:
@@ -111,7 +133,7 @@ class OssStorage(IStorage):
 
     def _delete(self, object_key: str) -> None:
         try:
-            self._bucket.delete_object(object_key)
+            self._bucket.delete_object(self._full_key(object_key))
         except oss2.exceptions.NoSuchKey:
             return
         except oss2.exceptions.OssError as exc:
@@ -209,6 +231,7 @@ class OssStorageProvider(IStorageProvider):
         self,
         name: str | None = None,
         *,
+        key_prefix: str | None = None,
         upload_expires_in: timedelta | None = None,
         download_expires_in: timedelta | None = None,
         **kwargs: Any,
@@ -221,6 +244,7 @@ class OssStorageProvider(IStorageProvider):
 
         upload_expires = _expires_seconds(upload_expires_in, int(self._upload_expires))
         download_expires = _expires_seconds(download_expires_in, int(self._download_expires))
+        prefix = key_prefix if key_prefix is not None else kwargs.get("key_prefix")
 
         if self._injected_bucket is not None:
             bucket = self._injected_bucket
@@ -234,4 +258,5 @@ class OssStorageProvider(IStorageProvider):
             endpoint=self._endpoint,
             upload_expires_in=upload_expires,
             download_expires_in=download_expires,
+            key_prefix=_normalize_key_prefix(prefix if isinstance(prefix, str) else None),
         )

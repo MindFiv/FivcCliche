@@ -157,3 +157,20 @@ async def test_get_storage_override_expires() -> None:
     assert storage is not None
     signed_put = await storage.upload_async("storages/a", "text/plain")
     assert "expires=120" in signed_put.url
+
+
+async def test_key_prefix_is_applied_to_backend_keys() -> None:
+    bucket = FakeBucket()
+    provider = make_provider(configured_values(), bucket)
+    storage = provider.get_storage(key_prefix="/users/u1/")
+    assert storage is not None
+    signed = await storage.upload_async("file-uuid", "text/plain")
+    assert "users/u1/file-uuid" in signed.url
+    bucket.objects["users/u1/file-uuid"] = SimpleNamespace(
+        content_length=1,
+        headers={"Content-Type": "text/plain", "ETag": '"e"'},
+    )
+    head = await storage.peek_async("file-uuid")
+    assert head is not None
+    await storage.delete_async("file-uuid")
+    assert "users/u1/file-uuid" not in bucket.objects

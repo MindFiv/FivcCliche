@@ -53,7 +53,7 @@ Key interfaces (in `src/fivccliche/services/interfaces/`):
 - `IUserChatProvider` → `UserChatProviderImpl` — conversation repos and chat context
 - `IUserMemoryProvider` → optional `UserMemoryProviderImpl` (Hindsight; requires separate `hindsight-client`)
 - `ISpeechProvider` → named DashScope providers `dashscope` (native HTTP) and `dashscope_realtime` (DashScope SDK streaming ASR/TTS). `get_speech_provider_async(name=...)` returns `fivcplayground.speeches.SpeechRecognizer` / `SpeechSynthesizer`. Chat voice is a Protobuf WebSocket (`WEBSOCKET /api/chats/{chat_uuid}/`) via Pipecat `FastAPIWebsocketTransport`; VAD is passed as `vad=`. Text SSE stays on Strands. Chat audio uses `UserASR.model_type` as `name`; TTS probes use `UserTTS.model_type`. A Pipecat OpenAI model with `base_url` defaults `supports_developer_role` to false; `ModelConfig.extra["supports_developer_role"]` turns it on.
-- `IStorageProvider` → `S3StorageProvider` (default; swap to `OssStorageProvider` in `services.yml`) — `get_storage(name=None, …)` yields `IStorage` (upload/download/peek/delete); cleanup is scheduled by the `storages` module.
+- `IStorageProvider` → `S3StorageProvider` (default; swap to `OssStorageProvider` in `services.yml`) — `get_storage(name=None, key_prefix=…)` yields `IStorage` (upload/download/peek/delete); optional `StorageFolder` binds bucket+prefix; cleanup is scheduled by the `storages` module.
 - `IModule` / `IModuleSite` → module registration and FastAPI app mounting
 
 ### Module Pattern

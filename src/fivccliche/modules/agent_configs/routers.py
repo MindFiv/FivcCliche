@@ -105,12 +105,14 @@ async def create_embedding_config_async(
 async def list_embedding_configs_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
+    is_global: bool | None = Query(None),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
     filters = UserScopedReadableFilterSet(
         models.UserEmbedding.user_uuid, user.uuid, is_superuser=False
     )
+    filters.parse(is_global=is_global)
     configs = await utils.list_user_scoped_async(
         session, models.UserEmbedding, filters=filters, skip=skip, limit=limit
     )
@@ -239,10 +241,12 @@ async def create_llm_config_async(
 async def list_llm_configs_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
+    is_global: bool | None = Query(None),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
     filters = UserScopedReadableFilterSet(models.UserLLM.user_uuid, user.uuid, is_superuser=False)
+    filters.parse(is_global=is_global)
     configs = await utils.list_user_scoped_async(
         session, models.UserLLM, filters=filters, skip=skip, limit=limit
     )
@@ -365,10 +369,12 @@ async def create_asr_config_async(
 async def list_asr_configs_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
+    is_global: bool | None = Query(None),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
     filters = UserScopedReadableFilterSet(models.UserASR.user_uuid, user.uuid, is_superuser=False)
+    filters.parse(is_global=is_global)
     configs = await utils.list_user_scoped_async(
         session, models.UserASR, filters=filters, skip=skip, limit=limit
     )
@@ -781,10 +787,12 @@ async def create_tts_config_async(
 async def list_tts_configs_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
+    is_global: bool | None = Query(None),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
     filters = UserScopedReadableFilterSet(models.UserTTS.user_uuid, user.uuid, is_superuser=False)
+    filters.parse(is_global=is_global)
     configs = await utils.list_user_scoped_async(
         session, models.UserTTS, filters=filters, skip=skip, limit=limit
     )
@@ -1075,10 +1083,12 @@ async def create_agent_config_async(
 async def list_agent_configs_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
+    is_global: bool | None = Query(None),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
     filters = UserScopedReadableFilterSet(models.UserAgent.user_uuid, user.uuid, is_superuser=False)
+    filters.parse(is_global=is_global)
     configs = await utils.list_user_scoped_async(
         session, models.UserAgent, filters=filters, skip=skip, limit=limit
     )
@@ -1256,10 +1266,12 @@ async def create_tool_config_async(
 async def list_tool_configs_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
+    is_global: bool | None = Query(None),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
     filters = UserScopedReadableFilterSet(models.UserTool.user_uuid, user.uuid, is_superuser=False)
+    filters.parse(is_global=is_global)
     configs = await utils.list_user_scoped_async(
         session, models.UserTool, filters=filters, skip=skip, limit=limit
     )
@@ -1382,10 +1394,12 @@ async def create_skill_config_async(
 async def list_skill_configs_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
+    is_global: bool | None = Query(None),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
     filters = UserScopedReadableFilterSet(models.UserSkill.user_uuid, user.uuid, is_superuser=False)
+    filters.parse(is_global=is_global)
     configs = await utils.list_user_scoped_async(
         session, models.UserSkill, filters=filters, skip=skip, limit=limit
     )
@@ -1513,11 +1527,12 @@ async def list_question_configs_async(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     is_active: bool | None = Query(None),
+    is_global: bool | None = Query(None),
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> PaginatedResponse:
     filters = QuestionFilterSet(user.uuid, is_superuser=False)
-    filters.parse(is_active=is_active)
+    filters.parse(is_active=is_active, is_global=is_global)
     configs = await utils.list_user_scoped_async(
         session,
         models.UserQuestion,

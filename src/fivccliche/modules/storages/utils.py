@@ -1,7 +1,7 @@
 """Shared state transitions and cleanup queries for storage files."""
 
-from datetime import datetime, timezone
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from typing import cast
 
 from sqlalchemy import delete, update
@@ -9,8 +9,22 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from .models import StorageFile
+from fivccliche.services.interfaces.storages import IStorage, IStorageProvider
+
+from .models import StorageFile, StorageFolder
 from .schemas import StorageStatus
+
+
+def resolve_storage_for_file(
+    provider: IStorageProvider,
+    row: StorageFile,
+    folder: StorageFolder | None,
+) -> IStorage | None:
+    """Return IStorage for a file row; relative object_key stays without prefix."""
+    if folder is not None:
+        return provider.get_storage(folder.bucket_name, key_prefix=folder.bucket_prefix)
+    key_prefix = f"users/{row.user_uuid}" if row.user_uuid else ""
+    return provider.get_storage(None, key_prefix=key_prefix)
 
 
 async def transition_storage_file_status_async(

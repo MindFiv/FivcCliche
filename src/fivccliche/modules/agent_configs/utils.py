@@ -131,6 +131,7 @@ async def create_llm_config_async(
         temperature=config_create.temperature,
         max_tokens=config_create.max_tokens,
         enable_thinking=config_create.enable_thinking,
+        extra=config_create.extra,
         updated_at=datetime.now(timezone.utc),
         updated_user_uuid=updated_user_uuid,
     )
@@ -162,6 +163,8 @@ async def update_llm_config_async(
         config.max_tokens = config_update.max_tokens
     if "enable_thinking" in fields_set:
         config.enable_thinking = config_update.enable_thinking
+    if "extra" in fields_set:
+        config.extra = config_update.extra
     config.updated_at = datetime.now(timezone.utc)
     config.updated_user_uuid = updated_user_uuid
     session.add(config)
@@ -276,6 +279,7 @@ async def create_agent_config_async(
         skill_ids=config_create.skill_ids,
         system_prompt=config_create.system_prompt,
         response_format=config_create.response_format,
+        extra=config_create.extra,
         is_frozen=config_create.is_frozen if hasattr(config_create, "is_frozen") else False,
         updated_at=datetime.now(timezone.utc),
         updated_user_uuid=updated_user_uuid,
@@ -304,6 +308,8 @@ async def update_agent_config_async(
         config.system_prompt = config_update.system_prompt
     if "response_format" in fields_set:
         config.response_format = config_update.response_format
+    if "extra" in fields_set:
+        config.extra = config_update.extra
     if hasattr(config_update, "is_frozen") and config_update.is_frozen is not None:
         config.is_frozen = config_update.is_frozen
     config.updated_at = datetime.now(timezone.utc)

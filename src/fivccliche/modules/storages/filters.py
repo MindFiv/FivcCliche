@@ -6,6 +6,7 @@ import operator
 
 from fivccliche.utils.filters import (
     FilterEditableField,
+    FilterGlobalField,
     FilterReadableField,
     FilterSimpleField,
     FilterSet,
@@ -28,6 +29,7 @@ class StorageFileFilterSet(FilterSet):
                 ),
                 FilterSimpleField("status", models.StorageFile.status, operator.eq),
                 FilterSimpleField("is_public", models.StorageFile.is_public, operator.eq),
+                FilterGlobalField("is_global", models.StorageFile.user_uuid),
                 FilterSimpleField("content_type", models.StorageFile.content_type, operator.eq),
                 FilterSimpleField("created_at_from", models.StorageFile.created_at, operator.ge),
                 FilterSimpleField("created_at_to", models.StorageFile.created_at, operator.le),
@@ -60,6 +62,38 @@ class StorageFileEditableFilterSet(FilterSet):
                 FilterEditableField(
                     "editable",
                     models.StorageFile.user_uuid,
+                    user_uuid,
+                    is_superuser=is_superuser,
+                ),
+            ]
+        )
+
+
+class StorageFolderReadableFilterSet(FilterSet):
+    """Readable ownership for folder list / get / upload binding."""
+
+    def __init__(self, user_uuid: str, *, is_superuser: bool) -> None:
+        super().__init__(
+            [
+                FilterReadableField(
+                    "readable",
+                    models.StorageFolder.user_uuid,
+                    user_uuid,
+                    is_superuser=is_superuser,
+                ),
+            ]
+        )
+
+
+class StorageFolderEditableFilterSet(FilterSet):
+    """Editable ownership for folder update / delete."""
+
+    def __init__(self, user_uuid: str, *, is_superuser: bool) -> None:
+        super().__init__(
+            [
+                FilterEditableField(
+                    "editable",
+                    models.StorageFolder.user_uuid,
                     user_uuid,
                     is_superuser=is_superuser,
                 ),

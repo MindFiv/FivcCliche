@@ -7,6 +7,53 @@ from sqlmodel import Field, SQLModel
 from . import schemas
 
 
+class StorageFolder(SQLModel, table=True):
+    """Named bucket + key_prefix binding used by storage files."""
+
+    __tablename__ = "storage_folder"
+    __table_args__ = (Index("ix_storage_folder_name_user_uuid", "name", "user_uuid", unique=True),)
+
+    uuid: str = Field(
+        default_factory=lambda: str(uuid4()),
+        primary_key=True,
+        max_length=36,
+    )
+    user_uuid: str | None = Field(
+        default=None,
+        foreign_key="user.uuid",
+        index=True,
+        max_length=36,
+    )
+    name: str = Field(max_length=255, index=True)
+    bucket_name: str = Field(max_length=255)
+    bucket_prefix: str = Field(default="", max_length=512)
+    created_at: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            default=lambda: datetime.now(timezone.utc),
+            nullable=False,
+        ),
+    )
+    updated_at: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            default=lambda: datetime.now(timezone.utc),
+            nullable=False,
+        ),
+    )
+
+    def to_schema(self) -> schemas.StorageFolderSchema:
+        return schemas.StorageFolderSchema(
+            uuid=self.uuid,
+            user_uuid=self.user_uuid,
+            name=self.name,
+            bucket_name=self.bucket_name,
+            bucket_prefix=self.bucket_prefix,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
+        )
+
+
 class StorageFile(SQLModel, table=True):
     """Metadata for one object uploaded through the storages module."""
 
@@ -25,6 +72,12 @@ class StorageFile(SQLModel, table=True):
     user_uuid: str | None = Field(
         default=None,
         foreign_key="user.uuid",
+        index=True,
+        max_length=36,
+    )
+    folder_uuid: str | None = Field(
+        default=None,
+        foreign_key="storage_folder.uuid",
         index=True,
         max_length=36,
     )
@@ -58,6 +111,7 @@ class StorageFile(SQLModel, table=True):
         return schemas.StorageFileSchema(
             uuid=self.uuid,
             user_uuid=self.user_uuid,
+            folder_uuid=self.folder_uuid,
             object_key=self.object_key,
             filename=self.filename,
             content_type=self.content_type,

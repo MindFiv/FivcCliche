@@ -1,4 +1,4 @@
-"""API tests for user-owned OSS storage files."""
+"""API tests for user-owned storage files and folders."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -7,7 +7,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fivccliche.modules.storages.models import StorageFile
-from fivccliche.modules.storages.routers import get_required_storage_async
 from fivccliche.services.interfaces.storages import (
     IStorage,
     IStorageProvider,
@@ -16,6 +15,7 @@ from fivccliche.services.interfaces.storages import (
     StorageInfo,
     StorageUpLink,
 )
+from fivccliche.utils.deps import get_storage_provider_async
 from tests.conftest import make_api_client
 
 
@@ -24,6 +24,7 @@ class FakeStorage(IStorage):
         self.objects: dict[str, StorageInfo] = {}
         self.deleted: list[str] = []
         self.delete_failures: set[str] = set()
+        self.last_keys: list[str] = []
 
     async def upload_async(
         self,
@@ -32,6 +33,7 @@ class FakeStorage(IStorage):
         *,
         is_public: bool = False,
     ) -> StorageUpLink:
+        self.last_keys.append(object_key)
         headers = {
             "Content-Type": content_type,
             "x-oss-object-acl": "public-read" if is_public else "private",
@@ -51,6 +53,7 @@ class FakeStorage(IStorage):
         content_type: str,
         filename: str,
     ) -> StorageDownLink:
+        self.last_keys.append(object_key)
         if not signed:
             return StorageDownLink(
                 method="GET",
@@ -64,30 +67,81 @@ class FakeStorage(IStorage):
         )
 
     async def peek_async(self, object_key: str) -> StorageInfo | None:
+        self.last_keys.append(object_key)
         return self.objects.get(object_key)
 
     async def delete_async(self, object_key: str) -> None:
+        self.last_keys.append(object_key)
         if object_key in self.delete_failures:
             raise StorageError("delete failed")
         self.deleted.append(object_key)
         self.objects.pop(object_key, None)
 
 
+class PrefixedFakeStorage(IStorage):
+    """Applies key_prefix like S3Storage/OssStorage for cleanup / prefix assertions."""
+
+    def __init__(self, inner: FakeStorage, key_prefix: str = "") -> None:
+        self._inner = inner
+        self._key_prefix = key_prefix.strip("/")
+
+    def _full_key(self, object_key: str) -> str:
+        if not self._key_prefix:
+            return object_key
+        return f"{self._key_prefix}/{object_key}"
+
+    async def upload_async(
+        self,
+        object_key: str,
+        content_type: str,
+        *,
+        is_public: bool = False,
+    ) -> StorageUpLink:
+        return await self._inner.upload_async(
+            self._full_key(object_key), content_type, is_public=is_public
+        )
+
+    async def download_async(
+        self,
+        object_key: str,
+        *,
+        signed: bool = True,
+        content_type: str,
+        filename: str,
+    ) -> StorageDownLink:
+        return await self._inner.download_async(
+            self._full_key(object_key),
+            signed=signed,
+            content_type=content_type,
+            filename=filename,
+        )
+
+    async def peek_async(self, object_key: str) -> StorageInfo | None:
+        return await self._inner.peek_async(self._full_key(object_key))
+
+    async def delete_async(self, object_key: str) -> None:
+        await self._inner.delete_async(self._full_key(object_key))
+
+
 class FakeStorageProvider(IStorageProvider):
     def __init__(self, storage: FakeStorage | None = None) -> None:
         self.storage = storage or FakeStorage()
+        self.calls: list[tuple[str | None, str | None]] = []
 
     def get_storage(
         self,
         name: str | None = None,
         *,
+        key_prefix: str | None = None,
         upload_expires_in: timedelta | None = None,
         download_expires_in: timedelta | None = None,
         **kwargs: Any,
     ) -> IStorage | None:
         if name is not None and not name:
             return None
-        return self.storage
+        self.calls.append((name, key_prefix))
+        prefix = (key_prefix or "").strip("/")
+        return PrefixedFakeStorage(self.storage, prefix)
 
 
 @pytest.fixture
@@ -101,9 +155,9 @@ def storage_provider(storage: FakeStorage) -> FakeStorageProvider:
 
 
 @pytest.fixture
-def client(storage: FakeStorage):
+def client(storage_provider: FakeStorageProvider):
     for test_client in make_api_client(["users", "storages"]):
-        test_client.app.dependency_overrides[get_required_storage_async] = lambda: storage
+        test_client.app.dependency_overrides[get_storage_provider_async] = lambda: storage_provider
         yield test_client
 
 
@@ -125,22 +179,27 @@ def create_upload(
     content_type: str = "text/plain",
     byte_size: int = 12,
     is_public: bool = False,
+    folder_uuid: str | None = None,
 ) -> Any:
+    body: dict[str, Any] = {
+        "filename": filename,
+        "content_type": content_type,
+        "byte_size": byte_size,
+        "is_public": is_public,
+    }
+    if folder_uuid is not None:
+        body["folder_uuid"] = folder_uuid
     return client.post(
         "/files/uploads/",
         headers=auth_headers(token),
-        json={
-            "filename": filename,
-            "content_type": content_type,
-            "byte_size": byte_size,
-            "is_public": is_public,
-        },
+        json=body,
     )
 
 
 def test_create_upload_returns_pending_metadata(
     client: TestClient,
     auth_token: str,
+    storage_provider: FakeStorageProvider,
 ) -> None:
     response = create_upload(client, auth_token)
 
@@ -148,13 +207,15 @@ def test_create_upload_returns_pending_metadata(
     data = response.json()
     assert data["status"] == "PENDING"
     assert data["user_uuid"] is None  # admin / superuser creates globals
+    assert data["folder_uuid"] is None
     assert data["is_public"] is False
     assert data["upload_method"] == "PUT"
     assert data["upload_headers"] == {
         "Content-Type": "text/plain",
         "x-oss-object-acl": "private",
     }
-    assert data["object_key"].startswith("storages/")
+    assert data["object_key"] == data["uuid"]
+    assert storage_provider.calls[-1] == (None, "")
 
 
 def test_create_public_upload_includes_acl_header(
@@ -181,12 +242,107 @@ def test_create_upload_rejects_disallowed_type(
     assert response.status_code == 422
 
 
+def test_regular_user_default_prefix(
+    client: TestClient,
+    storage: FakeStorage,
+    storage_provider: FakeStorageProvider,
+) -> None:
+    token = create_user_token(client, username="prefixuser", email="prefix@example.com")
+    response = create_upload(client, token)
+    assert response.status_code == 201
+    data = response.json()
+    assert data["user_uuid"] is not None
+    assert storage_provider.calls[-1] == (None, f"users/{data['user_uuid']}")
+    assert storage.last_keys[-1] == f"users/{data['user_uuid']}/{data['object_key']}"
+
+
+def test_duplicate_filename_allowed(
+    client: TestClient,
+    auth_token: str,
+) -> None:
+    first = create_upload(client, auth_token, filename="same.txt")
+    second = create_upload(client, auth_token, filename="same.txt")
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["uuid"] != second.json()["uuid"]
+
+
+def test_folder_crud_superuser_only(
+    client: TestClient,
+    auth_token: str,
+) -> None:
+    regular = create_user_token(client, username="nofolder", email="nofolder@example.com")
+    denied = client.post(
+        "/folders/",
+        headers=auth_headers(regular),
+        json={"name": "app", "bucket_name": "b1", "bucket_prefix": "/uploads/app"},
+    )
+    assert denied.status_code == 403
+
+    created = client.post(
+        "/folders/",
+        headers=auth_headers(auth_token),
+        json={"name": "app", "bucket_name": "b1", "bucket_prefix": "/uploads/app"},
+    )
+    assert created.status_code == 201
+    folder = created.json()
+    assert folder["user_uuid"] is None
+    assert folder["bucket_prefix"] == "uploads/app"
+
+    listed = client.get("/folders/", headers=auth_headers(regular))
+    assert listed.status_code == 200
+    assert folder["uuid"] in [item["uuid"] for item in listed.json()["results"]]
+
+    patched = client.patch(
+        f"/folders/{folder['uuid']}/",
+        headers=auth_headers(auth_token),
+        json={"bucket_prefix": "uploads/app2"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["bucket_prefix"] == "uploads/app2"
+
+    assert (
+        client.delete(
+            f"/folders/{folder['uuid']}/",
+            headers=auth_headers(regular),
+        ).status_code
+        == 403
+    )
+    assert (
+        client.delete(
+            f"/folders/{folder['uuid']}/",
+            headers=auth_headers(auth_token),
+        ).status_code
+        == 204
+    )
+
+
+def test_upload_with_folder_uses_folder_storage(
+    client: TestClient,
+    auth_token: str,
+    storage: FakeStorage,
+    storage_provider: FakeStorageProvider,
+) -> None:
+    folder = client.post(
+        "/folders/",
+        headers=auth_headers(auth_token),
+        json={"name": "media", "bucket_name": "media-bucket", "bucket_prefix": "media"},
+    ).json()
+    response = create_upload(client, auth_token, folder_uuid=folder["uuid"])
+    assert response.status_code == 201
+    data = response.json()
+    assert data["folder_uuid"] == folder["uuid"]
+    assert storage_provider.calls[-1] == ("media-bucket", "media")
+    assert storage.last_keys[-1] == f"media/{data['object_key']}"
+
+
 def test_complete_upload_verifies_object(
     client: TestClient,
     auth_token: str,
     storage: FakeStorage,
 ) -> None:
     created = create_upload(client, auth_token).json()
+    # global file → empty prefix; PrefixedFakeStorage uses relative key as-is
     storage.objects[created["object_key"]] = StorageInfo(
         byte_size=12,
         content_type="text/plain",
@@ -253,9 +409,16 @@ def create_ready_file(
     storage: FakeStorage,
     *,
     is_public: bool = False,
+    folder_uuid: str | None = None,
+    key_prefix: str | None = None,
 ) -> dict[str, Any]:
-    created = create_upload(client, token, is_public=is_public).json()
-    storage.objects[created["object_key"]] = StorageInfo(
+    created = create_upload(client, token, is_public=is_public, folder_uuid=folder_uuid).json()
+    if key_prefix is None:
+        prefix = f"users/{created['user_uuid']}" if created["user_uuid"] else ""
+    else:
+        prefix = key_prefix.strip("/")
+    full_key = f"{prefix}/{created['object_key']}" if prefix else created["object_key"]
+    storage.objects[full_key] = StorageInfo(
         byte_size=12,
         content_type="text/plain",
         etag='"etag"',
@@ -289,6 +452,35 @@ def test_list_defaults_to_ready_files(
         params={"status": "PENDING"},
     )
     assert [item["uuid"] for item in pending_list.json()["results"]] == [pending["uuid"]]
+
+
+def test_list_is_global_filter(
+    client: TestClient,
+    auth_token: str,
+    storage: FakeStorage,
+) -> None:
+    global_file = create_ready_file(client, auth_token, storage)
+    owner_token = create_user_token(client, username="sharedowner", email="sharedowner@example.com")
+    owned = create_ready_file(client, owner_token, storage)
+    assert owned["user_uuid"] is not None
+
+    global_only = client.get(
+        "/files/",
+        headers=auth_headers(auth_token),
+        params={"is_global": True},
+    )
+    assert global_only.status_code == 200
+    assert all(item["user_uuid"] is None for item in global_only.json()["results"])
+    assert global_file["uuid"] in [item["uuid"] for item in global_only.json()["results"]]
+
+    not_global = client.get(
+        "/files/",
+        headers=auth_headers(owner_token),
+        params={"is_global": False},
+    )
+    assert not_global.status_code == 200
+    assert all(item["user_uuid"] is not None for item in not_global.json()["results"])
+    assert owned["uuid"] in [item["uuid"] for item in not_global.json()["results"]]
 
 
 def test_private_url_requires_owner_and_ready(

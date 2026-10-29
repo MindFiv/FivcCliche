@@ -372,6 +372,49 @@ class TestLLMConfigAPI:
         assert data["total"] == 3
         assert len(data["results"]) == 3
 
+    def test_list_llm_configs_is_global(
+        self, client: TestClient, auth_token: str, admin_token: str
+    ):
+        """Test listing LLM configs filtered by is_global."""
+        client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "llm-global",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "global-key",
+            },
+        )
+        client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "llm-owned",
+                "provider": "openai",
+                "model": "gpt-4o",
+                "api_key": "owned-key",
+            },
+        )
+
+        global_only = client.get(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            params={"is_global": True},
+        )
+        assert global_only.status_code == 200
+        assert all(item["user_uuid"] is None for item in global_only.json()["results"])
+        assert "llm-global" in [item["id"] for item in global_only.json()["results"]]
+
+        owned_only = client.get(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            params={"is_global": False},
+        )
+        assert owned_only.status_code == 200
+        assert all(item["user_uuid"] is not None for item in owned_only.json()["results"])
+        assert [item["id"] for item in owned_only.json()["results"]] == ["llm-owned"]
+
     def test_get_llm_config(self, client: TestClient, auth_token: str):
         """Test getting a specific LLM config."""
         create_response = client.post(
@@ -443,6 +486,37 @@ class TestLLMConfigAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["enable_thinking"] is None
+
+    def test_llm_config_extra_roundtrip(self, client: TestClient, auth_token: str):
+        """Test persisting ModelConfig.extra on LLM configs."""
+        create_response = client.post(
+            "/configs/models/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "llm-extra",
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "test-key",
+                "extra": {"supports_developer_role": True},
+            },
+        )
+        assert create_response.status_code == 201
+        assert create_response.json()["extra"] == {"supports_developer_role": True}
+        config_uuid = create_response.json()["uuid"]
+
+        got = client.get(
+            f"/configs/models/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert got.json()["extra"] == {"supports_developer_role": True}
+
+        cleared = client.patch(
+            f"/configs/models/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"extra": None},
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["extra"] is None
 
     def test_delete_llm_config(self, client: TestClient, auth_token: str):
         """Test deleting an LLM config."""
@@ -1534,6 +1608,35 @@ class TestAgentConfigAPI:
             "type": "object",
             "properties": {"result": {"type": "integer"}},
         }
+
+    def test_agent_config_extra_roundtrip(self, client: TestClient, auth_token: str):
+        """Test persisting AgentConfig.extra on agent configs."""
+        create_response = client.post(
+            "/configs/agents/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "agent-extra",
+                "model_id": "model123",
+                "extra": {"pipeline_params": {"allow_interruptions": True}},
+            },
+        )
+        assert create_response.status_code == 201
+        assert create_response.json()["extra"] == {"pipeline_params": {"allow_interruptions": True}}
+        config_uuid = create_response.json()["uuid"]
+
+        got = client.get(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert got.json()["extra"]["pipeline_params"]["allow_interruptions"] is True
+
+        cleared = client.patch(
+            f"/configs/agents/{config_uuid}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"extra": None},
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["extra"] is None
 
     def test_update_agent_config_clears_nullable_fields(self, client: TestClient, auth_token: str):
         """Test PATCH with explicit null clears nullable agent fields."""
@@ -2688,6 +2791,44 @@ class TestQuestionConfigAPI:
             "question-api-inactive-2",
         }
         assert all(result["is_active"] is False for result in data["results"])
+
+    def test_list_questions_is_global(self, client: TestClient, auth_token: str, admin_token: str):
+        """Test listing questions filtered by is_global."""
+        client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={
+                "id": "question-global",
+                "question": "Global?",
+                "answer": "Yes",
+            },
+        )
+        client.post(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={
+                "id": "question-owned",
+                "question": "Owned?",
+                "answer": "Yes",
+            },
+        )
+
+        global_only = client.get(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            params={"is_global": True},
+        )
+        assert global_only.status_code == 200
+        assert all(item["user_uuid"] is None for item in global_only.json()["results"])
+        assert "question-global" in [item["id"] for item in global_only.json()["results"]]
+
+        owned_only = client.get(
+            "/configs/questions/",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            params={"is_global": False},
+        )
+        assert owned_only.status_code == 200
+        assert [item["id"] for item in owned_only.json()["results"]] == ["question-owned"]
 
     def test_get_question(self, client: TestClient, auth_token: str):
         """Test getting a question config."""

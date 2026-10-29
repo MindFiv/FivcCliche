@@ -146,6 +146,29 @@ class FilterEditableField(FilterField):
         return statement.where(self.col == self.user_uuid)
 
 
+class FilterGlobalField(FilterField):
+    """Filter rows by whether ownership ``col`` is null (global)."""
+
+    def __init__(self, name: str, col: Any) -> None:
+        self._name = name
+        self.col = col
+        self._value: bool | None = None
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def parse(self, value: Any) -> None:
+        self._value = value
+
+    def filter(self, statement: Any) -> Any:
+        if self._value is None:
+            return statement
+        if self._value:
+            return statement.where(self.col == None)  # noqa: E711
+        return statement.where(self.col != None)  # noqa: E711
+
+
 class FilterSet:
     """Parse HTTP query params and apply them as SQLAlchemy WHERE clauses."""
 

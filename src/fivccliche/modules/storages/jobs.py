@@ -4,17 +4,17 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import cast
 
 from fivcglue import IComponentSite, query_component
 from fivcglue.interfaces import configs
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from fivccliche.modules.storages import utils
+from fivccliche.modules.storages.models import StorageFolder
 from fivccliche.modules.storages.schemas import StorageStatus
 from fivccliche.services.interfaces.modules import IModuleJob
 from fivccliche.services.interfaces.storages import (
-    IStorage,
     IStorageProvider,
     StorageError,
 )
@@ -67,10 +67,10 @@ class StorageCleanupJob(IModuleJob):
             _default_session_factory
         )
 
-    def _get_storage(self) -> IStorage | None:
+    def _provider_ready(self) -> bool:
         if self._provider is None:
-            return None
-        return cast(IStorage | None, self._provider.get_storage())
+            return False
+        return self._provider.get_storage() is not None
 
     @property
     def name(self) -> str:
@@ -78,13 +78,12 @@ class StorageCleanupJob(IModuleJob):
 
     @property
     def config(self) -> dict | None:
-        if self._get_storage() is None:
+        if not self._provider_ready():
             return None
         return self._setting.job_config()
 
     async def run_async(self) -> None:
-        storage = self._get_storage()
-        if storage is None:
+        if self._provider is None or not self._provider_ready():
             return
         cutoff = datetime.now(timezone.utc) - timedelta(hours=self._setting.pending_ttl_hours)
         async with self._session_factory() as session:
@@ -109,6 +108,18 @@ class StorageCleanupJob(IModuleJob):
                 limit=self._setting.batch_size,
             )
         for row in deleting:
+            folder: StorageFolder | None = None
+            if row.folder_uuid is not None:
+                async with self._session_factory() as session:
+                    folder = (
+                        await session.execute(
+                            select(StorageFolder).where(StorageFolder.uuid == row.folder_uuid)
+                        )
+                    ).scalar_one_or_none()
+            storage = utils.resolve_storage_for_file(self._provider, row, folder)
+            if storage is None:
+                logger.warning("No storage for deleting file %s", row.uuid)
+                continue
             try:
                 await storage.delete_async(row.object_key)
             except StorageError:

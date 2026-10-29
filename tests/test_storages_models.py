@@ -146,6 +146,18 @@ async def test_filters_apply_owner_global_and_http_fields(session: AsyncSession)
     ready = (await session.execute(list_filters.filter(select(StorageFile)))).scalars().all()
     assert {row.uuid for row in ready} == {global_row.uuid}
 
+    global_filters = StorageFileFilterSet(owner.uuid, is_superuser=False)
+    global_filters.parse(status=StorageStatus.READY, is_global=True)
+    globals_only = (
+        (await session.execute(global_filters.filter(select(StorageFile)))).scalars().all()
+    )
+    assert [row.uuid for row in globals_only] == [global_row.uuid]
+
+    owned_filters = StorageFileFilterSet(owner.uuid, is_superuser=False)
+    owned_filters.parse(is_global=False)
+    only_owned = (await session.execute(owned_filters.filter(select(StorageFile)))).scalars().all()
+    assert [row.uuid for row in only_owned] == [owned.uuid]
+
     readable = StorageFileReadableFilterSet(owner.uuid, is_superuser=False)
     seen = (
         await session.execute(

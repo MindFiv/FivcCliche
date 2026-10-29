@@ -5,6 +5,7 @@ from typing import Any
 
 from fivccliche.utils.filters import (
     FilterEditableField,
+    FilterGlobalField,
     FilterReadableField,
     FilterSet,
     FilterSimpleField,
@@ -20,6 +21,7 @@ class UserScopedReadableFilterSet(FilterSet):
         super().__init__(
             [
                 FilterReadableField("readable", col, user_uuid, is_superuser=is_superuser),
+                FilterGlobalField("is_global", col),
             ]
         )
 
@@ -47,6 +49,7 @@ class QuestionFilterSet(FilterSet):
                     user_uuid,
                     is_superuser=is_superuser,
                 ),
+                FilterGlobalField("is_global", models.UserQuestion.user_uuid),
                 FilterSimpleField("is_active", models.UserQuestion.is_active, operator.eq),
             ]
         )

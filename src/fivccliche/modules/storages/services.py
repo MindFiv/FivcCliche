@@ -39,4 +39,5 @@ class ModuleImpl(IModule):
 
     def mount(self, app: FastAPI, **kwargs) -> None:
         logger.info("storages module mounted")
+        app.include_router(routers.router_folders, **kwargs)
         app.include_router(routers.router_files, **kwargs)

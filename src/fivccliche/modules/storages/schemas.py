@@ -37,6 +37,64 @@ class StorageStatus(StrEnum):
     DELETING = "DELETING"
 
 
+class StorageFolderCreateSchema(BaseModel):
+    """Validated request used to create a storage folder."""
+
+    name: str = Field(min_length=1, max_length=255)
+    bucket_name: str = Field(min_length=1, max_length=255)
+    bucket_prefix: str = Field(default="", max_length=512)
+
+    @field_validator("name", "bucket_name")
+    @classmethod
+    def strip_required(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("bucket_prefix")
+    @classmethod
+    def normalize_prefix(cls, value: str) -> str:
+        return value.strip().strip("/")
+
+
+class StorageFolderUpdateSchema(BaseModel):
+    """Partial update for a storage folder."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    bucket_name: str | None = Field(default=None, min_length=1, max_length=255)
+    bucket_prefix: str | None = Field(default=None, max_length=512)
+
+    @field_validator("name", "bucket_name")
+    @classmethod
+    def strip_optional(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+    @field_validator("bucket_prefix")
+    @classmethod
+    def normalize_optional_prefix(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip().strip("/")
+
+
+class StorageFolderSchema(BaseModel):
+    """Storage folder metadata response."""
+
+    uuid: str
+    user_uuid: str | None
+    name: str
+    bucket_name: str
+    bucket_prefix: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class StorageFileCreateSchema(BaseModel):
     """Validated request used to create a presigned upload."""
 
@@ -44,6 +102,7 @@ class StorageFileCreateSchema(BaseModel):
     content_type: str = Field(min_length=3, max_length=255)
     byte_size: int = Field(gt=0, le=MAX_FILE_BYTES)
     is_public: bool = False
+    folder_uuid: str | None = None
 
     @field_validator("filename")
     @classmethod
@@ -67,6 +126,7 @@ class StorageFileSchema(BaseModel):
 
     uuid: str
     user_uuid: str | None
+    folder_uuid: str | None = None
     object_key: str
     filename: str
     content_type: str

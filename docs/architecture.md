@@ -36,7 +36,7 @@ rows.
 
 Frozen agents: `_reject_frozen_agent_update` / `_reject_frozen_agent_delete` in [`agent_configs/routers.py`](../src/fivccliche/modules/agent_configs/routers.py), called from the agent PATCH and DELETE handlers. A frozen agent cannot be deleted. Updates may only set `is_frozen`; any other field in the PATCH body is 403.
 
-HTTP list/get returns every matching row, including inactive tools/skills. Playground repositories filter `is_active` themselves so agents never pick up disabled configs. Question configs have no playground repository. Question list accepts an `is_active` query parameter.
+HTTP list/get returns every matching row, including inactive tools/skills. Playground repositories filter `is_active` themselves so agents never pick up disabled configs. Question configs have no playground repository. Question list accepts an `is_active` query parameter. All user-scoped config list endpoints (and storage file list) accept optional `is_global` (`true` → `user_uuid IS NULL`, `false` → not null).
 
 Config responses call `config.to_schema()` with no include/exclude arguments. PATCH bodies use `create_partial_model(schema)`. `api_key` is write-only on the schema (`Field(exclude=True)` on `UserEmbeddingSchema` / `UserLLMSchema` / `UserASRSchema` / `UserTTSSchema`).
 
@@ -65,7 +65,7 @@ Callers construct [`UserScopedReadableFilterSet`](../src/fivccliche/modules/agen
 
 Chats use the same Readable/Editable FilterSets for chat ownership; they are not user-or-global configs in the HTTP create sense, but Readable still includes globals for regular users.
 
-HTTP list filters that bind query params to SQL belong in that module's `filters.py` as a `FilterSet` subclass. Do not put them in `schemas.py` or in [`utils/filters.py`](../src/fivccliche/utils/filters.py) (reusable `FilterField` / `FilterSimpleField` / `FilterJsonField` / `FilterReadableField` / `FilterEditableField` / `FilterSet`). Do not use FilterSet as a FastAPI `Depends`; declare scalar query params with `Query()` on the handler, instantiate the FilterSet, call `parse(...)` (plus any dotted JSON keys from the request), then pass it into SQL helpers that call `filter(statement)`.
+HTTP list filters that bind query params to SQL belong in that module's `filters.py` as a `FilterSet` subclass. Do not put them in `schemas.py` or in [`utils/filters.py`](../src/fivccliche/utils/filters.py) (reusable `FilterField` / `FilterSimpleField` / `FilterJsonField` / `FilterReadableField` / `FilterEditableField` / `FilterGlobalField` / `FilterSet`). Do not use FilterSet as a FastAPI `Depends`; declare scalar query params with `Query()` on the handler, instantiate the FilterSet, call `parse(...)` (plus any dotted JSON keys from the request), then pass it into SQL helpers that call `filter(statement)`.
 
 Chat list uses [`ChatFilterSet`](../src/fivccliche/modules/agent_chats/filters.py): `ChatFilterSet(user_uuid, is_superuser=False)` → `parse(agent_id=..., description_contains=..., created_at_from=..., created_at_to=..., updated_at_from=..., updated_at_to=..., context.*=...)` → `filter(statement)` (includes Readable). Chat retrieve uses `is_superuser=True` when the caller is a superuser.
 
@@ -107,7 +107,7 @@ Protocol:
 4. Media after `ready` is **Protobuf** (Pipecat frames). Clients must not send JSON `vad` / `stop` / `offer` / `ice` control frames for audio turn-taking; Silero VAD is passed as `vad=` into `agent.run_async`.
 5. `agent.run_async(transport=..., stt=recognizer, tts=synthesizer, vad=SileroVADAnalyzer(sample_rate=16000), ...)` runs until disconnect. Playground enters and exits the recognizer and synthesizer when the pipeline starts and cleans up. `ChatChannel.shutdown()` stops further JSON reads so Pipecat owns the socket after `ready`.
 
-The voice LLM must use provider `openai` or `ollama` (Pipecat model backend). A Pipecat OpenAI model with `base_url` set defaults `supports_developer_role` to false, because compatible gateways reject the `developer` role. Set `ModelConfig.extra["supports_developer_role"]` to true to turn it back on. Optional `AgentConfig.extra` keys `pipeline_params` / `idle_timeout_secs` are honored by playground.
+The voice LLM must use provider `openai` or `ollama` (Pipecat model backend). A Pipecat OpenAI model with `base_url` set defaults `supports_developer_role` to false, because compatible gateways reject the `developer` role. Set `ModelConfig.extra["supports_developer_role"]` to true to turn it back on. Optional `AgentConfig.extra` keys `pipeline_params` / `idle_timeout_secs` are honored by playground. Both `UserLLM.extra` and `UserAgent.extra` are persisted as JSON and round-trip through HTTP CRUD.
 
 `UserChat.updated_at` is set equal to `created_at` on create. It is refreshed when a new message is created (`create_chat_message_async`) and when a description is written (`PATCH /{chat_uuid}/`, `ChatDescribeJob`, and repository session description updates). Updating an existing message does not refresh it. List order stays `created_at` descending.
 

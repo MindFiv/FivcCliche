@@ -75,6 +75,7 @@ class IStorageProvider(IComponent):
         self,
         name: str | None = None,
         *,
+        key_prefix: str | None = None,
         upload_expires_in: timedelta | None = None,
         download_expires_in: timedelta | None = None,
         **kwargs: Any,
@@ -82,6 +83,8 @@ class IStorageProvider(IComponent):
         """Return storage for ``name``, or None when configuration is incomplete.
 
         When ``name`` is None, use the configured default bucket. Optional
+        ``key_prefix`` scopes all object keys under a bucket subdirectory
+        (leading/trailing slashes are stripped). Optional
         ``upload_expires_in`` / ``download_expires_in`` override configured
         URL lifetimes; ``**kwargs`` are backend-specific.
         """

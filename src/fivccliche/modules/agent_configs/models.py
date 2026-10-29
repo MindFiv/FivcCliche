@@ -135,6 +135,11 @@ class UserLLM(SQLModel, table=True):
         default=None,
         description="LLM enable thinking.",
     )
+    extra: dict[str, Any] | None = Field(
+        default=None,
+        sa_type=JSON,
+        description="Provider-specific extra options (e.g. supports_developer_role).",
+    )
     user_uuid: str | None = Field(
         default=None,
         foreign_key="user.uuid",
@@ -167,6 +172,7 @@ class UserLLM(SQLModel, table=True):
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             enable_thinking=self.enable_thinking,
+            extra=self.extra,
             user_uuid=self.user_uuid,
             updated_at=self.updated_at,
             updated_user_uuid=self.updated_user_uuid,
@@ -507,6 +513,11 @@ class UserAgent(SQLModel, table=True):
         default=None,
         description="Response format for the agent in JSON Schema format.",
     )
+    extra: dict[str, Any] | None = Field(
+        default=None,
+        sa_type=JSON,
+        description="Agent-specific extra options (e.g. pipeline_params).",
+    )
     user_uuid: str | None = Field(
         default=None,
         foreign_key="user.uuid",
@@ -541,6 +552,7 @@ class UserAgent(SQLModel, table=True):
             skill_ids=self.skill_ids,
             system_prompt=self.system_prompt,
             response_format=self.response_format,
+            extra=self.extra,
             user_uuid=self.user_uuid,
             is_frozen=self.is_frozen,
             updated_at=self.updated_at,

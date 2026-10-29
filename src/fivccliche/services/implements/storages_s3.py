@@ -36,6 +36,18 @@ def _expires_seconds(value: timedelta | None, default: int) -> int:
     return seconds if seconds > 0 else default
 
 
+def _normalize_key_prefix(key_prefix: str | None) -> str:
+    if not key_prefix:
+        return ""
+    return key_prefix.strip("/")
+
+
+def _validate_relative_key(object_key: str) -> str:
+    if not object_key or object_key.startswith("/") or ".." in object_key.split("/"):
+        raise StorageError("Invalid storage object key")
+    return object_key
+
+
 async def _maybe_await(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
@@ -54,6 +66,7 @@ class S3Storage(IStorage):
         upload_expires_in: int,
         download_expires_in: int,
         client_factory: ClientFactory,
+        key_prefix: str = "",
     ) -> None:
         self._bucket_name = bucket_name
         self._region = region
@@ -61,9 +74,16 @@ class S3Storage(IStorage):
         self._upload_expires_in = upload_expires_in
         self._download_expires_in = download_expires_in
         self._client_factory = client_factory
+        self._key_prefix = key_prefix
+
+    def _full_key(self, object_key: str) -> str:
+        relative = _validate_relative_key(object_key)
+        if not self._key_prefix:
+            return relative
+        return f"{self._key_prefix}/{relative}"
 
     def _public_url(self, object_key: str) -> StorageDownLink:
-        key = quote(object_key, safe="/")
+        key = quote(self._full_key(object_key), safe="/")
         if self._endpoint:
             base = self._endpoint
             if not base.startswith(("http://", "https://")):
@@ -85,13 +105,14 @@ class S3Storage(IStorage):
             "Content-Type": content_type,
             "x-amz-acl": acl,
         }
+        full_key = self._full_key(object_key)
         async with self._client_factory() as client:
             url = await _maybe_await(
                 client.generate_presigned_url(
                     "put_object",
                     Params={
                         "Bucket": self._bucket_name,
-                        "Key": object_key,
+                        "Key": full_key,
                         "ContentType": content_type,
                         "ACL": acl,
                     },
@@ -116,13 +137,14 @@ class S3Storage(IStorage):
         if not signed:
             return self._public_url(object_key)
         quoted = quote(filename, safe="")
+        full_key = self._full_key(object_key)
         async with self._client_factory() as client:
             url = await _maybe_await(
                 client.generate_presigned_url(
                     "get_object",
                     Params={
                         "Bucket": self._bucket_name,
-                        "Key": object_key,
+                        "Key": full_key,
                         "ResponseContentType": content_type,
                         "ResponseContentDisposition": f"attachment; filename*=UTF-8''{quoted}",
                     },
@@ -136,9 +158,10 @@ class S3Storage(IStorage):
         )
 
     async def peek_async(self, object_key: str) -> StorageInfo | None:
+        full_key = self._full_key(object_key)
         try:
             async with self._client_factory() as client:
-                result = await client.head_object(Bucket=self._bucket_name, Key=object_key)
+                result = await client.head_object(Bucket=self._bucket_name, Key=full_key)
         except ClientError as exc:
             code = str(exc.response.get("Error", {}).get("Code", ""))
             if code in {"404", "NoSuchKey", "NotFound"}:
@@ -151,9 +174,10 @@ class S3Storage(IStorage):
         )
 
     async def delete_async(self, object_key: str) -> None:
+        full_key = self._full_key(object_key)
         try:
             async with self._client_factory() as client:
-                await client.delete_object(Bucket=self._bucket_name, Key=object_key)
+                await client.delete_object(Bucket=self._bucket_name, Key=full_key)
         except ClientError as exc:
             code = str(exc.response.get("Error", {}).get("Code", ""))
             if code in {"404", "NoSuchKey", "NotFound"}:
@@ -249,6 +273,7 @@ class S3StorageProvider(IStorageProvider):
         self,
         name: str | None = None,
         *,
+        key_prefix: str | None = None,
         upload_expires_in: timedelta | None = None,
         download_expires_in: timedelta | None = None,
         **kwargs: Any,
@@ -259,6 +284,7 @@ class S3StorageProvider(IStorageProvider):
 
         upload_expires = _expires_seconds(upload_expires_in, int(self._upload_expires))
         download_expires = _expires_seconds(download_expires_in, int(self._download_expires))
+        prefix = key_prefix if key_prefix is not None else kwargs.get("key_prefix")
 
         return S3Storage(
             bucket_name=bucket_name,
@@ -267,4 +293,5 @@ class S3StorageProvider(IStorageProvider):
             upload_expires_in=upload_expires,
             download_expires_in=download_expires,
             client_factory=self._make_client_factory(),
+            key_prefix=_normalize_key_prefix(prefix if isinstance(prefix, str) else None),
         )
