@@ -98,26 +98,26 @@ class StorageFolderSchema(BaseModel):
 class StorageFileCreateSchema(BaseModel):
     """Validated request used to create a presigned upload."""
 
-    filename: str = Field(min_length=1, max_length=255)
+    name: str = Field(min_length=1, max_length=255)
     content_type: str = Field(min_length=3, max_length=255)
     byte_size: int = Field(gt=0, le=MAX_FILE_BYTES)
     is_public: bool = False
     folder_uuid: str | None = None
 
-    @field_validator("filename")
+    @field_validator("name")
     @classmethod
-    def validate_filename(cls, value: str) -> str:
+    def validate_name(cls, value: str) -> str:
         value = value.strip()
         if not value or "/" in value or "\\" in value or "\x00" in value:
-            raise ValueError("filename must be one path component")
+            raise ValueError("name must be one path component")
         return value
 
     @model_validator(mode="after")
     def validate_type(self) -> Self:
-        suffix = self.filename.rsplit(".", 1)[-1].lower() if "." in self.filename else ""
+        suffix = self.name.rsplit(".", 1)[-1].lower() if "." in self.name else ""
         expected = STORAGE_TYPES.get(f".{suffix}")
         if expected is None or self.content_type != expected:
-            raise ValueError("content_type does not match an allowed filename suffix")
+            raise ValueError("content_type does not match an allowed name suffix")
         return self
 
 
@@ -128,7 +128,7 @@ class StorageFileSchema(BaseModel):
     user_uuid: str | None
     folder_uuid: str | None = None
     object_key: str
-    filename: str
+    name: str
     content_type: str
     byte_size: int
     is_public: bool

@@ -23,17 +23,17 @@ from fivccliche.modules.users.models import User
 
 def test_create_schema_accepts_allowed_type_pair() -> None:
     body = StorageFileCreateSchema(
-        filename="demo.mp4",
+        name="demo.mp4",
         content_type="video/mp4",
         byte_size=20 * 1024 * 1024,
         is_public=True,
     )
-    assert body.filename == "demo.mp4"
+    assert body.name == "demo.mp4"
     assert body.is_public is True
 
 
 @pytest.mark.parametrize(
-    ("filename", "content_type", "byte_size"),
+    ("name", "content_type", "byte_size"),
     [
         ("demo.txt", "text/plain", 0),
         ("demo.txt", "text/plain", 20 * 1024 * 1024 + 1),
@@ -44,13 +44,13 @@ def test_create_schema_accepts_allowed_type_pair() -> None:
     ],
 )
 def test_create_schema_rejects_invalid_uploads(
-    filename: str,
+    name: str,
     content_type: str,
     byte_size: int,
 ) -> None:
     with pytest.raises(ValidationError):
         StorageFileCreateSchema(
-            filename=filename,
+            name=name,
             content_type=content_type,
             byte_size=byte_size,
             is_public=False,
@@ -66,7 +66,7 @@ async def test_storage_file_to_schema(session: AsyncSession) -> None:
     row = StorageFile(
         user_uuid=owner.uuid,
         object_key="storages/file-uuid",
-        filename="demo.png",
+        name="demo.png",
         content_type="image/png",
         byte_size=12,
         is_public=False,
@@ -97,7 +97,7 @@ async def test_filters_apply_owner_global_and_http_fields(session: AsyncSession)
     owned = StorageFile(
         user_uuid=owner.uuid,
         object_key="storages/owned",
-        filename="demo.txt",
+        name="demo.txt",
         content_type="text/plain",
         byte_size=12,
         is_public=False,
@@ -108,7 +108,7 @@ async def test_filters_apply_owner_global_and_http_fields(session: AsyncSession)
     global_row = StorageFile(
         user_uuid=None,
         object_key="storages/global",
-        filename="demo.txt",
+        name="demo.txt",
         content_type="text/plain",
         byte_size=12,
         is_public=False,
@@ -119,7 +119,7 @@ async def test_filters_apply_owner_global_and_http_fields(session: AsyncSession)
     others = StorageFile(
         user_uuid=other.uuid,
         object_key="storages/other",
-        filename="demo.txt",
+        name="demo.txt",
         content_type="text/plain",
         byte_size=12,
         is_public=True,

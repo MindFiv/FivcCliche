@@ -10,10 +10,10 @@ class in `src/fivccliche/settings/services.yml` to
 
 Run `fivccliche migrate` after upgrading so `storage_folder` / `storage_file`
 tables exist. If you already have tables from an earlier revision, recreate them
-or alter columns yourself (`folder_uuid`, relative `object_key`, and the
-`storage_folder` table). This project uses `create_all` and does not ship Alembic
-migrations. Older rows with `object_key=storages/{uuid}` are incompatible with
-the current relative-key + prefix model.
+or alter columns yourself (`folder_uuid`, relative `object_key`, `filename` →
+`name`, and the `storage_folder` table). This project uses `create_all` and does
+not ship Alembic migrations. Older rows with `object_key=storages/{uuid}` are
+incompatible with the current relative-key + prefix model.
 
 ## Configuration (S3)
 
@@ -87,7 +87,7 @@ Same user-or-global rules as agent configs:
 - List filter `is_global=true` → `user_uuid IS NULL`; `false` → not null; omit to
   skip
 
-DB `object_key` is always the **relative** key (`{file_uuid}`). Filename is a
+DB `object_key` is always the **relative** key (`{file_uuid}`). `name` is a
 client-supplied display name used for MIME validation; it is **not** unique and
 does not appear in the object key.
 
@@ -111,7 +111,7 @@ unauthenticated public route.
 
 ## Upload flow
 
-1. `POST /api/files/uploads/` validates filename, MIME type, size,
+1. `POST /api/files/uploads/` validates `name`, MIME type, size,
    `is_public`, and optional `folder_uuid`, creates a `PENDING` row, and returns
    a presigned PUT URL plus required headers (`Content-Type` and ACL header).
 2. The client uploads directly to the object store with the returned method,

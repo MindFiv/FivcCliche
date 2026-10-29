@@ -82,7 +82,7 @@ class StorageFile(SQLModel, table=True):
         max_length=36,
     )
     object_key: str = Field(max_length=512)
-    filename: str = Field(max_length=255)
+    name: str = Field(max_length=255)
     content_type: str = Field(max_length=255)
     byte_size: int = Field(gt=0)
     is_public: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
@@ -113,7 +113,7 @@ class StorageFile(SQLModel, table=True):
             user_uuid=self.user_uuid,
             folder_uuid=self.folder_uuid,
             object_key=self.object_key,
-            filename=self.filename,
+            name=self.name,
             content_type=self.content_type,
             byte_size=self.byte_size,
             is_public=self.is_public,

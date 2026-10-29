@@ -246,7 +246,7 @@ async def create_upload_async(
         user_uuid=owner_uuid,
         folder_uuid=folder.uuid if folder is not None else None,
         object_key=file_uuid,
-        filename=body.filename,
+        name=body.name,
         content_type=body.content_type,
         byte_size=body.byte_size,
         is_public=body.is_public,
@@ -469,7 +469,7 @@ async def get_file_url_async(
             row.object_key,
             signed=not row.is_public,
             content_type=row.content_type,
-            filename=row.filename,
+            filename=row.name,
         )
     except StorageError as exc:
         raise HTTPException(

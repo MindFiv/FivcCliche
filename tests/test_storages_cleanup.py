@@ -27,7 +27,7 @@ async def make_file(
         user_uuid=owner.uuid,
         folder_uuid=folder.uuid if folder is not None else None,
         object_key=owner.uuid,
-        filename="demo.txt",
+        name="demo.txt",
         content_type="text/plain",
         byte_size=12,
         is_public=False,

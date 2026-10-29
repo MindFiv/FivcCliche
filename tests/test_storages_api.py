@@ -175,14 +175,14 @@ def create_upload(
     client: TestClient,
     token: str,
     *,
-    filename: str = "demo.txt",
+    name: str = "demo.txt",
     content_type: str = "text/plain",
     byte_size: int = 12,
     is_public: bool = False,
     folder_uuid: str | None = None,
 ) -> Any:
     body: dict[str, Any] = {
-        "filename": filename,
+        "name": name,
         "content_type": content_type,
         "byte_size": byte_size,
         "is_public": is_public,
@@ -235,7 +235,7 @@ def test_create_upload_rejects_disallowed_type(
     response = create_upload(
         client,
         auth_token,
-        filename="demo.exe",
+        name="demo.exe",
         content_type="application/octet-stream",
     )
 
@@ -256,12 +256,12 @@ def test_regular_user_default_prefix(
     assert storage.last_keys[-1] == f"users/{data['user_uuid']}/{data['object_key']}"
 
 
-def test_duplicate_filename_allowed(
+def test_duplicate_name_allowed(
     client: TestClient,
     auth_token: str,
 ) -> None:
-    first = create_upload(client, auth_token, filename="same.txt")
-    second = create_upload(client, auth_token, filename="same.txt")
+    first = create_upload(client, auth_token, name="same.txt")
+    second = create_upload(client, auth_token, name="same.txt")
     assert first.status_code == 201
     assert second.status_code == 201
     assert first.json()["uuid"] != second.json()["uuid"]
