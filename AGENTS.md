@@ -2,6 +2,10 @@
 
 Project guidance for coding agents. Architecture and commands live in [CLAUDE.md](CLAUDE.md). Module layering, ownership, and HTTP CRUD live in [docs/architecture.md](docs/architecture.md). Follow those files unless a later instruction here is more specific.
 
+## Version bump commits
+
+Before changing `src/fivccliche/__init__.py` `__version__` (or any commit whose purpose is a release/version bump), run `make pre-release` (`make check` + `make test`) and only proceed if it exits 0. Do not bump the version on a failing tree.
+
 ## No thin wrappers
 
 Do not extract one-liners or 2–4 line pass-throughs into named helpers. They lengthen the call chain without reducing complexity. Repeat a few lines at the call site instead.

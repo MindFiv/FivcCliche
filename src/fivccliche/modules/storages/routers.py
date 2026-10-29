@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fivcglue.interfaces import configs
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -18,12 +17,10 @@ from fivccliche.services.interfaces.storages import (
 from fivccliche.utils.deps import (
     IUser,
     get_authenticated_user_async,
-    get_config_async,
     get_db_session_async,
     get_storage_provider_async,
 )
 from fivccliche.utils.schemas import PaginatedResponse
-from fivccliche.utils.types import to_string
 
 from . import filters as filters_module
 from . import models, schemas, utils
@@ -34,15 +31,13 @@ router_files = APIRouter(tags=["files"], prefix="/files")
 
 async def get_required_storage_async(
     provider: IStorageProvider | None = Depends(get_storage_provider_async),
-    config: configs.IConfig = Depends(get_config_async),
 ) -> IStorage:
     if provider is None:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Storage provider is unavailable",
         )
-    bucket = to_string(config.get_session("OSS").get_value("BUCKET"), "")
-    storage = provider.get_storage(bucket) if bucket else None
+    storage = provider.get_storage()
     if storage is None:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -65,7 +60,7 @@ async def create_upload_async(
     file_uuid = str(uuid4())
     row = models.StorageFile(
         uuid=file_uuid,
-        user_uuid=user.uuid,
+        user_uuid=None if user.is_superuser else user.uuid,
         object_key=f"storages/{file_uuid}",
         filename=body.filename,
         content_type=body.content_type,
@@ -108,8 +103,10 @@ async def complete_upload_async(
     session: AsyncSession = Depends(get_db_session_async),
     storage: IStorage = Depends(get_required_storage_async),
 ) -> schemas.StorageFileSchema:
-    owned_filters = filters_module.StorageFileOwnedFilterSet(user.uuid)
-    owned_statement = owned_filters.filter(
+    editable = filters_module.StorageFileEditableFilterSet(
+        user.uuid, is_superuser=user.is_superuser
+    )
+    owned_statement = editable.filter(
         select(models.StorageFile).where(models.StorageFile.uuid == file_uuid)
     )
     row: models.StorageFile | None = (await session.execute(owned_statement)).scalar_one_or_none()
@@ -132,7 +129,7 @@ async def complete_upload_async(
         claimed = await utils.transition_storage_file_status_async(
             session,
             file_uuid=file_uuid,
-            user_uuid=user.uuid,
+            user_uuid=row.user_uuid,
             target=schemas.StorageStatus.DELETING,
             current_statuses=(schemas.StorageStatus.PENDING,),
         )
@@ -163,7 +160,7 @@ async def complete_upload_async(
     claimed = await utils.transition_storage_file_status_async(
         session,
         file_uuid=file_uuid,
-        user_uuid=user.uuid,
+        user_uuid=row.user_uuid,
         target=schemas.StorageStatus.READY,
         current_statuses=(schemas.StorageStatus.PENDING,),
         values={
@@ -205,7 +202,7 @@ async def list_files_async(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "DELETING files are not listable",
         )
-    filters = filters_module.StorageFileFilterSet(user.uuid)
+    filters = filters_module.StorageFileFilterSet(user.uuid, is_superuser=False)
     filters.parse(
         status=status_filter,
         is_public=is_public,
@@ -242,8 +239,10 @@ async def get_file_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ) -> schemas.StorageFileSchema:
-    owned_filters = filters_module.StorageFileOwnedFilterSet(user.uuid)
-    owned_statement = owned_filters.filter(
+    readable = filters_module.StorageFileReadableFilterSet(
+        user.uuid, is_superuser=user.is_superuser
+    )
+    owned_statement = readable.filter(
         select(models.StorageFile).where(col(models.StorageFile.uuid) == file_uuid)
     )
     row: models.StorageFile | None = (await session.execute(owned_statement)).scalar_one_or_none()
@@ -262,8 +261,10 @@ async def get_file_url_async(
     session: AsyncSession = Depends(get_db_session_async),
     storage: IStorage = Depends(get_required_storage_async),
 ) -> schemas.StorageFileUrlSchema:
-    owned_filters = filters_module.StorageFileOwnedFilterSet(user.uuid)
-    owned_statement = owned_filters.filter(
+    readable = filters_module.StorageFileReadableFilterSet(
+        user.uuid, is_superuser=user.is_superuser
+    )
+    owned_statement = readable.filter(
         select(models.StorageFile).where(col(models.StorageFile.uuid) == file_uuid)
     )
     row: models.StorageFile | None = (await session.execute(owned_statement)).scalar_one_or_none()
@@ -299,8 +300,10 @@ async def delete_file_async(
     session: AsyncSession = Depends(get_db_session_async),
     storage: IStorage = Depends(get_required_storage_async),
 ) -> dict[str, bool]:
-    owned_filters = filters_module.StorageFileOwnedFilterSet(user.uuid)
-    owned_statement = owned_filters.filter(
+    editable = filters_module.StorageFileEditableFilterSet(
+        user.uuid, is_superuser=user.is_superuser
+    )
+    owned_statement = editable.filter(
         select(models.StorageFile).where(col(models.StorageFile.uuid) == file_uuid)
     )
     row: models.StorageFile | None = (await session.execute(owned_statement)).scalar_one_or_none()
@@ -312,7 +315,7 @@ async def delete_file_async(
     claimed = await utils.transition_storage_file_status_async(
         session,
         file_uuid=file_uuid,
-        user_uuid=user.uuid,
+        user_uuid=row.user_uuid,
         target=schemas.StorageStatus.DELETING,
         current_statuses=(
             schemas.StorageStatus.PENDING,

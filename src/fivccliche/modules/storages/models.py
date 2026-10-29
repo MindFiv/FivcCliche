@@ -22,7 +22,12 @@ class StorageFile(SQLModel, table=True):
         primary_key=True,
         max_length=36,
     )
-    user_uuid: str = Field(foreign_key="user.uuid", index=True, max_length=36)
+    user_uuid: str | None = Field(
+        default=None,
+        foreign_key="user.uuid",
+        index=True,
+        max_length=36,
+    )
     object_key: str = Field(max_length=512)
     filename: str = Field(max_length=255)
     content_type: str = Field(max_length=255)

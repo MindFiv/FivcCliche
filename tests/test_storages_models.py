@@ -8,8 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fivccliche.modules.storages.filters import (
+    StorageFileEditableFilterSet,
     StorageFileFilterSet,
-    StorageFileOwnedFilterSet,
+    StorageFileReadableFilterSet,
 )
 from fivccliche.modules.storages.models import StorageFile
 from fivccliche.modules.storages.schemas import (
@@ -80,11 +81,12 @@ async def test_storage_file_to_schema(session: AsyncSession) -> None:
     result = row.to_schema()
     assert isinstance(result, StorageFileSchema)
     assert result.uuid == row.uuid
+    assert result.user_uuid == owner.uuid
     assert result.is_public is False
     assert result.status == StorageStatus.PENDING
 
 
-async def test_filters_apply_owner_and_http_fields(session: AsyncSession) -> None:
+async def test_filters_apply_owner_global_and_http_fields(session: AsyncSession) -> None:
     created_at = datetime(2026, 10, 28, 8, 0, tzinfo=UTC)
     owner = User(username="owner")
     other = User(username="other")
@@ -92,25 +94,43 @@ async def test_filters_apply_owner_and_http_fields(session: AsyncSession) -> Non
     await session.commit()
     await session.refresh(owner)
     await session.refresh(other)
-    rows = [
-        StorageFile(
-            user_uuid=owner.uuid,
-            object_key=f"storages/{index}",
-            filename="demo.txt",
-            content_type="text/plain",
-            byte_size=12,
-            is_public=(index != 0),
-            status=StorageStatus.PENDING if index == 0 else StorageStatus.READY,
-            created_at=created_at,
-            updated_at=created_at,
-        )
-        for index in range(2)
-    ]
-    rows[1].user_uuid = other.uuid
-    session.add_all(rows)
+    owned = StorageFile(
+        user_uuid=owner.uuid,
+        object_key="storages/owned",
+        filename="demo.txt",
+        content_type="text/plain",
+        byte_size=12,
+        is_public=False,
+        status=StorageStatus.PENDING,
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    global_row = StorageFile(
+        user_uuid=None,
+        object_key="storages/global",
+        filename="demo.txt",
+        content_type="text/plain",
+        byte_size=12,
+        is_public=False,
+        status=StorageStatus.READY,
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    others = StorageFile(
+        user_uuid=other.uuid,
+        object_key="storages/other",
+        filename="demo.txt",
+        content_type="text/plain",
+        byte_size=12,
+        is_public=True,
+        status=StorageStatus.READY,
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    session.add_all([owned, global_row, others])
     await session.commit()
 
-    filters = StorageFileFilterSet(owner.uuid)
+    filters = StorageFileFilterSet(owner.uuid, is_superuser=False)
     filters.parse(
         status=StorageStatus.PENDING,
         is_public=False,
@@ -118,14 +138,32 @@ async def test_filters_apply_owner_and_http_fields(session: AsyncSession) -> Non
         created_at_from=created_at,
         created_at_to=created_at,
     )
-    owned = (await session.execute(filters.filter(select(StorageFile)))).scalars().all()
-    assert [row.user_uuid for row in owned] == [owner.uuid]
-    assert [row.status for row in owned] == [StorageStatus.PENDING]
+    pending = (await session.execute(filters.filter(select(StorageFile)))).scalars().all()
+    assert [row.uuid for row in pending] == [owned.uuid]
 
-    owned_filter = StorageFileOwnedFilterSet(owner.uuid)
-    result = (
+    list_filters = StorageFileFilterSet(owner.uuid, is_superuser=False)
+    list_filters.parse(status=StorageStatus.READY)
+    ready = (await session.execute(list_filters.filter(select(StorageFile)))).scalars().all()
+    assert {row.uuid for row in ready} == {global_row.uuid}
+
+    readable = StorageFileReadableFilterSet(owner.uuid, is_superuser=False)
+    seen = (
         await session.execute(
-            owned_filter.filter(select(StorageFile).where(StorageFile.uuid == rows[1].uuid))
+            readable.filter(select(StorageFile).where(StorageFile.uuid == global_row.uuid))
         )
     ).scalar_one_or_none()
-    assert result is None
+    assert seen is not None
+
+    editable_other = StorageFileEditableFilterSet(owner.uuid, is_superuser=False)
+    assert (
+        await session.execute(
+            editable_other.filter(select(StorageFile).where(StorageFile.uuid == global_row.uuid))
+        )
+    ).scalar_one_or_none() is None
+
+    editable_super = StorageFileEditableFilterSet(owner.uuid, is_superuser=True)
+    assert (
+        await session.execute(
+            editable_super.filter(select(StorageFile).where(StorageFile.uuid == global_row.uuid))
+        )
+    ).scalar_one_or_none() is not None

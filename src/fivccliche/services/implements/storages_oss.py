@@ -13,14 +13,21 @@ from fivccliche.services.interfaces.storages import (
     IStorage,
     IStorageProvider,
     StorageDownLink,
-    StorageInfo,
     StorageError,
+    StorageInfo,
     StorageUpLink,
 )
 from fivccliche.utils.types import to_optional_int, to_string
 
 _DEFAULT_UPLOAD_EXPIRES = 600
 _DEFAULT_DOWNLOAD_EXPIRES = 300
+
+
+def _expires_seconds(value: timedelta | None, default: int) -> int:
+    if value is None:
+        return default
+    seconds = int(value.total_seconds())
+    return seconds if seconds > 0 else default
 
 
 class OssStorage(IStorage):
@@ -159,6 +166,7 @@ class OssStorageProvider(IStorageProvider):
         self._access_key_id = values["ACCESS_KEY_ID"]
         self._access_key_secret = values["ACCESS_KEY_SECRET"]
         self._endpoint = values["ENDPOINT"]
+        self._default_bucket = values["BUCKET"]
         self._upload_expires = values["UPLOAD_URL_EXPIRES_SECONDS"]
         self._download_expires = values["DOWNLOAD_URL_EXPIRES_SECONDS"]
 
@@ -197,26 +205,32 @@ class OssStorageProvider(IStorageProvider):
             ),
         }
 
-    def get_storage(self, name: str, **kwargs: Any) -> IStorage | None:
-        if not name or not all((self._access_key_id, self._access_key_secret, self._endpoint)):
+    def get_storage(
+        self,
+        name: str | None = None,
+        *,
+        upload_expires_in: timedelta | None = None,
+        download_expires_in: timedelta | None = None,
+        **kwargs: Any,
+    ) -> IStorage | None:
+        bucket_name = self._default_bucket if name is None else name
+        if not bucket_name or not all(
+            (self._access_key_id, self._access_key_secret, self._endpoint)
+        ):
             return None
 
-        upload_expires = to_optional_int(kwargs.get("upload_expires_in"))
-        download_expires = to_optional_int(kwargs.get("download_expires_in"))
-        if upload_expires is None or upload_expires <= 0:
-            upload_expires = int(self._upload_expires)
-        if download_expires is None or download_expires <= 0:
-            download_expires = int(self._download_expires)
+        upload_expires = _expires_seconds(upload_expires_in, int(self._upload_expires))
+        download_expires = _expires_seconds(download_expires_in, int(self._download_expires))
 
         if self._injected_bucket is not None:
             bucket = self._injected_bucket
         else:
             auth = oss2.Auth(self._access_key_id, self._access_key_secret)
-            bucket = oss2.Bucket(auth, self._endpoint, name)
+            bucket = oss2.Bucket(auth, self._endpoint, bucket_name)
 
         return OssStorage(
             bucket,
-            bucket_name=name,
+            bucket_name=bucket_name,
             endpoint=self._endpoint,
             upload_expires_in=upload_expires,
             download_expires_in=download_expires,

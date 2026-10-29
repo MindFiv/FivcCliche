@@ -21,8 +21,10 @@ Modules: `users`, `agent_configs`, `agent_chats`, `agent_memories`, `storages`. 
 
 `storages` owns the `StorageFile` metadata table and `/files` routes. Uploads
 use client-direct presigned OSS PUT URLs, completion verifies OSS HEAD metadata,
-`is_public` is immutable application-level metadata, and `storages-cleanup`
-reclaims expired `PENDING` uploads and retries `DELETING` rows.
+and rows follow the same user-or-global ownership as configs (`user_uuid` may be
+`None`). `is_public` is immutable application-level OSS ACL metadata.
+`storages-cleanup` reclaims expired `PENDING` uploads and retries `DELETING`
+rows.
 
 `agent_configs` owns embeddings, models, asrs, tts, agents, tools, skills, and questions. Extra config routes:
 

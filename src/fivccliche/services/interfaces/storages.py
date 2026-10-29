@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from fivcglue import IComponent
@@ -68,12 +68,20 @@ class IStorage(ABC):
 
 
 class IStorageProvider(IComponent):
-    """Factory for named storage backends (bucket name for OSS)."""
+    """Factory for named storage backends (bucket name)."""
 
     @abstractmethod
-    def get_storage(self, name: str, **kwargs: Any) -> IStorage | None:
+    def get_storage(
+        self,
+        name: str | None = None,
+        *,
+        upload_expires_in: timedelta | None = None,
+        download_expires_in: timedelta | None = None,
+        **kwargs: Any,
+    ) -> IStorage | None:
         """Return storage for ``name``, or None when configuration is incomplete.
 
-        Optional kwargs may override ``upload_expires_in`` and
-        ``download_expires_in`` (seconds).
+        When ``name`` is None, use the configured default bucket. Optional
+        ``upload_expires_in`` / ``download_expires_in`` override configured
+        URL lifetimes; ``**kwargs`` are backend-specific.
         """

@@ -48,20 +48,12 @@ class FakeCleanupConfigSession:
 
 
 class FakeCleanupConfig:
-    def __init__(
-        self,
-        cleanup_values: dict[str, Any] | None = None,
-        *,
-        bucket: str = "example-bucket",
-    ):
+    def __init__(self, cleanup_values: dict[str, Any] | None = None):
         self.cleanup_values = cleanup_values or {}
-        self.bucket = bucket
 
     def get_session(self, name: str) -> FakeCleanupConfigSession:
         if name == "STORAGE_CLEANUP":
             return FakeCleanupConfigSession(self.cleanup_values)
-        if name == "OSS":
-            return FakeCleanupConfigSession({"BUCKET": self.bucket})
         return FakeCleanupConfigSession({})
 
 
@@ -85,7 +77,6 @@ def test_cleanup_setting_defaults() -> None:
         24,
         100,
     )
-    assert setting.bucket == "example-bucket"
 
 
 async def test_cleanup_deletes_stale_pending(session: AsyncSession) -> None:

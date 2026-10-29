@@ -54,10 +54,11 @@
   class: fivccliche.services.implements.agent_speeches.dashscope_realtime.DashScopeRealtimeSpeechProvider
 
 # storage ---------------------------------------------
+# Swap class to storages_oss.OssStorageProvider to use Aliyun OSS instead.
 - entries:
     - interface: fivccliche.services.interfaces.storages.IStorageProvider
 
-  class: fivccliche.services.implements.storages_oss.OssStorageProvider
+  class: fivccliche.services.implements.storages_s3.S3StorageProvider
 
 # modules ---------------------------------------------
 - entries:

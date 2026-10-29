@@ -66,7 +66,7 @@ class StorageFileSchema(BaseModel):
     """Storage file metadata response."""
 
     uuid: str
-    user_uuid: str
+    user_uuid: str | None
     object_key: str
     filename: str
     content_type: str

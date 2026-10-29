@@ -12,8 +12,8 @@ from fivccliche.services.interfaces.storages import (
     IStorage,
     IStorageProvider,
     StorageDownLink,
-    StorageInfo,
     StorageError,
+    StorageInfo,
     StorageUpLink,
 )
 from tests.conftest import make_api_client
@@ -77,8 +77,15 @@ class FakeStorageProvider(IStorageProvider):
     def __init__(self, storage: FakeStorage | None = None) -> None:
         self.storage = storage or FakeStorage()
 
-    def get_storage(self, name: str, **kwargs: Any) -> IStorage | None:
-        if not name:
+    def get_storage(
+        self,
+        name: str | None = None,
+        *,
+        upload_expires_in: timedelta | None = None,
+        download_expires_in: timedelta | None = None,
+        **kwargs: Any,
+    ) -> IStorage | None:
+        if name is not None and not name:
             return None
         return self.storage
 
@@ -140,6 +147,7 @@ def test_create_upload_returns_pending_metadata(
     assert response.status_code == 201
     data = response.json()
     assert data["status"] == "PENDING"
+    assert data["user_uuid"] is None  # admin / superuser creates globals
     assert data["is_public"] is False
     assert data["upload_method"] == "PUT"
     assert data["upload_headers"] == {
@@ -306,7 +314,12 @@ def test_private_url_requires_owner_and_ready(
     assert body["expires_at"] is not None
 
 
-def create_second_user_token(client: TestClient) -> str:
+def create_user_token(
+    client: TestClient,
+    *,
+    username: str,
+    email: str,
+) -> str:
     admin_token = client.post(
         "/users/login",
         json={"username": "admin", "password": "admin123"},
@@ -315,24 +328,25 @@ def create_second_user_token(client: TestClient) -> str:
         "/users/",
         headers=auth_headers(admin_token),
         json={
-            "username": "otheruser",
-            "email": "other@example.com",
+            "username": username,
+            "email": email,
             "password": "password123",
         },
     )
     return client.post(
         "/users/login",
-        json={"username": "otheruser", "password": "password123"},
+        json={"username": username, "password": "password123"},
     ).json()["access_token"]
 
 
-def test_private_url_rejects_another_user(
+def test_owned_url_rejects_another_user(
     client: TestClient,
-    auth_token: str,
     storage: FakeStorage,
 ) -> None:
-    ready = create_ready_file(client, auth_token, storage)
-    other_token = create_second_user_token(client)
+    owner_token = create_user_token(client, username="fileowner", email="owner@example.com")
+    other_token = create_user_token(client, username="otheruser", email="other@example.com")
+    ready = create_ready_file(client, owner_token, storage)
+    assert ready["user_uuid"] is not None
 
     response = client.get(
         f"/files/{ready['uuid']}/url/",
@@ -340,6 +354,60 @@ def test_private_url_rejects_another_user(
     )
 
     assert response.status_code == 404
+
+
+def test_global_file_readable_but_not_writable_by_regular_user(
+    client: TestClient,
+    auth_token: str,
+    storage: FakeStorage,
+) -> None:
+    pending = create_upload(client, auth_token).json()
+    assert pending["user_uuid"] is None
+    storage.objects[pending["object_key"]] = StorageInfo(
+        byte_size=12,
+        content_type="text/plain",
+        etag='"etag"',
+    )
+    regular_token = create_user_token(client, username="regular", email="regular@example.com")
+
+    assert (
+        client.post(
+            f"/files/{pending['uuid']}/complete/",
+            headers=auth_headers(regular_token),
+        ).status_code
+        == 404
+    )
+
+    ready = client.post(
+        f"/files/{pending['uuid']}/complete/",
+        headers=auth_headers(auth_token),
+    ).json()
+    assert ready["status"] == "READY"
+
+    listed = client.get("/files/", headers=auth_headers(regular_token))
+    assert ready["uuid"] in [item["uuid"] for item in listed.json()["results"]]
+
+    url = client.get(
+        f"/files/{ready['uuid']}/url/",
+        headers=auth_headers(regular_token),
+    )
+    assert url.status_code == 200
+
+    assert (
+        client.delete(
+            f"/files/{ready['uuid']}/",
+            headers=auth_headers(regular_token),
+        ).status_code
+        == 404
+    )
+
+    assert (
+        client.delete(
+            f"/files/{ready['uuid']}/",
+            headers=auth_headers(auth_token),
+        ).status_code
+        == 202
+    )
 
 
 def test_public_url_returns_unsigned_link(

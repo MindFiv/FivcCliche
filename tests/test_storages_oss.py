@@ -1,5 +1,6 @@
 """Tests for the Aliyun OSS storage provider boundary."""
 
+from datetime import timedelta
 from types import SimpleNamespace
 
 import oss2
@@ -73,12 +74,13 @@ def make_provider(values: dict[str, str], bucket: FakeBucket) -> OssStorageProvi
 async def test_provider_returns_none_when_incomplete() -> None:
     provider = make_provider({}, FakeBucket())
 
+    assert provider.get_storage() is None
     assert provider.get_storage("example-bucket") is None
 
 
 async def test_provider_signs_put_and_get() -> None:
     provider = make_provider(configured_values(), FakeBucket())
-    storage = provider.get_storage("example-bucket")
+    storage = provider.get_storage()
     assert storage is not None
 
     signed_put = await storage.upload_async("storages/a", "text/plain", is_public=False)
@@ -146,12 +148,11 @@ async def test_provider_maps_peek_and_delete() -> None:
         await storage.delete_async("storages/fail")
 
 
-async def test_get_storage_kwargs_override_expires() -> None:
+async def test_get_storage_override_expires() -> None:
     provider = make_provider(configured_values(), FakeBucket())
     storage = provider.get_storage(
-        "example-bucket",
-        upload_expires_in=120,
-        download_expires_in=60,
+        upload_expires_in=timedelta(seconds=120),
+        download_expires_in=timedelta(seconds=60),
     )
     assert storage is not None
     signed_put = await storage.upload_async("storages/a", "text/plain")

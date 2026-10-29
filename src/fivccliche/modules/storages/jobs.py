@@ -18,7 +18,7 @@ from fivccliche.services.interfaces.storages import (
     IStorageProvider,
     StorageError,
 )
-from fivccliche.utils.types import to_int, to_string
+from fivccliche.utils.types import to_int
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +45,6 @@ class StorageCleanupSetting:
         self.interval_minutes = interval if interval > 0 else _DEFAULT_INTERVAL_MINUTES
         self.pending_ttl_hours = ttl if ttl > 0 else _DEFAULT_PENDING_TTL_HOURS
         self.batch_size = batch_size if batch_size > 0 else _DEFAULT_BATCH_SIZE
-        oss = config.get_session("OSS") if config else None
-        self.bucket = to_string(oss.get_value("BUCKET") if oss else None, "")
 
     def job_config(self) -> dict:
         return {
@@ -70,9 +68,9 @@ class StorageCleanupJob(IModuleJob):
         )
 
     def _get_storage(self) -> IStorage | None:
-        if self._provider is None or not self._setting.bucket:
+        if self._provider is None:
             return None
-        return cast(IStorage | None, self._provider.get_storage(self._setting.bucket))
+        return cast(IStorage | None, self._provider.get_storage())
 
     @property
     def name(self) -> str:

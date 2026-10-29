@@ -1,4 +1,4 @@
-.PHONY: help install install-dev clean format lint typecheck check test test-cov test-watch serve build all
+.PHONY: help install install-dev clean format lint typecheck check pre-release test test-cov test-watch serve build all
 
 # Fivccliche - Production-Ready AI Agent Backend Framework
 # Makefile for development and testing commands
@@ -25,6 +25,7 @@ help:
 	@echo "  make lint             Run Ruff linter"
 	@echo "  make typecheck        Run MyPy type checker"
 	@echo "  make check            Run all code quality checks"
+	@echo "  make pre-release      Run check + test before a version bump commit"
 	@echo ""
 	@echo "🧪 TESTING COMMANDS:"
 	@echo "  make test             Run pytest with verbose output"
@@ -72,6 +73,10 @@ typecheck:
 
 check: format lint typecheck
 	@echo "✅ All code quality checks passed"
+
+# Required before bumping __version__ and committing a release
+pre-release: check test
+	@echo "✅ pre-release checks passed; safe to bump version and commit"
 
 # Testing Commands
 test:
