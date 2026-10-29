@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Layering, ownership, and HTTP CRUD: [docs/architecture.md](docs/architecture.md). Scheduled jobs: [docs/scheduler.md](docs/scheduler.md). Memories: [docs/agent-memories.md](docs/agent-memories.md). Speech / ASR / TTS: [docs/agent_speeches.md](docs/agent_speeches.md). Agent rules that override this file: [AGENTS.md](AGENTS.md). Getting started: [docs/getting-started.md](docs/getting-started.md).
+Layering, ownership, and HTTP CRUD: [docs/architecture.md](docs/architecture.md). Scheduled jobs: [docs/scheduler.md](docs/scheduler.md). Memories: [docs/agent-memories.md](docs/agent-memories.md). Speech / ASR / TTS: [docs/agent_speeches.md](docs/agent_speeches.md). Storage: [docs/storages.md](docs/storages.md). Agent rules that override this file: [AGENTS.md](AGENTS.md). Getting started: [docs/getting-started.md](docs/getting-started.md).
 
 ## Project Overview
 
@@ -52,6 +52,7 @@ Key interfaces (in `src/fivccliche/services/interfaces/`):
 - `IUserChatProvider` → `UserChatProviderImpl` — conversation repos and chat context
 - `IUserMemoryProvider` → optional `UserMemoryProviderImpl` (Hindsight; requires separate `hindsight-client`)
 - `ISpeechProvider` → named DashScope providers `dashscope` (native HTTP) and `dashscope_realtime` (DashScope SDK streaming ASR/TTS). `get_speech_provider_async(name=...)` returns `fivcplayground.speeches.SpeechRecognizer` / `SpeechSynthesizer`. Chat voice is a Protobuf WebSocket (`WEBSOCKET /api/chats/{chat_uuid}/`) via Pipecat `FastAPIWebsocketTransport`; VAD is passed as `vad=`. Text SSE stays on Strands. Chat audio uses `UserASR.model_type` as `name`; TTS probes use `UserTTS.model_type`. A Pipecat OpenAI model with `base_url` defaults `supports_developer_role` to false; `ModelConfig.extra["supports_developer_role"]` turns it on.
+- `IStorageProvider` → `OssStorageProvider` — `get_storage(bucket)` yields `IStorage` (upload/download/peek/delete); cleanup is scheduled by the `storages` module.
 - `IModule` / `IModuleSite` → module registration and FastAPI app mounting
 
 ### Module Pattern
@@ -64,7 +65,7 @@ Each module in `src/fivccliche/modules/` uses this layout:
 - `routers.py` — FastAPI handlers (HTTP-only SQL is written here)
 - `services.py` — `ModuleImpl` (registers routers) plus provider/authenticator implementations; not a `UserService` business layer
 
-Modules: `users`, `agent_configs`, `agent_chats`, `agent_memories`. All mounted under `/api`.
+Modules: `users`, `agent_configs`, `agent_chats`, `agent_memories`, `storages`. All mounted under `/api`.
 
 HTTP CRUD is hand-written FastAPI handlers in each module's `routers.py`. Shared helpers: [`src/fivccliche/utils/filters.py`](src/fivccliche/utils/filters.py) (`FilterSet` / `FilterField` base; not module filter fields; not a route Depends), [`src/fivccliche/utils/deps.py`](src/fivccliche/utils/deps.py).
 

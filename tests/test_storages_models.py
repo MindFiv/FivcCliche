@@ -1,0 +1,131 @@
+"""Storage file schema, model, and filter tests."""
+
+from datetime import UTC, datetime
+
+import pytest
+from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from fivccliche.modules.storages.filters import (
+    StorageFileFilterSet,
+    StorageFileOwnedFilterSet,
+)
+from fivccliche.modules.storages.models import StorageFile
+from fivccliche.modules.storages.schemas import (
+    StorageFileCreateSchema,
+    StorageFileSchema,
+    StorageStatus,
+)
+from fivccliche.modules.users.models import User
+
+
+def test_create_schema_accepts_allowed_type_pair() -> None:
+    body = StorageFileCreateSchema(
+        filename="demo.mp4",
+        content_type="video/mp4",
+        byte_size=20 * 1024 * 1024,
+        is_public=True,
+    )
+    assert body.filename == "demo.mp4"
+    assert body.is_public is True
+
+
+@pytest.mark.parametrize(
+    ("filename", "content_type", "byte_size"),
+    [
+        ("demo.txt", "text/plain", 0),
+        ("demo.txt", "text/plain", 20 * 1024 * 1024 + 1),
+        ("demo.exe", "application/octet-stream", 12),
+        ("demo.txt", "application/pdf", 12),
+        ("directory/demo.txt", "text/plain", 12),
+        ("back\\slash.txt", "text/plain", 12),
+    ],
+)
+def test_create_schema_rejects_invalid_uploads(
+    filename: str,
+    content_type: str,
+    byte_size: int,
+) -> None:
+    with pytest.raises(ValidationError):
+        StorageFileCreateSchema(
+            filename=filename,
+            content_type=content_type,
+            byte_size=byte_size,
+            is_public=False,
+        )
+
+
+async def test_storage_file_to_schema(session: AsyncSession) -> None:
+    created_at = datetime(2026, 10, 28, 8, 0, tzinfo=UTC)
+    owner = User(username="owner")
+    session.add(owner)
+    await session.commit()
+    await session.refresh(owner)
+    row = StorageFile(
+        user_uuid=owner.uuid,
+        object_key="storages/file-uuid",
+        filename="demo.png",
+        content_type="image/png",
+        byte_size=12,
+        is_public=False,
+        status=StorageStatus.PENDING,
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+
+    result = row.to_schema()
+    assert isinstance(result, StorageFileSchema)
+    assert result.uuid == row.uuid
+    assert result.is_public is False
+    assert result.status == StorageStatus.PENDING
+
+
+async def test_filters_apply_owner_and_http_fields(session: AsyncSession) -> None:
+    created_at = datetime(2026, 10, 28, 8, 0, tzinfo=UTC)
+    owner = User(username="owner")
+    other = User(username="other")
+    session.add_all([owner, other])
+    await session.commit()
+    await session.refresh(owner)
+    await session.refresh(other)
+    rows = [
+        StorageFile(
+            user_uuid=owner.uuid,
+            object_key=f"storages/{index}",
+            filename="demo.txt",
+            content_type="text/plain",
+            byte_size=12,
+            is_public=(index != 0),
+            status=StorageStatus.PENDING if index == 0 else StorageStatus.READY,
+            created_at=created_at,
+            updated_at=created_at,
+        )
+        for index in range(2)
+    ]
+    rows[1].user_uuid = other.uuid
+    session.add_all(rows)
+    await session.commit()
+
+    filters = StorageFileFilterSet(owner.uuid)
+    filters.parse(
+        status=StorageStatus.PENDING,
+        is_public=False,
+        content_type="text/plain",
+        created_at_from=created_at,
+        created_at_to=created_at,
+    )
+    owned = (await session.execute(filters.filter(select(StorageFile)))).scalars().all()
+    assert [row.user_uuid for row in owned] == [owner.uuid]
+    assert [row.status for row in owned] == [StorageStatus.PENDING]
+
+    owned_filter = StorageFileOwnedFilterSet(owner.uuid)
+    result = (
+        await session.execute(
+            owned_filter.filter(select(StorageFile).where(StorageFile.uuid == rows[1].uuid))
+        )
+    ).scalar_one_or_none()
+    assert result is None

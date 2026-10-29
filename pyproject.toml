@@ -40,6 +40,7 @@ dependencies = [
     "apscheduler>=3.10.0",
     "pg0-embedded>=0.15.0",
     "asyncpg>=0.29.0",
+    "oss2>=2.18.1",
 ]
 
 [project.optional-dependencies]
@@ -120,6 +121,8 @@ module = [
     "passlib.*",
     "apscheduler",
     "apscheduler.*",
+    "oss2",
+    "oss2.*",
     "hindsight_client",
     "hindsight_client_api.*",
 ]

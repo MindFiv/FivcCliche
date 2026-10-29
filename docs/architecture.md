@@ -17,7 +17,12 @@ Each module under `src/fivccliche/modules/` owns its files. Shared HTTP helpers 
 
 Do not import SQL from `routers.py` (services would cycle). `utils.py` does not import routers.
 
-Modules: `users`, `agent_configs`, `agent_chats`, `agent_memories`. All mounted under `/api`. All HTTP routes are hand-written FastAPI handlers.
+Modules: `users`, `agent_configs`, `agent_chats`, `agent_memories`, `storages`. All mounted under `/api`. All HTTP routes are hand-written FastAPI handlers.
+
+`storages` owns the `StorageFile` metadata table and `/files` routes. Uploads
+use client-direct presigned OSS PUT URLs, completion verifies OSS HEAD metadata,
+`is_public` is immutable application-level metadata, and `storages-cleanup`
+reclaims expired `PENDING` uploads and retries `DELETING` rows.
 
 `agent_configs` owns embeddings, models, asrs, tts, agents, tools, skills, and questions. Extra config routes:
 

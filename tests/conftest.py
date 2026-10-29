@@ -32,6 +32,7 @@ from fivccliche.modules.agent_configs.models import (  # noqa: F401
     UserTTS,
 )
 from fivccliche.modules.users.models import User  # noqa: F401
+from fivccliche.modules.storages.models import StorageFile  # noqa: F401
 from fivccliche.services.implements.modules import ModuleSiteImpl
 from fivccliche.utils import deps
 from fivccliche.utils.deps import get_db_session_async

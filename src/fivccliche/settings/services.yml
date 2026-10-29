@@ -53,6 +53,12 @@
 
   class: fivccliche.services.implements.agent_speeches.dashscope_realtime.DashScopeRealtimeSpeechProvider
 
+# storage ---------------------------------------------
+- entries:
+    - interface: fivccliche.services.interfaces.storages.IStorageProvider
+
+  class: fivccliche.services.implements.storages_oss.OssStorageProvider
+
 # modules ---------------------------------------------
 - entries:
     - interface: fivccliche.services.interfaces.modules.IModule
@@ -79,6 +85,12 @@
   class: fivccliche.modules.agent_memories.ModuleImpl
 
 - entries:
+    - interface: fivccliche.services.interfaces.modules.IModule
+      name: storages
+
+  class: fivccliche.modules.storages.ModuleImpl
+
+- entries:
     - interface: fivccliche.services.interfaces.modules.IModuleSite
   prefix: '/api'
   modules:
@@ -86,5 +98,6 @@
     - 'agent_configs'
     - 'agent_chats'
     - 'agent_memories'
+    - 'storages'
 
   class: fivccliche.services.implements.modules.ModuleSiteImpl

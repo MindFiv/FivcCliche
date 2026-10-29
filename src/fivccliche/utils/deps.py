@@ -12,6 +12,7 @@ from fivcglue.interfaces import mutexes
 from fivccliche.services.interfaces.agent_chats import IUserChatProvider, IUserChatRunProvider
 from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.services.interfaces.agent_memories import IUserMemoryProvider
+from fivccliche.services.interfaces.storages import IStorageProvider
 from fivccliche.services.interfaces.db import IDatabase
 from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator
 from fivccliche.services.interfaces.agent_speeches import ISpeechProvider
@@ -54,6 +55,10 @@ default_chat_run_provider: LazyValue[IUserChatRunProvider] = LazyValue(
 
 default_memory_provider: LazyValue[IUserMemoryProvider | None] = LazyValue(
     lambda: query_component(cast(IComponentSite, service_site), IUserMemoryProvider)
+)
+
+default_storage_provider: LazyValue[IStorageProvider | None] = LazyValue(
+    lambda: query_component(cast(IComponentSite, service_site), IStorageProvider)
 )
 
 
@@ -277,6 +282,11 @@ async def get_chat_run_provider_async() -> IUserChatRunProvider:
 async def get_memory_provider_async() -> IUserMemoryProvider | None:
     """Return the memory provider, or None if not registered."""
     return cast("IUserMemoryProvider | None", default_memory_provider())
+
+
+async def get_storage_provider_async() -> IStorageProvider | None:
+    """Return the mounted storage provider, if one is registered."""
+    return cast("IStorageProvider | None", default_storage_provider())
 
 
 async def get_speech_provider_async(name: str = "dashscope") -> ISpeechProvider | None:
