@@ -19,12 +19,13 @@ async def make_file(
     status: StorageStatus,
     created_at: datetime,
     folder: models.StorageFolder | None = None,
+    owned: bool = True,
 ) -> models.StorageFile:
     owner = User(username=f"owner-{created_at.isoformat()}-{status.value}-{created_at.microsecond}")
     session.add(owner)
     await session.flush()
     row = models.StorageFile(
-        user_uuid=owner.uuid,
+        user_uuid=owner.uuid if owned else None,
         folder_uuid=folder.uuid if folder is not None else None,
         object_key=owner.uuid,
         name="demo.txt",
@@ -139,6 +140,7 @@ async def test_cleanup_uses_folder_storage(session: AsyncSession) -> None:
         status=StorageStatus.DELETING,
         created_at=datetime.now(timezone.utc) - timedelta(hours=1),
         folder=folder,
+        owned=False,
     )
 
     await make_job(provider, session).run_async()

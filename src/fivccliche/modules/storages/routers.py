@@ -241,6 +241,11 @@ async def create_upload_async(
 
     file_uuid = str(uuid4())
     owner_uuid = None if user.is_superuser else user.uuid
+    if folder is not None and folder.user_uuid != owner_uuid:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Folder ownership does not match file owner",
+        )
     row = models.StorageFile(
         uuid=file_uuid,
         user_uuid=owner_uuid,

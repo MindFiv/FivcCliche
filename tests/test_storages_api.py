@@ -332,8 +332,25 @@ def test_upload_with_folder_uses_folder_storage(
     assert response.status_code == 201
     data = response.json()
     assert data["folder_uuid"] == folder["uuid"]
+    assert data["user_uuid"] is None
     assert storage_provider.calls[-1] == ("media-bucket", "media")
     assert storage.last_keys[-1] == f"media/{data['object_key']}"
+
+
+def test_regular_user_cannot_upload_into_global_folder(
+    client: TestClient,
+    auth_token: str,
+) -> None:
+    folder = client.post(
+        "/folders/",
+        headers=auth_headers(auth_token),
+        json={"name": "media", "bucket_name": "media-bucket", "bucket_prefix": "media"},
+    ).json()
+    assert folder["user_uuid"] is None
+    regular = create_user_token(client, username="nofolderup", email="nofolderup@example.com")
+    response = create_upload(client, regular, folder_uuid=folder["uuid"])
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Folder ownership does not match file owner"
 
 
 def test_complete_upload_verifies_object(

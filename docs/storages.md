@@ -73,7 +73,10 @@ can be split into isolated `IStorage` views.
 - Create / update / delete: **superuser only** (create always stores
   `user_uuid=None`)
 - List / get: Readable (owned or global); ordinary users can see global folders
-- Upload may pass optional `folder_uuid` (must be Readable)
+- Upload may pass optional `folder_uuid` (must be Readable). When set, the
+  file's `user_uuid` must equal the folder's `user_uuid` (same owner, or both
+  `None` for global). Folders are always global today, so only superuser
+  uploads may bind a folder; a mismatched binding returns 400.
 
 ## Ownership and object keys
 
@@ -86,6 +89,8 @@ Same user-or-global rules as agent configs:
   (Editable)
 - List filter `is_global=true` → `user_uuid IS NULL`; `false` → not null; omit to
   skip
+- Bound `folder_uuid`: `StorageFile.user_uuid` must match
+  `StorageFolder.user_uuid` (including both `None`)
 
 DB `object_key` is always the **relative** key (`{file_uuid}`). `name` is a
 client-supplied display name used for MIME validation; it is **not** unique and
