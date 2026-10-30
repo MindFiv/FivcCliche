@@ -89,6 +89,8 @@ Same user-or-global rules as agent configs:
   (Editable)
 - List filter `is_global=true` → `user_uuid IS NULL`; `false` → not null; omit to
   skip
+- List filter `folder_uuid` → exact match on `StorageFile.folder_uuid`; omit to
+  skip
 - Bound `folder_uuid`: `StorageFile.user_uuid` must match
   `StorageFolder.user_uuid` (including both `None`)
 

@@ -30,6 +30,7 @@ class StorageFileFilterSet(FilterSet):
                 FilterSimpleField("status", models.StorageFile.status, operator.eq),
                 FilterSimpleField("is_public", models.StorageFile.is_public, operator.eq),
                 FilterGlobalField("is_global", models.StorageFile.user_uuid),
+                FilterSimpleField("folder_uuid", models.StorageFile.folder_uuid, operator.eq),
                 FilterSimpleField("content_type", models.StorageFile.content_type, operator.eq),
                 FilterSimpleField("created_at_from", models.StorageFile.created_at, operator.ge),
                 FilterSimpleField("created_at_to", models.StorageFile.created_at, operator.le),

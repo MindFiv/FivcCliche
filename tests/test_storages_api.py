@@ -500,6 +500,35 @@ def test_list_is_global_filter(
     assert owned["uuid"] in [item["uuid"] for item in not_global.json()["results"]]
 
 
+def test_list_folder_uuid_filter(
+    client: TestClient,
+    auth_token: str,
+    storage: FakeStorage,
+) -> None:
+    folder = client.post(
+        "/folders/",
+        headers=auth_headers(auth_token),
+        json={"name": "media", "bucket_name": "media-bucket", "bucket_prefix": "media"},
+    ).json()
+    in_folder = create_ready_file(
+        client, auth_token, storage, folder_uuid=folder["uuid"], key_prefix="media"
+    )
+    no_folder = create_ready_file(client, auth_token, storage)
+
+    filtered = client.get(
+        "/files/",
+        headers=auth_headers(auth_token),
+        params={"folder_uuid": folder["uuid"]},
+    )
+    assert filtered.status_code == 200
+    assert [item["uuid"] for item in filtered.json()["results"]] == [in_folder["uuid"]]
+
+    unfiltered = client.get("/files/", headers=auth_headers(auth_token))
+    assert unfiltered.status_code == 200
+    uuids = {item["uuid"] for item in unfiltered.json()["results"]}
+    assert {in_folder["uuid"], no_folder["uuid"]} <= uuids
+
+
 def test_private_url_requires_owner_and_ready(
     client: TestClient,
     auth_token: str,
