@@ -17,7 +17,6 @@ from fastapi import (
 )
 from fivcglue import IComponentSite
 from fivcglue.interfaces.mutexes import IMutexSite
-from fivcplayground.agents import AgentRunSession
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -69,8 +68,9 @@ class VoiceSetupError(Exception):
 async def _load_realtime_voice_setup(
     session: AsyncSession,
     user: IUser,
-    chat: AgentRunSession,
     start_frame: dict[str, Any],
+    *,
+    agent_extra: dict[str, Any] | None = None,
 ) -> tuple[Any, Any]:
     from fivcplayground.speeches import SpeechRecognizeOption, SpeechSynthesisOption
 
@@ -80,13 +80,13 @@ async def _load_realtime_voice_setup(
     from fivccliche.utils.chats.speeches import INPUT_SAMPLE_RATE, OUTPUT_SAMPLE_RATE
     from fivccliche.utils.deps import get_speech_provider_async
 
-    context = chat.context or {}
-    asr_id = start_frame.get("asr_id") or context.get("asr_id") or "realtime"
-    tts_id = start_frame.get("tts_id") or context.get("tts_id") or "realtime"
-    if not isinstance(asr_id, str) or not isinstance(tts_id, str):
+    extra = agent_extra or {}
+    stt_id = start_frame.get("stt_id") or extra.get("stt_id") or "realtime"
+    tts_id = start_frame.get("tts_id") or extra.get("tts_id") or "realtime"
+    if not isinstance(stt_id, str) or not isinstance(tts_id, str):
         raise VoiceSetupError(
             code="invalid_start",
-            message="asr_id and tts_id must be strings",
+            message="stt_id and tts_id must be strings",
             close_code=1003,
         )
 
@@ -96,7 +96,7 @@ async def _load_realtime_voice_setup(
         filters=UserScopedReadableFilterSet(
             UserASR.user_uuid, user.uuid, is_superuser=user.is_superuser
         ),
-        config_id=asr_id,
+        config_id=stt_id,
     )
     tts = await get_user_scoped_async(
         session,
@@ -443,25 +443,43 @@ async def create_chat_voice_ws_async(
                 close_code=4404,
             )
 
-        try:
-            async with deps.get_db_session_context_async() as session:
-                recognizer, synthesizer = await _load_realtime_voice_setup(
-                    session, user, chat, start_frame
-                )
-        except VoiceSetupError as exc:
+        config_provider = await deps.get_config_provider_async()
+        agent_repository = config_provider.get_agent_repository(user_uuid=user.uuid)
+        chat_agent = await agent_repository.get_agent_config_async(chat.agent_id)
+        if chat_agent is None:
             await channel.fail_async(
-                code=exc.code,
-                message=exc.message,
-                close_code=exc.close_code,
+                code="agent_not_found",
+                message="Agent config not found",
+                close_code=4404,
             )
+
+        agent_extra = chat_agent.extra or {}
+        e2e_id = agent_extra.get("e2e_id")
+        stt = None
+        tts = None
+        if not (isinstance(e2e_id, str) and e2e_id):
+            try:
+                async with deps.get_db_session_context_async() as session:
+                    stt, tts = await _load_realtime_voice_setup(
+                        session,
+                        user,
+                        start_frame,
+                        agent_extra=agent_extra,
+                    )
+            except VoiceSetupError as exc:
+                await channel.fail_async(
+                    code=exc.code,
+                    message=exc.message,
+                    close_code=exc.close_code,
+                )
 
         mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
         await process_chat_speech_async(
             channel=channel,
             user=user,
             chat=chat,
-            recognizer=recognizer,
-            synthesizer=synthesizer,
+            stt=stt,
+            tts=tts,
             mutex=mutex,
             timeout=CHAT_MESSAGE_RUN_TIMEOUT,
         )

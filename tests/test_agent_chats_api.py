@@ -24,13 +24,17 @@ def test_chat_voice_pipecat_receives_resolved_values_without_session():
         "channel",
         "user",
         "chat",
-        "recognizer",
-        "synthesizer",
+        "stt",
+        "tts",
         "mutex",
         "timeout",
     } <= voice_parameters.keys()
     assert "connection" not in voice_parameters
     assert "websocket" not in voice_parameters
+    assert "e2e" not in voice_parameters
+    assert "recognizer" not in voice_parameters
+    assert "synthesizer" not in voice_parameters
+    assert "agent_config_id" not in voice_parameters
     assert "asr_id" not in voice_parameters
     assert "tts_id" not in voice_parameters
     assert "run_provider" not in voice_parameters

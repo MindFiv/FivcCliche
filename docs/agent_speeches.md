@@ -229,17 +229,23 @@ For tests, instantiate `FakeSpeechProvider(transcript="...")` directly.
 ## Chat voice
 
 `WEBSOCKET /api/chats/{chat_uuid}/` uses [`ChatChannel`](../src/fivccliche/utils/chats/channels.py)
-first-frame JWT `auth`, then a `start` JSON frame (`asr_id` / `tts_id` /
-`language` / `voice`). Missing ids use `chat.context`, then `"realtime"`. Both
-rows must use `model_type=dashscope_realtime`. The server replies with
-`{"event":"ready","info":{...}}` (`asr_id`, `tts_id`, and input/output format
-and sample rate), acquires `chats:message:{uuid}`, then hands the socket to
+first-frame JWT `auth`, then a `start` JSON frame (`stt_id` / `tts_id` /
+`language` / `voice`). Voice routing is controlled by the chat agent's
+`AgentConfig.extra`:
+
+- `e2e_id` — when set and that **ModelConfig** exists, run the chat agent with
+  that end-to-end model and ignore `stt_id` / `tts_id` / local VAD
+  (`stt=tts=vad=None`).
+- Otherwise cascade: `stt_id` / `tts_id` resolve as `start` → agent `extra` →
+  `"realtime"`. Both UserASR/UserTTS rows must use
+  `model_type=dashscope_realtime`, with Silero VAD locally.
+
+The server replies with `{"event":"ready","info":{...}}` (`stt_id`, `tts_id`,
+and input/output format and sample rate; e2e sets `stt_id`/`tts_id` to null),
+acquires `chats:message:{uuid}`, then hands the socket to
 `FastAPIWebsocketTransport` with `ProtobufFrameSerializer`. Media after
 `ready` is Protobuf; clients must not send JSON `vad` / `stop` / `offer` /
 `ice` frames for turn-taking.
-
-The session runs `agent.run_async` with that transport, the SDK recognizer, the
-SDK synthesizer, and `vad=SileroVADAnalyzer(sample_rate=16000)`.
 
 ## Agent tool
 
