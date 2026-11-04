@@ -315,8 +315,9 @@ class TestChatToolCall:
                 "payload": {"ok": False, "error": "x" * 5_000},
             }
         )
-        with pytest.raises(RuntimeError, match="^x{4096}$"):
+        with pytest.raises(RuntimeError) as exc_info:
             await future
+        assert str(exc_info.value) == "x" * 4_096
 
 
 class TestMakeClientToolCallable:
