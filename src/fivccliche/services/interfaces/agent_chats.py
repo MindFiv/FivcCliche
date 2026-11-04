@@ -55,6 +55,7 @@ class IUserChatRun(ABC):
         *,
         mutex: IMutex | None = None,
         timeout: timedelta | None = None,
+        tool_bridge: object | None = None,
     ) -> AsyncIterator[tuple[AgentRunEvent, AgentRun]]:
         """Run one query and yield agent events as they occur."""
 

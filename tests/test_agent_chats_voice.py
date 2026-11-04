@@ -184,7 +184,8 @@ async def test_process_chat_voice_sends_ready_and_runs_agent():
     channel = MagicMock()
     channel.socket = MagicMock(name="channel.socket")
     channel.send_json_async = AsyncMock()
-    channel.shutdown = MagicMock()
+    channel.mark_prepared = MagicMock()
+    channel.begin_streaming = MagicMock()
     channel.fail_async = AsyncMock(side_effect=AssertionError("fail_async should not be called"))
 
     recognizer = MagicMock(id="asr")
@@ -224,7 +225,7 @@ async def test_process_chat_voice_sends_ready_and_runs_agent():
         ) as create_agent,
         patch(
             "fivccliche.utils.chats.speeches.create_tool_retriever_async",
-            new=AsyncMock(return_value=MagicMock()),
+            new=AsyncMock(return_value=MagicMock(tools={})),
         ),
         patch(
             "fivccliche.utils.chats.speeches.create_skill_retriever_async",
@@ -267,7 +268,8 @@ async def test_process_chat_voice_sends_ready_and_runs_agent():
     assert params.audio_in_sample_rate == INPUT_SAMPLE_RATE
     assert params.audio_out_sample_rate == OUTPUT_SAMPLE_RATE
 
-    channel.shutdown.assert_called_once_with()
+    channel.mark_prepared.assert_called_once_with()
+    channel.begin_streaming.assert_called_once_with()
     create_agent.assert_awaited_once()
     assert create_agent.await_args.kwargs["agent_config_id"] == "agent-1"
     agent.run_async.assert_awaited_once()
@@ -277,6 +279,7 @@ async def test_process_chat_voice_sends_ready_and_runs_agent():
     assert run_kwargs["tts"] is synthesizer
     assert run_kwargs["vad"] is vad_cls.return_value
     assert run_kwargs["transport"] is transport_cls.return_value
+    assert run_kwargs["tool_ids"] == []
     mutex.acquire_async.assert_awaited_once()
     mutex.release_async.assert_awaited_once()
 
@@ -286,7 +289,8 @@ async def test_process_chat_voice_e2e_mode_skips_stt_tts_vad():
     channel = MagicMock()
     channel.socket = MagicMock(name="channel.socket")
     channel.send_json_async = AsyncMock()
-    channel.shutdown = MagicMock()
+    channel.mark_prepared = MagicMock()
+    channel.begin_streaming = MagicMock()
     channel.fail_async = AsyncMock(side_effect=AssertionError("fail_async should not be called"))
 
     underlying = MagicMock(name="omni-service")
@@ -334,7 +338,7 @@ async def test_process_chat_voice_e2e_mode_skips_stt_tts_vad():
         ) as create_agent,
         patch(
             "fivccliche.utils.chats.speeches.create_tool_retriever_async",
-            new=AsyncMock(return_value=MagicMock()),
+            new=AsyncMock(return_value=MagicMock(tools={})),
         ),
         patch(
             "fivccliche.utils.chats.speeches.create_skill_retriever_async",
@@ -378,6 +382,8 @@ async def test_process_chat_voice_e2e_mode_skips_stt_tts_vad():
     model_backend.create_model.assert_called_once_with(model_config)
     runnable_cls.assert_called_once_with(agent_config, underlying)
     vad_cls.assert_not_called()
+    channel.mark_prepared.assert_called_once_with()
+    channel.begin_streaming.assert_called_once_with()
     run_kwargs = runnable.run_async.await_args.kwargs
     assert run_kwargs["stt"] is None
     assert run_kwargs["tts"] is None

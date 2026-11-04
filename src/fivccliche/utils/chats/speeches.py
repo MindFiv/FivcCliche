@@ -46,6 +46,8 @@ async def process_chat_speech_async(
     When the chat agent's ``extra.e2e_id`` resolves to a ModelConfig, the session
     runs that end-to-end model with ``chat.agent_id`` (no local STT/TTS/VAD) and
     ignores ``stt`` / ``tts``. Otherwise cascade STT+LLM+TTS is used.
+
+    Frontend/client tools are not integrated on the voice path.
     """
     from fivcplayground.backends.pipecat.agents import (
         PipecatAgentBackend,
@@ -159,6 +161,8 @@ async def process_chat_speech_async(
         run_tts = tts
         run_vad = SileroVADAnalyzer(sample_rate=input_sample_rate)
 
+    channel.mark_prepared()
+
     tool_retriever = await create_tool_retriever_async(
         tool_backend=tool_backend,
         tools=None,
@@ -174,6 +178,7 @@ async def process_chat_speech_async(
         embedding_config_repository=embedding_repository,
         space_id=user.uuid,
     )
+
     context = chat_provider.get_chat_context(
         user_uuid=user.uuid,
         context=chat.context,
@@ -208,8 +213,8 @@ async def process_chat_speech_async(
         ),
     )
 
-    # ChatChannel must not keep reading; Pipecat owns the socket after ready.
-    channel.shutdown()
+    # Pipecat owns socket receives after ready; no frontend-tool RPC on voice.
+    channel.begin_streaming()
     try:
         await agent.run_async(
             transport=transport,

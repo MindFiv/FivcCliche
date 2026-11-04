@@ -15,12 +15,14 @@ Default YAML registers two DashScope providers: `dashscope` for native HTTP and
 recognizers and synthesizers.
 
 Full-duplex chat voice is a Pipecat Protobuf WebSocket
-(`WEBSOCKET /api/chats/{chat_uuid}/`).
+(`WEBSOCKET /api/chats/{chat_uuid}/voice/`).
 [`process_chat_speech_async`](../src/fivccliche/utils/chats/speeches.py) sends
-`ready`, hands the socket to `FastAPIWebsocketTransport`, and passes the
+`ready`, then hands the socket to `FastAPIWebsocketTransport`, and passes the
 playground recognizer and synthesizer as `stt` / `tts` plus a Silero
-`SileroVADAnalyzer` as `vad`. Probe routes and `SpeechTranscribe` still call
-`stream_async` directly. Text chat SSE does not use speech.
+`SileroVADAnalyzer` as `vad`. Frontend/client tools are not on the voice path.
+Probe routes and `SpeechTranscribe` still call `stream_async` directly. Text
+chat SSE does not use speech or frontend tools; one-shot text with client tools
+uses `WEBSOCKET /api/chats/{chat_uuid}/text/`.
 
 A Pipecat OpenAI model with `base_url` set defaults `supports_developer_role` to
 false, because compatible gateways reject the `developer` role. Set
@@ -228,7 +230,7 @@ For tests, instantiate `FakeSpeechProvider(transcript="...")` directly.
 
 ## Chat voice
 
-`WEBSOCKET /api/chats/{chat_uuid}/` uses [`ChatChannel`](../src/fivccliche/utils/chats/channels.py)
+`WEBSOCKET /api/chats/{chat_uuid}/voice/` uses [`ChatChannel`](../src/fivccliche/utils/chats/channels.py)
 first-frame JWT `auth`, then a `start` JSON frame (`stt_id` / `tts_id` /
 `language` / `voice`). Voice routing is controlled by the chat agent's
 `AgentConfig.extra`:

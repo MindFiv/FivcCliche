@@ -317,6 +317,7 @@ class UserChatRunImpl(IUserChatRun):
         *,
         mutex: IMutex | None = None,
         timeout: timedelta | None = None,
+        tool_bridge: Any | None = None,
     ) -> AsyncIterator[tuple[AgentRunEvent, AgentRun]]:
         context_copy = self._chat_provider.get_chat_context(
             user_uuid=self._user_uuid,
@@ -334,13 +335,20 @@ class UserChatRunImpl(IUserChatRun):
         try:
             async with asyncio.timeout(timeout.total_seconds() if timeout else None):
                 agent, agent_tools, agent_skills = await build_chat_collaborators(self)
+                tool_ids: list[str] = []
+                if tool_bridge is not None:
+                    tool_ids = tool_bridge.inject(
+                        agent_tools,
+                        dependencies.tool_backend,
+                        tool_ids=[],
+                    )
 
                 async for event in agent.stream_async(
                     query=query,
                     agent_run_repository=dependencies.chat_repository,
                     agent_run_session_id=self._chat_uuid,
                     tool_retriever=agent_tools,
-                    tool_ids=[],
+                    tool_ids=tool_ids,
                     skill_retriever=agent_skills,
                     skill_ids=[],
                     context=context_copy,

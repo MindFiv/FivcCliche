@@ -406,7 +406,114 @@ CHAT_MESSAGE_LOCK_EXPIRE = timedelta(minutes=15)
 CHAT_MESSAGE_RUN_TIMEOUT = timedelta(minutes=5)
 
 
-@router_chats.websocket("/{chat_uuid}/")
+@router_chats.websocket("/{chat_uuid}/text/")
+async def create_chat_text_ws_async(
+    websocket: WebSocket,
+    chat_uuid: str,
+    mutex_site: IMutexSite | None = Depends(get_mutex_site_async),
+) -> None:
+    """Run a one-shot text agent turn over JSON WebSocket with optional client tools."""
+    from fivccliche.utils.chats import ChatChannel, ChatRunParser, ChatToolBridge, ChatToolSession
+
+    authenticator = await get_authenticator_async()
+    async with ChatChannel(websocket, authenticator) as channel:
+        user = await channel.authenticate_async()
+        register_frame = await channel.receive_json_async()
+        if register_frame is None:
+            return
+        if not isinstance(register_frame, dict) or register_frame.get("type") != "register_tools":
+            await channel.fail_async(
+                code="invalid_message",
+                message="register_tools is required",
+                close_code=1003,
+            )
+        await channel.register_tools_async(register_frame)
+
+        async with deps.get_db_session_context_async() as session:
+            chat_row = await utils.get_chat_async(
+                session,
+                chat_uuid,
+                filters=ChatEditableFilterSet(user.uuid, is_superuser=user.is_superuser),
+            )
+            chat = chat_row.to_schema() if chat_row is not None else None
+        if chat is None:
+            await channel.fail_async(
+                code="chat_not_found",
+                message="Chat not found",
+                close_code=4404,
+            )
+
+        user_frame = await channel.receive_json_async()
+        if user_frame is None:
+            return
+        if not isinstance(user_frame, dict) or user_frame.get("type") != "user_message":
+            await channel.fail_async(
+                code="invalid_message",
+                message="user_message is required",
+                close_code=1003,
+            )
+        payload = user_frame.get("payload")
+        query = None
+        if isinstance(payload, dict):
+            query = payload.get("query") or payload.get("text")
+        if query is None:
+            query = user_frame.get("query") or user_frame.get("text")
+        if not isinstance(query, str) or not query.strip():
+            await channel.fail_async(
+                code="invalid_message",
+                message="user_message.query is required",
+                close_code=1003,
+            )
+
+        chat_mutex = mutex_site.get_mutex(f"chats:message:{chat_uuid}") if mutex_site else None
+        if chat_mutex and not await chat_mutex.acquire_async(
+            expire=CHAT_MESSAGE_LOCK_EXPIRE,
+            timeout=None,
+        ):
+            await channel.fail_async(
+                code="chat_busy",
+                message="Chat is already processing",
+                close_code=1008,
+            )
+
+        tool_session = ChatToolSession(channel)
+        bridge = ChatToolBridge(tool_session)
+        channel.begin_streaming()
+        await tool_session.start_listening_async()
+        listen_error = None
+        try:
+            run_provider = await get_chat_run_provider_async()
+            chat_run = run_provider.create_chat_run(
+                chat_uuid,
+                user_uuid=user.uuid,
+                agent_id=chat.agent_id,
+                context=chat.context,
+            )
+            parser = ChatRunParser(chat_uuid=chat_uuid, output_type="raw")
+            events = parser.parse_async(
+                chat_run.stream_async(
+                    query.strip(),
+                    mutex=chat_mutex,
+                    timeout=CHAT_MESSAGE_RUN_TIMEOUT,
+                    tool_bridge=bridge,
+                )
+            )
+            async for event in events:
+                if channel.closed:
+                    break
+                if isinstance(event, dict):
+                    await channel.send_json_async(event)
+        except Exception:
+            if chat_mutex:
+                await chat_mutex.release_async()
+            raise
+        finally:
+            listen_error = await tool_session.stop_listening_async()
+        if listen_error is not None:
+            raise listen_error
+
+
+@router_chats.websocket("/{chat_uuid}/voice/")
 async def create_chat_voice_ws_async(
     websocket: WebSocket,
     chat_uuid: str,

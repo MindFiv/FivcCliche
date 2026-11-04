@@ -118,6 +118,7 @@ nohup.out
 
 # generated data
 .fivcplayground/
+.superpowers/
 .data/
 .logs/
 .static/
