@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import keyword
 import re
 from datetime import timedelta
-from enum import Enum
+from enum import StrEnum
 from typing import Any, NoReturn, Protocol
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -16,6 +17,8 @@ from fivccliche.services.interfaces.auth import IUser, IUserAuthenticator
 TOOL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 MAX_TOOL_DESCRIPTION_LEN = 4_096
 MAX_PARAMETERS_CHARS = 32_768
+MAX_REGISTERED_TOOLS = 64
+MAX_TOOL_PROPERTIES = 64
 
 
 class _ToolSession(Protocol):
@@ -31,7 +34,7 @@ class ChatChannelError(Exception):
         self.msg = msg
 
 
-class ChatChannelState(str, Enum):
+class ChatChannelState(StrEnum):
     """Lifecycle for a chat session WebSocket."""
 
     CONNECTING = "connecting"
@@ -215,6 +218,12 @@ class ChatChannel:
 
         accepted: dict[str, ChatToolSpec] = {}
         warnings: list[str] = []
+        if len(raw_tools) > MAX_REGISTERED_TOOLS:
+            await self.fail_async(
+                code="invalid_message",
+                message=f"register_tools allows at most {MAX_REGISTERED_TOOLS} tools",
+                close_code=1003,
+            )
         for item in raw_tools:
             if not isinstance(item, dict):
                 warnings.append("skipped non-object tool entry")
@@ -228,10 +237,48 @@ class ChatChannel:
             if not isinstance(description, str) or len(description) > MAX_TOOL_DESCRIPTION_LEN:
                 warnings.append(f"skipped invalid description for {name}")
                 continue
-            if parameters is None:
+            if parameters is None or parameters == {}:
                 parameters = {"type": "object", "properties": {}}
             if not isinstance(parameters, dict):
                 warnings.append(f"skipped invalid parameters for {name}")
+                continue
+            if parameters.get("type") != "object":
+                warnings.append(f"skipped non-object parameters for {name}")
+                continue
+            properties = parameters.get("properties")
+            if properties is not None and not isinstance(properties, dict):
+                warnings.append(f"skipped invalid properties for {name}")
+                continue
+            if properties and len(properties) > MAX_TOOL_PROPERTIES:
+                warnings.append(f"skipped too many parameters for {name}")
+                continue
+            required_raw = parameters.get("required")
+            property_names = set(properties or {})
+            required: set[str] = set()
+            if required_raw is not None:
+                if (
+                    not isinstance(required_raw, list)
+                    or any(not isinstance(item, str) for item in required_raw)
+                    or any(item not in property_names for item in required_raw)
+                ):
+                    warnings.append(f"skipped invalid required fields for {name}")
+                    continue
+                required = set(required_raw)
+            if any(
+                not isinstance(prop_name, str)
+                or not prop_name.isidentifier()
+                or keyword.iskeyword(prop_name)
+                for prop_name in property_names
+            ):
+                warnings.append(f"skipped invalid parameter name for {name}")
+                continue
+            if any(
+                not isinstance(prop_schema, dict) for prop_schema in (properties or {}).values()
+            ):
+                warnings.append(f"skipped invalid parameter schema for {name}")
+                continue
+            if len(required) != len(required_raw or []):
+                warnings.append(f"skipped duplicate required fields for {name}")
                 continue
             encoded = json.dumps(parameters, ensure_ascii=False)
             if len(encoded) > MAX_PARAMETERS_CHARS:

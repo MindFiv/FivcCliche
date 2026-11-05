@@ -118,8 +118,15 @@ class ChatToolBridge:
         tool_ids: list[str] | None = None,
     ) -> list[str]:
         """Write client tools into ``tool_retriever.tools`` and return merged ids."""
+        existing_names = set(tool_retriever.tools) if tool_retriever is not None else set()
+        client_names = [spec.name for spec in self._session.channel.tool_specs]
+        collisions = sorted(existing_names.intersection(client_names))
+        if collisions:
+            raise ValueError(
+                "Client tool names conflict with configured tools: " + ", ".join(collisions)
+            )
+
         client_tools = self.to_tools(tool_backend)
-        client_names = [tool.name for tool in client_tools]
         if tool_retriever is not None:
             for tool in client_tools:
                 tool_retriever.tools[tool.name] = tool

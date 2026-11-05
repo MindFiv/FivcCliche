@@ -117,6 +117,83 @@ class TestChatChannelTools:
         assert ready["payload"]["warnings"]
 
     @pytest.mark.asyncio
+    async def test_register_tools_rejects_over_limit(self):
+        websocket = self._fake_websocket([{"type": "auth", "access_token": "t"}])
+        async with ChatChannel(websocket, self._auth()) as channel:
+            await channel.authenticate_async()
+            tools = [
+                {
+                    "name": f"tool_{index}",
+                    "description": "Valid",
+                    "parameters": {"type": "object", "properties": {}},
+                }
+                for index in range(65)
+            ]
+            with pytest.raises(ChatChannelError, match="at most 64 tools"):
+                await channel.register_tools_async(
+                    {"type": "register_tools", "payload": {"tools": tools}}
+                )
+
+    @pytest.mark.asyncio
+    async def test_register_tools_skips_invalid_parameter_schemas(self):
+        websocket = self._fake_websocket([{"type": "auth", "access_token": "t"}])
+        async with ChatChannel(websocket, self._auth()) as channel:
+            await channel.authenticate_async()
+            names = await channel.register_tools_async(
+                {
+                    "type": "register_tools",
+                    "payload": {
+                        "tools": [
+                            {
+                                "name": "not_object",
+                                "description": "Invalid schema",
+                                "parameters": {"type": "string"},
+                            },
+                            {
+                                "name": "bad_property",
+                                "description": "Invalid name",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {"bad-name": {"type": "string"}},
+                                },
+                            },
+                            {
+                                "name": "keyword_property",
+                                "description": "Reserved name",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {"class": {"type": "string"}},
+                                },
+                            },
+                            {
+                                "name": "unknown_required",
+                                "description": "Required points outside properties",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {"accept": {"type": "string"}},
+                                    "required": ["missing"],
+                                },
+                            },
+                            {
+                                "name": "invalid_property_schema",
+                                "description": "Property schema is not an object",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {"accept": "string"},
+                                },
+                            },
+                        ]
+                    },
+                }
+            )
+            assert names == []
+            assert channel.tool_names == []
+
+        ready = websocket.sent[0]
+        assert ready["payload"]["tools"] == []
+        assert len(ready["payload"]["warnings"]) == 5
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_pairs_with_tool_result_via_pump(self):
         websocket = self._fake_websocket(
             [{"type": "auth", "access_token": "t"}],
@@ -172,6 +249,22 @@ class TestChatChannelTools:
         tool_session = ChatToolSession(channel, tool_timeout=timedelta(milliseconds=20))
         with pytest.raises(TimeoutError, match="timed out"):
             await tool_session.invoke_async("slow", {})
+        await channel.__aexit__(None, None, None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_pending_limit(self):
+        websocket = self._fake_websocket([{"type": "auth", "access_token": "t"}])
+        channel = ChatChannel(websocket, self._auth())
+        await channel.authenticate_async()
+        await channel.register_tools_async(
+            {
+                "type": "register_tools",
+                "tools": [{"name": "busy", "description": "Busy", "parameters": {}}],
+            }
+        )
+        tool_session = ChatToolSession(channel, max_pending_tools=0)
+        with pytest.raises(RuntimeError, match="Too many pending client tools"):
+            await tool_session.invoke_async("busy", {})
         await channel.__aexit__(None, None, None)
 
     @pytest.mark.asyncio
@@ -388,3 +481,27 @@ class TestChatToolBridge:
         assert call_kwargs["tool_description"] == "Pick a file"
         signed = backend.create_tool.call_args.args[0]
         assert list(inspect.signature(signed).parameters) == ["accept"]
+
+    @pytest.mark.asyncio
+    async def test_inject_rejects_configured_tool_name_collision(self):
+        session = MagicMock()
+        session.channel = MagicMock()
+        session.channel.tool_specs = [
+            ChatToolSpec(
+                name="pick_file",
+                description="Pick a file",
+                parameters={"type": "object", "properties": {}},
+            )
+        ]
+        backend = MagicMock()
+        configured = MagicMock(name="pick_file")
+        retriever = MagicMock()
+        retriever.tools = {"pick_file": configured}
+        bridge = ChatToolBridge(session)
+
+        with pytest.raises(ValueError, match="pick_file"):
+            bridge.inject(retriever, backend)
+
+        backend.create_tool.assert_not_called()
+        assert list(retriever.tools) == ["pick_file"]
+        assert retriever.tools["pick_file"] is configured

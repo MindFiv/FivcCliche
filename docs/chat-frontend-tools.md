@@ -38,7 +38,17 @@ Shared envelope (text WS):
   `$ref` / `anyOf` / non-identifier keys are not expanded into the model tool
   signature)
 
+Registration limits:
+
+- Up to 64 tools per text WebSocket session. Exceeding the limit closes the
+  socket with `invalid_message`.
+- Up to 64 declared properties per tool. Invalid or oversized parameter schemas
+  are skipped and reported in `tools_ready.warnings`.
+- Property names must be Python identifiers and cannot be Python keywords.
+- `required` entries must refer to declared properties.
+
 Default client-tool wait is 30 seconds.
+The server accepts at most 16 concurrently pending client tool calls.
 
 Multiple text/voice WebSockets may connect to the same `chat_uuid`. Concurrent
 agent runs are still rejected by the `chats:message:{uuid}` mutex

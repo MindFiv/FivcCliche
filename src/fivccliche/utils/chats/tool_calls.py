@@ -17,6 +17,7 @@ MAX_TOOL_RESULT_CHARS = 256_000
 MAX_TOOL_ERROR_CHARS = 4_096
 DEFAULT_TOOL_TIMEOUT = timedelta(seconds=30)
 MAX_TOOL_TIMEOUT = timedelta(seconds=120)
+DEFAULT_MAX_PENDING_TOOLS = 16
 
 
 class ChatToolCall:
@@ -69,9 +70,11 @@ class ChatToolSession:
         channel: ChatChannel,
         *,
         tool_timeout: timedelta = DEFAULT_TOOL_TIMEOUT,
+        max_pending_tools: int = DEFAULT_MAX_PENDING_TOOLS,
     ) -> None:
         self._channel = channel
         self._tool_timeout = min(tool_timeout, MAX_TOOL_TIMEOUT)
+        self._max_pending_tools = max_pending_tools
         self._pending: dict[str, ChatToolCall] = {}
         self._listen_task: asyncio.Task[None] | None = None
         channel.bind_tool_session(self)
@@ -110,6 +113,8 @@ class ChatToolSession:
             raise TimeoutError("Chat channel closed")
         if name not in self._channel.tool_names:
             raise KeyError(f"Unknown client tool: {name}")
+        if len(self._pending) >= self._max_pending_tools:
+            raise RuntimeError(f"Too many pending client tools: limit is {self._max_pending_tools}")
 
         call_id = uuid.uuid4().hex
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
