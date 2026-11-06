@@ -183,6 +183,8 @@ async def test_router_defaults_to_realtime_config_ids():
 async def test_process_chat_voice_sends_ready_and_runs_agent():
     channel = MagicMock()
     channel.socket = MagicMock(name="channel.socket")
+    channel.tool_specs = []
+    channel.tool_names = []
     channel.send_json_async = AsyncMock()
     channel.mark_prepared = MagicMock()
     channel.begin_streaming = MagicMock()
@@ -288,6 +290,8 @@ async def test_process_chat_voice_sends_ready_and_runs_agent():
 async def test_process_chat_voice_e2e_mode_skips_stt_tts_vad():
     channel = MagicMock()
     channel.socket = MagicMock(name="channel.socket")
+    channel.tool_specs = []
+    channel.tool_names = []
     channel.send_json_async = AsyncMock()
     channel.mark_prepared = MagicMock()
     channel.begin_streaming = MagicMock()

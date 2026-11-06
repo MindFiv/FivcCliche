@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any
 
@@ -18,6 +19,9 @@ MAX_TOOL_ERROR_CHARS = 4_096
 DEFAULT_TOOL_TIMEOUT = timedelta(seconds=30)
 MAX_TOOL_TIMEOUT = timedelta(seconds=120)
 DEFAULT_MAX_PENDING_TOOLS = 16
+MAX_TOOL_ARGUMENTS_CHARS = 65_536
+
+ToolCallSender = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class ChatToolCall:
@@ -71,10 +75,12 @@ class ChatToolSession:
         *,
         tool_timeout: timedelta = DEFAULT_TOOL_TIMEOUT,
         max_pending_tools: int = DEFAULT_MAX_PENDING_TOOLS,
+        sender: ToolCallSender | None = None,
     ) -> None:
         self._channel = channel
         self._tool_timeout = min(tool_timeout, MAX_TOOL_TIMEOUT)
         self._max_pending_tools = max_pending_tools
+        self._sender = sender or channel.send_json_async
         self._pending: dict[str, ChatToolCall] = {}
         self._listen_task: asyncio.Task[None] | None = None
         channel.bind_tool_session(self)
@@ -88,6 +94,10 @@ class ChatToolSession:
         self._pending.clear()
         for call in pending:
             call.cancel(message)
+
+    @property
+    def tool_timeout(self) -> timedelta:
+        return self._tool_timeout
 
     def handle_result(self, frame: dict[str, Any]) -> bool:
         """Resolve a pending call from a ``tool_result`` envelope."""
@@ -121,7 +131,10 @@ class ChatToolSession:
         call = ChatToolCall(call_id, name, future)
         self._pending[call_id] = call
         wait = min(timeout or self._tool_timeout, MAX_TOOL_TIMEOUT)
-        await self._channel.send_json_async(
+        encoded_arguments = json.dumps(arguments or {}, ensure_ascii=False, default=str)
+        if len(encoded_arguments) > MAX_TOOL_ARGUMENTS_CHARS:
+            raise ValueError("Client tool arguments too large")
+        await self._sender(
             {
                 "v": 1,
                 "type": "tool_call",

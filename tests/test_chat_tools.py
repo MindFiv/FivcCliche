@@ -8,6 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import WebSocketDisconnect
+from pipecat.frames.frames import (
+    InputTransportMessageFrame,
+    OutputTransportMessageUrgentFrame,
+)
+from pipecat.processors.frame_processor import FrameDirection
 
 from fivccliche.utils.chats import (
     ChatChannel,
@@ -18,6 +23,11 @@ from fivccliche.utils.chats import (
     ChatToolSession,
 )
 from fivccliche.utils.chats.tools import ChatToolSpec, make_client_tool_callable
+from fivccliche.utils.chats.voice_tools import (
+    VoiceToolBridge,
+    VoiceToolInputTransport,
+    VoiceToolTransport,
+)
 
 
 class TestChatChannelTools:
@@ -505,3 +515,199 @@ class TestChatToolBridge:
         backend.create_tool.assert_not_called()
         assert list(retriever.tools) == ["pick_file"]
         assert retriever.tools["pick_file"] is configured
+
+
+class TestVoiceClientTools:
+    @pytest.mark.asyncio
+    async def test_custom_sender_receives_tool_call(self):
+        websocket = TestChatChannelTools._fake_websocket([{"type": "auth", "access_token": "t"}])
+        channel = ChatChannel(websocket, TestChatChannelTools._auth())
+        await channel.authenticate_async()
+        await channel.register_tools_async(
+            {
+                "type": "register_tools",
+                "tools": [{"name": "ui_open", "description": "Open UI", "parameters": {}}],
+            }
+        )
+        sent = []
+
+        async def sender(frame):
+            sent.append(frame)
+
+        tool_session = ChatToolSession(channel, sender=sender)
+        invoke = asyncio.create_task(tool_session.invoke_async("ui_open", {"panel": "main"}))
+        while not sent:
+            await asyncio.sleep(0)
+        call = sent[0]
+        tool_session.handle_result(
+            {
+                "type": "tool_result",
+                "id": call["id"],
+                "payload": {"ok": True, "result": {"opened": True}},
+            }
+        )
+        assert await invoke == {"opened": True}
+        assert call["type"] == "tool_call"
+        assert call["payload"] == {"name": "ui_open", "arguments": {"panel": "main"}}
+        await channel.__aexit__(None, None, None)
+
+    @pytest.mark.asyncio
+    async def test_oversized_arguments_are_not_sent(self):
+        websocket = TestChatChannelTools._fake_websocket([{"type": "auth", "access_token": "t"}])
+        channel = ChatChannel(websocket, TestChatChannelTools._auth())
+        await channel.authenticate_async()
+        await channel.register_tools_async(
+            {
+                "type": "register_tools",
+                "tools": [{"name": "write", "description": "Write", "parameters": {}}],
+            }
+        )
+
+        async def sender(_frame):
+            raise AssertionError("tool call should not be sent")
+
+        tool_session = ChatToolSession(channel, sender=sender)
+        with pytest.raises(ValueError, match="arguments too large"):
+            await tool_session.invoke_async("write", {"text": "x" * 65_537})
+        await channel.__aexit__(None, None, None)
+
+    @pytest.mark.asyncio
+    async def test_voice_bridge_preserves_schema_and_uses_rpc(self):
+        websocket = TestChatChannelTools._fake_websocket([{"type": "auth", "access_token": "t"}])
+        channel = ChatChannel(websocket, TestChatChannelTools._auth())
+        await channel.authenticate_async()
+        await channel.register_tools_async(
+            {
+                "type": "register_tools",
+                "payload": {
+                    "tools": [
+                        {
+                            "name": "pick_file",
+                            "description": "Pick a file",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "accept": {
+                                        "type": "string",
+                                        "enum": ["image/*", "application/pdf"],
+                                    },
+                                    "multiple": {"type": "boolean"},
+                                },
+                                "required": ["accept"],
+                            },
+                        }
+                    ]
+                },
+            }
+        )
+        sent = []
+
+        async def sender(frame):
+            sent.append(frame)
+
+        tool_session = ChatToolSession(channel, sender=sender)
+        tool = VoiceToolBridge(tool_session).to_tools()[0]
+        schema = tool.get_underlying()
+        assert schema.name == "pick_file"
+        assert schema.properties["accept"]["enum"] == ["image/*", "application/pdf"]
+        assert schema.required == ["accept"]
+        assert schema.handler._pipecat_cancel_on_interruption is False
+        assert schema.handler._pipecat_timeout_secs == 30
+
+        result_callback = AsyncMock()
+        handler_task = asyncio.create_task(
+            schema.handler(
+                MagicMock(
+                    arguments={"accept": "image/*", "multiple": True},
+                    result_callback=result_callback,
+                )
+            )
+        )
+        while not sent:
+            await asyncio.sleep(0)
+        tool_session.handle_result(
+            {
+                "type": "tool_result",
+                "id": sent[0]["id"],
+                "payload": {"ok": True, "result": {"path": "/tmp/a"}},
+            }
+        )
+        await handler_task
+        result_callback.assert_awaited_once_with({"path": "/tmp/a"})
+        await channel.__aexit__(None, None, None)
+
+    def test_voice_bridge_rejects_reserved_name_without_injection(self):
+        session = MagicMock()
+        session.channel.tool_names = ["generate_structured_output"]
+        retriever = MagicMock()
+        retriever.tools = {}
+        with pytest.raises(ValueError, match="generate_structured_output"):
+            VoiceToolBridge(session).inject(retriever)
+        assert retriever.tools == {}
+
+    @pytest.mark.asyncio
+    async def test_voice_transport_queues_urgent_tool_call(self):
+        transport = VoiceToolTransport.__new__(VoiceToolTransport)
+        output = MagicMock()
+        output.queue_frame = AsyncMock()
+        transport.output = MagicMock(return_value=output)
+
+        await transport.send_tool_call_async(
+            {
+                "type": "tool_call",
+                "id": "call-1",
+                "payload": {"name": "ui_open", "arguments": {}},
+            }
+        )
+
+        frame = output.queue_frame.await_args.args[0]
+        assert isinstance(frame, OutputTransportMessageUrgentFrame)
+        assert frame.message["v"] == 1
+        assert frame.message["id"] == "call-1"
+        assert output.queue_frame.await_args.args[1] is FrameDirection.DOWNSTREAM
+
+    @pytest.mark.asyncio
+    async def test_voice_input_transport_routes_only_tool_results(self):
+        websocket = TestChatChannelTools._fake_websocket([{"type": "auth", "access_token": "t"}])
+        channel = ChatChannel(websocket, TestChatChannelTools._auth())
+        await channel.authenticate_async()
+        await channel.register_tools_async(
+            {
+                "type": "register_tools",
+                "tools": [{"name": "ui_open", "description": "Open UI", "parameters": {}}],
+            }
+        )
+        sent = []
+
+        async def sender(frame):
+            sent.append(frame)
+
+        tool_session = ChatToolSession(channel, sender=sender)
+        transport = VoiceToolInputTransport(
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            tool_session=tool_session,
+        )
+        call_task = asyncio.create_task(tool_session.invoke_async("ui_open", {}))
+        while not sent:
+            await asyncio.sleep(0)
+        call = sent[0]
+        await transport.process_frame(
+            InputTransportMessageFrame(message={"v": 1, "type": "noise"}),
+            FrameDirection.DOWNSTREAM,
+        )
+        await transport.process_frame(
+            InputTransportMessageFrame(
+                message={
+                    "v": 1,
+                    "type": "tool_result",
+                    "id": call["id"],
+                    "payload": {"ok": True, "result": {"opened": True}},
+                }
+            ),
+            FrameDirection.DOWNSTREAM,
+        )
+        assert await call_task == {"opened": True}
+        assert channel.state is ChatChannelState.PREPARED
+        await channel.__aexit__(None, None, None)

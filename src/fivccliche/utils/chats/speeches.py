@@ -22,6 +22,8 @@ from fivccliche.services.interfaces.agent_configs import IUserConfigProvider
 from fivccliche.services.interfaces.auth import IUser
 from fivccliche.utils.chats.channels import ChatChannel
 from fivccliche.utils.deps import get_chat_provider_async, get_config_provider_async
+from fivccliche.utils.chats.voice_tools import VoiceToolBridge, VoiceToolTransport
+from fivccliche.utils.chats.tool_calls import ChatToolSession
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +49,8 @@ async def process_chat_speech_async(
     runs that end-to-end model with ``chat.agent_id`` (no local STT/TTS/VAD) and
     ignores ``stt`` / ``tts``. Otherwise cascade STT+LLM+TTS is used.
 
-    Frontend/client tools are not integrated on the voice path.
+    Registered client tools are injected into both cascade and end-to-end
+    Pipecat sessions and invoked over the same Protobuf WebSocket.
     """
     from fivcplayground.backends.pipecat.agents import (
         PipecatAgentBackend,
@@ -95,23 +98,18 @@ async def process_chat_speech_async(
         input_sample_rate = int(model_extra.get("input_sample_rate") or INPUT_SAMPLE_RATE)
         output_sample_rate = int(model_extra.get("output_sample_rate") or OUTPUT_SAMPLE_RATE)
         agent = PipecatAgentRunnable(agent_config, e2e_model.get_underlying())
-        await channel.send_json_async(
-            {
-                "event": "ready",
-                "info": {
-                    "stt_id": None,
-                    "tts_id": None,
-                    "input": {
-                        "format": "pcm",
-                        "sample_rate": input_sample_rate,
-                    },
-                    "output": {
-                        "format": "pcm",
-                        "sample_rate": output_sample_rate,
-                    },
-                },
-            }
-        )
+        ready_info = {
+            "stt_id": None,
+            "tts_id": None,
+            "input": {
+                "format": "pcm",
+                "sample_rate": input_sample_rate,
+            },
+            "output": {
+                "format": "pcm",
+                "sample_rate": output_sample_rate,
+            },
+        }
         run_stt = None
         run_tts = None
         run_vad = None
@@ -140,28 +138,21 @@ async def process_chat_speech_async(
         synthesis_opts = tts.get_option()
         input_sample_rate = recognize_opts.sample_rate
         output_sample_rate = synthesis_opts.sample_rate
-        await channel.send_json_async(
-            {
-                "event": "ready",
-                "info": {
-                    "stt_id": stt.id,
-                    "tts_id": tts.id,
-                    "input": {
-                        "format": recognize_opts.format,
-                        "sample_rate": input_sample_rate,
-                    },
-                    "output": {
-                        "format": synthesis_opts.format,
-                        "sample_rate": output_sample_rate,
-                    },
-                },
-            }
-        )
+        ready_info = {
+            "stt_id": stt.id,
+            "tts_id": tts.id,
+            "input": {
+                "format": recognize_opts.format,
+                "sample_rate": input_sample_rate,
+            },
+            "output": {
+                "format": synthesis_opts.format,
+                "sample_rate": output_sample_rate,
+            },
+        }
         run_stt = stt
         run_tts = tts
         run_vad = SileroVADAnalyzer(sample_rate=input_sample_rate)
-
-    channel.mark_prepared()
 
     tool_retriever = await create_tool_retriever_async(
         tool_backend=tool_backend,
@@ -186,6 +177,24 @@ async def process_chat_speech_async(
     )
     chat_repository = chat_provider.get_chat_repository(user_uuid=user.uuid)
 
+    tool_session = None
+    client_tool_ids: list[str] = []
+    if channel.tool_specs:
+        tool_transport: VoiceToolTransport | None = None
+
+        async def send_tool_call_async(payload: dict[str, object]) -> None:
+            if tool_transport is None:
+                raise RuntimeError("Voice transport is not ready")
+            await tool_transport.send_tool_call_async(payload)
+
+        tool_session = ChatToolSession(channel, sender=send_tool_call_async)
+        client_tool_ids = VoiceToolBridge(tool_session).inject(
+            tool_retriever,
+        )
+
+    await channel.send_json_async({"event": "ready", "info": ready_info})
+    channel.mark_prepared()
+
     mutex_acquired = False
     if mutex is not None:
         # Mutex TTL is slightly longer than the session timeout so the lock does not
@@ -201,19 +210,34 @@ async def process_chat_speech_async(
                 close_code=1008,
             )
 
-    transport = FastAPIWebsocketTransport(
-        websocket=channel.socket,
-        params=FastAPIWebsocketParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            add_wav_header=False,
-            serializer=ProtobufFrameSerializer(),
-            audio_in_sample_rate=input_sample_rate,
-            audio_out_sample_rate=output_sample_rate,
-        ),
-    )
+    if tool_session is None:
+        transport = FastAPIWebsocketTransport(
+            websocket=channel.socket,
+            params=FastAPIWebsocketParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                add_wav_header=False,
+                serializer=ProtobufFrameSerializer(),
+                audio_in_sample_rate=input_sample_rate,
+                audio_out_sample_rate=output_sample_rate,
+            ),
+        )
+    else:
+        tool_transport = VoiceToolTransport(
+            websocket=channel.socket,
+            params=FastAPIWebsocketParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                add_wav_header=False,
+                serializer=ProtobufFrameSerializer(),
+                audio_in_sample_rate=input_sample_rate,
+                audio_out_sample_rate=output_sample_rate,
+            ),
+            tool_session=tool_session,
+        )
+        transport = tool_transport
 
-    # Pipecat owns socket receives after ready; no frontend-tool RPC on voice.
+    # Pipecat owns socket receives after ready; client tools use Protobuf messages.
     channel.begin_streaming()
     try:
         await agent.run_async(
@@ -224,10 +248,10 @@ async def process_chat_speech_async(
             agent_run_repository=chat_repository,
             agent_run_session_id=chat.id,
             tool_retriever=tool_retriever,
-            tool_ids=[],
             skill_retriever=skill_retriever,
             skill_ids=[],
             context=context,
+            tool_ids=client_tool_ids,
         )
     finally:
         if mutex_acquired and mutex is not None:

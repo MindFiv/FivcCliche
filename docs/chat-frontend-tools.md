@@ -3,10 +3,10 @@
 Frontend tools execute in the browser / app UI and are advertised per WebSocket
 session. They are not stored as `UserTool` rows. SSE
 `POST /api/chats/{uuid}/messages/` does not support them. Voice
-`WEBSOCKET /api/chats/{chat_uuid}/voice/` does **not** support them either
-(deferred).
+`WEBSOCKET /api/chats/{chat_uuid}/voice/` supports them over the same socket;
+after `ready`, RPC envelopes are carried inside Pipecat Protobuf message frames.
 
-Shared envelope (text WS):
+Shared JSON envelope (text WS frames and voice Protobuf message payloads):
 
 ```json
 {
@@ -40,7 +40,7 @@ Shared envelope (text WS):
 
 Registration limits:
 
-- Up to 64 tools per text WebSocket session. Exceeding the limit closes the
+- Up to 64 tools per chat WebSocket session. Exceeding the limit closes the
   socket with `invalid_message`.
 - Up to 64 declared properties per tool. Invalid or oversized parameter schemas
   are skipped and reported in `tools_ready.warnings`.
@@ -49,6 +49,8 @@ Registration limits:
 
 Default client-tool wait is 30 seconds.
 The server accepts at most 16 concurrently pending client tool calls.
+
+For transport details, see [`voice-frontend-tools.md`](voice-frontend-tools.md).
 
 Multiple text/voice WebSockets may connect to the same `chat_uuid`. Concurrent
 agent runs are still rejected by the `chats:message:{uuid}` mutex

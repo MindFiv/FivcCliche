@@ -529,6 +529,11 @@ async def create_chat_voice_ws_async(
         start_frame = await channel.receive_json_async()
         if start_frame is None:
             return
+        if isinstance(start_frame, dict) and start_frame.get("type") == "register_tools":
+            await channel.register_tools_async(start_frame)
+            start_frame = await channel.receive_json_async()
+            if start_frame is None:
+                return
         if not isinstance(start_frame, dict) or start_frame.get("type") != "start":
             await channel.fail_async(
                 code="invalid_message",

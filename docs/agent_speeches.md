@@ -19,7 +19,9 @@ Full-duplex chat voice is a Pipecat Protobuf WebSocket
 [`process_chat_speech_async`](../src/fivccliche/utils/chats/speeches.py) sends
 `ready`, then hands the socket to `FastAPIWebsocketTransport`, and passes the
 playground recognizer and synthesizer as `stt` / `tts` plus a Silero
-`SileroVADAnalyzer` as `vad`. Frontend/client tools are not on the voice path.
+`SileroVADAnalyzer` as `vad`. Registered frontend/client tools are injected into
+the Pipecat tool retriever and invoked through Protobuf message frames; see
+[`voice-frontend-tools.md`](voice-frontend-tools.md).
 Probe routes and `SpeechTranscribe` still call `stream_async` directly. Text
 chat SSE does not use speech or frontend tools; one-shot text with client tools
 uses `WEBSOCKET /api/chats/{chat_uuid}/text/`.

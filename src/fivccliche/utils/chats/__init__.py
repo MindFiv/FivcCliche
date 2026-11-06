@@ -8,6 +8,7 @@ from .parsers import (
 from .speeches import process_chat_speech_async
 from .tool_calls import ChatToolCall, ChatToolSession
 from .tools import ChatToolBridge, ChatToolSpec
+from .voice_tools import VoiceToolBridge, VoiceToolTransport
 
 __all__ = [
     "ChatChannel",
@@ -20,4 +21,6 @@ __all__ = [
     "ChatToolSession",
     "ChatToolSpec",
     "process_chat_speech_async",
+    "VoiceToolBridge",
+    "VoiceToolTransport",
 ]

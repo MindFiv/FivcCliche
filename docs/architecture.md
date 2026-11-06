@@ -95,7 +95,8 @@ The handler looks up the chat via Editable (404 if missing), acquires mutex `cha
 
 `UserChatRunImpl` is not a module job. `ChatDescribeJob` is on `list_jobs()` with `config is None`, so it is not scheduled. This SSE handler starts it through `BackgroundTasks`.
 
-SSE does **not** support frontend/client tools. Client tools are only available on the text WebSocket below (not on voice).
+SSE does **not** support frontend/client tools. Text and voice WebSockets support
+them; voice uses Pipecat Protobuf message frames after media starts.
 
 ### WebSocket `/{chat_uuid}/text/`
 
@@ -108,14 +109,14 @@ One-shot Strands text run over JSON, with optional frontend tools on the same so
 
 ### WebSocket `/{chat_uuid}/voice/`
 
-Full-duplex voice sessions run on **Pipecat** (`fivcplayground.backends.pipecat`) via [`process_chat_speech_async`](../src/fivccliche/utils/chats/speeches.py). Text SSE still uses Strands `stream_async`; voice does **not**. Frontend/client tools are **not** integrated on this path.
+Full-duplex voice sessions run on **Pipecat** (`fivcplayground.backends.pipecat`) via [`process_chat_speech_async`](../src/fivccliche/utils/chats/speeches.py). Text SSE still uses Strands `stream_async`; voice does **not**. Registered frontend/client tools are integrated through Pipecat Protobuf message frames.
 
 Protocol:
 
-1. [`ChatChannel`](../src/fivccliche/utils/chats/channels.py) accepts the socket and requires a first-frame JWT `auth`, then a JSON `start` (`stt_id` / `tts_id` / `language` / `voice`).
+1. [`ChatChannel`](../src/fivccliche/utils/chats/channels.py) accepts the socket and requires a first-frame JWT `auth`. The next frame is either JSON `start` or optional JSON `register_tools`; after registration and `tools_ready`, `start` is required (`stt_id` / `tts_id` / `language` / `voice`).
 2. The handler loads the chat and the chat agent's `AgentConfig.extra`. If `extra.e2e_id` is a non-empty string and that **ModelConfig** exists, the session runs **end-to-end** with `chat.agent_id`'s AgentConfig plus that model, and ignores `stt_id` / `tts_id` (no local STT/TTS/VAD). If `e2e_id` is set but the model is missing → `4404`. If `e2e_id` is unset, cascade uses `chat.agent_id` and resolves `stt_id` / `tts_id` as **`start` → chat `AgentConfig.extra` → `"realtime"`**, loading `dashscope_realtime` UserASR/UserTTS. Failures use `channel.fail_async`: missing chat/agent/config `4404`, bad params / non-realtime `model_type` `1003`, missing provider `1013`.
 3. The session sends a JSON `ready` (`stt_id`, `tts_id`, `input` / `output` format and sample rate). Cascade defaults to PCM 16 kHz in / 24 kHz out; e2e may use the e2e model's `extra.input_sample_rate` / `output_sample_rate` (same defaults when omitted). Channel enters `PREPARED`, acquires `chats:message:{uuid}` (same mutex as SSE; busy closes `1008`), and hands the WebSocket to `FastAPIWebsocketTransport` with `ProtobufFrameSerializer`.
-4. Media after `ready` is **Protobuf** (Pipecat frames). Clients must not send JSON control frames for audio turn-taking.
+4. Media after `ready` is **Protobuf** (Pipecat frames). Clients must not send raw JSON control frames for audio turn-taking. Registered client tools use the shared JSON envelope inside Protobuf `message` frames: server-to-client `tool_call` and client-to-server `tool_result`.
 5. Cascade: `agent.run_async(..., stt=recognizer, tts=synthesizer, vad=SileroVADAnalyzer(...), ...)`. E2e: `stt=tts=vad=None` so playground uses the end-to-end realtime model (for example `provider: qwen_realtime`). `ChatChannel.begin_streaming()` marks `STREAMING`; Pipecat exclusively owns the socket after `ready`.
 
 `ChatChannel` states: `CONNECTING` → `AUTHENTICATED` → `PREPARED` → `STREAMING` → `CLOSED`. See [`docs/superpowers/specs/2026-11-04-chat-frontend-tools-design.md`](superpowers/specs/2026-11-04-chat-frontend-tools-design.md).
