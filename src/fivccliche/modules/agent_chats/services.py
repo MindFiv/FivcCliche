@@ -195,8 +195,9 @@ class UserChatRepositoryImpl(UserChatRepository):
 
             skip = kwargs.get("skip", 0)
             limit = kwargs.get("limit", 30)
+            latest = kwargs.get("latest", False)
             messages = await utils.list_chat_messages_async(
-                db_session, session_id, skip=skip, limit=limit
+                db_session, session_id, skip=skip, limit=limit, latest=latest
             )
             return [message.to_schema() for message in messages]
 

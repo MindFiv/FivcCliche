@@ -700,6 +700,31 @@ class TestChatMessageMethods:
         messages = await methods.list_chat_messages_async(session, test_chat.uuid, skip=0, limit=2)
         assert len(messages) == 2
 
+    async def test_list_chat_messages_async_latest(
+        self, session: AsyncSession, test_chat: UserChat
+    ):
+        """latest=True pages from the newest end but returns oldest first."""
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        for i in range(1, 6):
+            session.add(
+                UserChatMessage(
+                    chat_uuid=test_chat.uuid,
+                    query={"text": f"Query {i}"},
+                    created_at=base + timedelta(seconds=i),
+                )
+            )
+        await session.commit()
+
+        messages = await methods.list_chat_messages_async(
+            session, test_chat.uuid, limit=2, latest=True
+        )
+        assert [m.query["text"] for m in messages] == ["Query 4", "Query 5"]
+
+        messages = await methods.list_chat_messages_async(
+            session, test_chat.uuid, skip=2, limit=2, latest=True
+        )
+        assert [m.query["text"] for m in messages] == ["Query 2", "Query 3"]
+
     async def test_count_chat_messages_async(self, session: AsyncSession, test_chat: UserChat):
         """Test counting messages for a chat."""
         # Create messages
@@ -1302,6 +1327,29 @@ class TestUserChatRepositoryImpl:
 
         runs = await repository.list_agent_runs_async(test_chat.uuid, skip=2, limit=2)
         assert len(runs) == 2
+
+    async def test_list_agent_runs_latest_returns_last_30_in_order(
+        self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
+    ):
+        """latest=True replays turns 6-35 of a 35-turn chat, oldest first."""
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        for i in range(1, 36):
+            session.add(
+                UserChatMessage(
+                    chat_uuid=test_chat.uuid,
+                    status="completed",
+                    query={"text": f"Query {i}"},
+                    created_at=base + timedelta(seconds=i),
+                )
+            )
+        await session.commit()
+
+        runs = await repository.list_agent_runs_async(test_chat.uuid, latest=True)
+        assert [run.query.text for run in runs] == [f"Query {i}" for i in range(6, 36)]
+
+        # Default stays oldest-first from the start (HTTP history paging relies on it).
+        runs = await repository.list_agent_runs_async(test_chat.uuid)
+        assert [run.query.text for run in runs] == [f"Query {i}" for i in range(1, 31)]
 
     async def test_list_agent_runs_chat_not_found(
         self, repository: "UserChatRepositoryImpl", session: AsyncSession

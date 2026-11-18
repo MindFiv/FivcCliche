@@ -113,17 +113,27 @@ async def list_chat_messages_async(
     chat_uuid: str,
     skip: int = 0,
     limit: int = 100,
+    latest: bool = False,
 ) -> list[models.UserChatMessage]:
-    """List all chat messages for a session with pagination."""
+    """List chat messages for a session with pagination, oldest first.
+
+    With ``latest=True`` the page is taken from the newest end (``skip`` counts
+    back from the most recent message), so ``limit`` keeps the last N messages.
+    The result is still returned oldest first.
+    """
+    created_at = col(models.UserChatMessage.created_at)
     statement = (
         select(models.UserChatMessage)
         .where(models.UserChatMessage.chat_uuid == chat_uuid)
-        .order_by(col(models.UserChatMessage.created_at))
+        .order_by(created_at.desc() if latest else created_at)
         .offset(skip)
         .limit(limit)
     )
     result = await session.execute(statement)
-    return list(result.scalars().all())
+    messages = list(result.scalars().all())
+    if latest:
+        messages.reverse()
+    return messages
 
 
 async def get_chat_message_async(
