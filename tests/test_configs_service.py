@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fivcplayground.embeddings.types import EmbeddingConfig
 from fivcplayground.models.types import ModelConfig
 from fivcplayground.agents.types import AgentConfig
+from fivcplayground.skills.types import SkillConfig
 from fivcplayground.tools.types import ToolConfig
 
 from fivccliche.modules.agent_configs import models, utils as methods
@@ -18,6 +19,7 @@ from fivccliche.modules.agent_configs.services import (
     UserEmbeddingRepositoryImpl,
     UserLLMRepositoryImpl,
     UserAgentRepositoryImpl,
+    UserSkillRepositoryImpl,
     UserToolRepositoryImpl,
 )
 
@@ -1428,6 +1430,83 @@ class TestAgentRepositoryImpl:
             config_uuid="user123",
         )
         assert retrieved is None
+
+
+class TestConfigRepositoryUnusedKwargs:
+    """Playground 0.1.50+: unused implement-specific kwargs must be accepted."""
+
+    async def test_embedding_repository_ignores_unused_kwargs(self, session: AsyncSession):
+        repo = UserEmbeddingRepositoryImpl(user_uuid="user123")
+        config = EmbeddingConfig(
+            id="kwargs-embedding",
+            provider="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            dimension=1536,
+        )
+        await repo.update_embedding_config_async(config, unused_flag=True)
+        loaded = await repo.get_embedding_config_async("kwargs-embedding", unused_flag=True)
+        assert loaded is not None
+        listed = await repo.list_embedding_configs_async(unused_flag=True)
+        assert any(c.id == "kwargs-embedding" for c in listed)
+        await repo.delete_embedding_config_async("kwargs-embedding", unused_flag=True)
+        assert await repo.get_embedding_config_async("kwargs-embedding") is None
+
+    async def test_model_repository_ignores_unused_kwargs(self, session: AsyncSession):
+        repo = UserLLMRepositoryImpl(user_uuid="user123")
+        config = ModelConfig(
+            id="kwargs-llm",
+            provider="openai",
+            model="gpt-4o-mini",
+            api_key="test-key",
+        )
+        await repo.update_model_config_async(config, unused_flag=True)
+        loaded = await repo.get_model_config_async("kwargs-llm", unused_flag=True)
+        assert loaded is not None
+        listed = await repo.list_model_configs_async(unused_flag=True)
+        assert any(c.id == "kwargs-llm" for c in listed)
+        await repo.delete_model_config_async("kwargs-llm", unused_flag=True)
+        assert await repo.get_model_config_async("kwargs-llm") is None
+
+    async def test_agent_repository_ignores_unused_kwargs(self, session: AsyncSession):
+        repo = UserAgentRepositoryImpl(user_uuid="user123")
+        config = AgentConfig(id="kwargs-agent", model_id="model123")
+        await repo.update_agent_config_async(config, unused_flag=True)
+        loaded = await repo.get_agent_config_async("kwargs-agent", unused_flag=True)
+        assert loaded is not None
+        listed = await repo.list_agent_configs_async(unused_flag=True)
+        assert any(c.id == "kwargs-agent" for c in listed)
+        await repo.delete_agent_config_async("kwargs-agent", unused_flag=True)
+        assert await repo.get_agent_config_async("kwargs-agent") is None
+
+    async def test_tool_repository_ignores_unused_kwargs(self, session: AsyncSession):
+        repo = UserToolRepositoryImpl(user_uuid="user123")
+        config = ToolConfig(
+            id="kwargs-tool",
+            description="kwargs tool",
+            transport="stdio",
+        )
+        await repo.update_tool_config_async(config, unused_flag=True)
+        loaded = await repo.get_tool_config_async("kwargs-tool", unused_flag=True)
+        assert loaded is not None
+        listed = await repo.list_tool_configs_async(unused_flag=True)
+        assert any(c.id == "kwargs-tool" for c in listed)
+        await repo.delete_tool_config_async("kwargs-tool", unused_flag=True)
+        assert await repo.get_tool_config_async("kwargs-tool") is None
+
+    async def test_skill_repository_ignores_unused_kwargs(self, session: AsyncSession):
+        repo = UserSkillRepositoryImpl(user_uuid="user123")
+        config = SkillConfig(
+            id="kwargs-skill",
+            description="kwargs skill",
+        )
+        await repo.update_skill_config_async(config, unused_flag=True)
+        loaded = await repo.get_skill_config_async("kwargs-skill", unused_flag=True)
+        assert loaded is not None
+        listed = await repo.list_skill_configs_async(unused_flag=True)
+        assert any(c.id == "kwargs-skill" for c in listed)
+        await repo.delete_skill_config_async("kwargs-skill", unused_flag=True)
+        assert await repo.get_skill_config_async("kwargs-skill") is None
 
 
 # ============================================================================

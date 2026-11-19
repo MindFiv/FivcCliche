@@ -1331,7 +1331,7 @@ class TestUserChatRepositoryImpl:
     async def test_list_agent_runs_latest_returns_last_30_in_order(
         self, repository: "UserChatRepositoryImpl", session: AsyncSession, test_chat: UserChat
     ):
-        """latest=True replays turns 6-35 of a 35-turn chat, oldest first."""
+        """Default latest=True replays turns 6-35 of a 35-turn chat, oldest first."""
         base = datetime(2026, 1, 1, tzinfo=timezone.utc)
         for i in range(1, 36):
             session.add(
@@ -1347,8 +1347,12 @@ class TestUserChatRepositoryImpl:
         runs = await repository.list_agent_runs_async(test_chat.uuid, latest=True)
         assert [run.query.text for run in runs] == [f"Query {i}" for i in range(6, 36)]
 
-        # Default stays oldest-first from the start (HTTP history paging relies on it).
+        # Default matches latest=True (agent context wants the newest window).
         runs = await repository.list_agent_runs_async(test_chat.uuid)
+        assert [run.query.text for run in runs] == [f"Query {i}" for i in range(6, 36)]
+
+        # Explicit latest=False keeps oldest-first paging from the start.
+        runs = await repository.list_agent_runs_async(test_chat.uuid, latest=False)
         assert [run.query.text for run in runs] == [f"Query {i}" for i in range(1, 31)]
 
     async def test_list_agent_runs_chat_not_found(
@@ -1357,6 +1361,46 @@ class TestUserChatRepositoryImpl:
         """Test listing runs for non-existent chat returns empty list."""
         runs = await repository.list_agent_runs_async("nonexistent_chat")
         assert len(runs) == 0
+
+    async def test_repository_methods_ignore_unused_kwargs(
+        self,
+        repository: "UserChatRepositoryImpl",
+        session: AsyncSession,
+        test_user,
+        test_chat: UserChat,
+    ):
+        """Unused implement-specific kwargs must not raise."""
+        from fivcplayground.agents.types import AgentRun, AgentRunSession
+
+        session_schema = AgentRunSession(
+            id=test_chat.uuid,
+            agent_id=test_chat.agent_id,
+            description="kwargs-session",
+            context={},
+        )
+        await repository.update_agent_run_session_async(session_schema, unused_flag=True)
+        loaded = await repository.get_agent_run_session_async(test_chat.uuid, unused_flag=True)
+        assert loaded is not None
+        sessions = await repository.list_agent_run_sessions_async(unused_flag=True)
+        assert any(s.id == test_chat.uuid for s in sessions)
+
+        agent_run = AgentRun(
+            id="kwargs-run",
+            agent_id=test_chat.agent_id,
+            status="completed",
+            query={"text": "kwargs"},
+            reply={"text": "ok"},
+        )
+        await repository.update_agent_run_async(test_chat.uuid, agent_run, unused_flag=True)
+        run = await repository.get_agent_run_async(test_chat.uuid, "kwargs-run", unused_flag=True)
+        assert run is not None
+        runs = await repository.list_agent_runs_async(test_chat.uuid, unused_flag=True)
+        assert any(r.id == "kwargs-run" for r in runs)
+        await repository.delete_agent_run_async(test_chat.uuid, "kwargs-run", unused_flag=True)
+        assert (
+            await repository.get_agent_run_async(test_chat.uuid, "kwargs-run", unused_flag=True)
+            is None
+        )
 
     async def test_delete_agent_run(
         self,

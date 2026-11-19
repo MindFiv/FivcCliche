@@ -38,6 +38,13 @@ Frozen agents: `_reject_frozen_agent_update` / `_reject_frozen_agent_delete` in 
 
 HTTP list/get returns every matching row, including inactive tools/skills. Playground repositories filter `is_active` themselves so agents never pick up disabled configs. Question configs have no playground repository. Question list accepts an `is_active` query parameter. All user-scoped config list endpoints (and storage file list) accept optional `is_global` (`true` → `user_uuid IS NULL`, `false` → not null).
 
+Playground repository methods (fivcplayground ≥0.1.50) accept trailing implement-specific `**kwargs`. Implementations consume only parameters they document and silently ignore the rest. This repository documents:
+
+- Config `list_*_async`: `skip` / `limit`
+- [`UserChatRepositoryImpl.list_agent_runs_async`](../src/fivccliche/modules/agent_chats/services.py): `skip` (default 0), `limit` (default 30), `latest` (default `True` so Strands/Pipecat get the newest window when they omit kwargs)
+
+HTTP `GET .../messages/` still uses [`list_chat_messages_async`](../src/fivccliche/modules/agent_chats/utils.py) with default `latest=False` (oldest-first paging) and does not inherit the repository default.
+
 Config responses call `config.to_schema()` with no include/exclude arguments. PATCH bodies use `create_partial_model(schema)`. `api_key` is write-only on the schema (`Field(exclude=True)` on `UserEmbeddingSchema` / `UserLLMSchema` / `UserASRSchema` / `UserTTSSchema`).
 
 Do not add get/list/count/delete wrappers around `get/list/count_user_scoped_async` or around `session.delete` + `commit`.

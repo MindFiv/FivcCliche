@@ -177,7 +177,9 @@ class UserEmbeddingRepositoryImpl(_UserScopedConfigRepository, UserEmbeddingRepo
         asyncio.run(self.delete_embedding_config_async(embedding_id))
 
     # Abstract methods from fivcplayground.embeddings.types.repositories.EmbeddingConfigRepository
-    async def update_embedding_config_async(self, embedding_config: EmbeddingConfig) -> None:
+    async def update_embedding_config_async(
+        self, embedding_config: EmbeddingConfig, **kwargs
+    ) -> None:
         """Create or update an embedding configuration."""
         await self._upsert_async(
             models.UserEmbedding,
@@ -186,7 +188,9 @@ class UserEmbeddingRepositoryImpl(_UserScopedConfigRepository, UserEmbeddingRepo
             embedding_config,
         )
 
-    async def get_embedding_config_async(self, embedding_id: str) -> EmbeddingConfig | None:
+    async def get_embedding_config_async(
+        self, embedding_id: str, **kwargs
+    ) -> EmbeddingConfig | None:
         """Retrieve an embedding configuration by ID."""
         return await self._get_schema_async(models.UserEmbedding, embedding_id)
 
@@ -201,7 +205,7 @@ class UserEmbeddingRepositoryImpl(_UserScopedConfigRepository, UserEmbeddingRepo
             ),
         )
 
-    async def delete_embedding_config_async(self, embedding_id: str) -> None:
+    async def delete_embedding_config_async(self, embedding_id: str, **kwargs) -> None:
         """Delete an embedding configuration."""
         await self._delete_async(models.UserEmbedding, embedding_id)
 
@@ -226,7 +230,7 @@ class UserLLMRepositoryImpl(_UserScopedConfigRepository, UserLLMRepository):
         asyncio.run(self.delete_model_config_async(model_id))
 
     # Abstract methods from fivcplayground.models.types.repositories.ModelConfigRepository
-    async def update_model_config_async(self, model_config: ModelConfig) -> None:
+    async def update_model_config_async(self, model_config: ModelConfig, **kwargs) -> None:
         """Create or update a model configuration."""
         await self._upsert_async(
             models.UserLLM,
@@ -235,7 +239,7 @@ class UserLLMRepositoryImpl(_UserScopedConfigRepository, UserLLMRepository):
             model_config,
         )
 
-    async def get_model_config_async(self, model_id: str) -> ModelConfig | None:
+    async def get_model_config_async(self, model_id: str, **kwargs) -> ModelConfig | None:
         """Retrieve a model configuration by ID."""
         return await self._get_schema_async(models.UserLLM, model_id)
 
@@ -250,7 +254,7 @@ class UserLLMRepositoryImpl(_UserScopedConfigRepository, UserLLMRepository):
             ),
         )
 
-    async def delete_model_config_async(self, model_id: str) -> None:
+    async def delete_model_config_async(self, model_id: str, **kwargs) -> None:
         """Delete a model configuration."""
         await self._delete_async(models.UserLLM, model_id)
 
@@ -274,7 +278,7 @@ class UserToolRepositoryImpl(_UserScopedConfigRepository, UserToolRepository):
         """Delete a tool configuration."""
         asyncio.run(self.delete_tool_config_async(tool_id))
 
-    async def update_tool_config_async(self, tool_config: ToolConfig) -> None:
+    async def update_tool_config_async(self, tool_config: ToolConfig, **kwargs) -> None:
         """Create or update a tool configuration."""
         await self._upsert_async(
             models.UserTool,
@@ -284,7 +288,7 @@ class UserToolRepositoryImpl(_UserScopedConfigRepository, UserToolRepository):
             kind="tool",
         )
 
-    async def get_tool_config_async(self, tool_id: str):
+    async def get_tool_config_async(self, tool_id: str, **kwargs):
         """Retrieve a tool configuration by ID."""
         return await self._get_schema_async(models.UserTool, tool_id, active_only=True)
 
@@ -300,7 +304,7 @@ class UserToolRepositoryImpl(_UserScopedConfigRepository, UserToolRepository):
             ),
         )
 
-    async def delete_tool_config_async(self, tool_id: str) -> None:
+    async def delete_tool_config_async(self, tool_id: str, **kwargs) -> None:
         """Delete a tool configuration."""
         await self._delete_async(models.UserTool, tool_id, kind="tool")
 
@@ -324,7 +328,7 @@ class UserSkillRepositoryImpl(_UserScopedConfigRepository, UserSkillRepository):
         """Delete a skill configuration."""
         asyncio.run(self.delete_skill_config_async(skill_id))
 
-    async def update_skill_config_async(self, skill_config: SkillConfig) -> None:
+    async def update_skill_config_async(self, skill_config: SkillConfig, **kwargs) -> None:
         """Create or update a skill configuration."""
         await self._upsert_async(
             models.UserSkill,
@@ -334,7 +338,7 @@ class UserSkillRepositoryImpl(_UserScopedConfigRepository, UserSkillRepository):
             kind="skill",
         )
 
-    async def get_skill_config_async(self, skill_id: str) -> SkillConfig | None:
+    async def get_skill_config_async(self, skill_id: str, **kwargs) -> SkillConfig | None:
         """Retrieve a skill configuration by ID."""
         return await self._get_schema_async(models.UserSkill, skill_id, active_only=True)
 
@@ -350,7 +354,7 @@ class UserSkillRepositoryImpl(_UserScopedConfigRepository, UserSkillRepository):
             ),
         )
 
-    async def delete_skill_config_async(self, skill_id: str) -> None:
+    async def delete_skill_config_async(self, skill_id: str, **kwargs) -> None:
         """Delete a skill configuration."""
         await self._delete_async(models.UserSkill, skill_id, kind="skill")
 
@@ -366,16 +370,16 @@ class UserAgentRepositoryImpl(_UserScopedConfigRepository, UserAgentRepository):
         """Retrieve an agent configuration by ID."""
         return asyncio.run(self.get_agent_config_async(agent_id))
 
-    def list_agent_configs(self) -> list[AgentConfig]:
+    def list_agent_configs(self, **kwargs) -> list[AgentConfig]:
         """List all agent configurations in the repository."""
-        return asyncio.run(self.list_agent_configs_async())
+        return asyncio.run(self.list_agent_configs_async(**kwargs))
 
     def delete_agent_config(self, agent_id: str) -> None:
         """Delete an agent configuration."""
         asyncio.run(self.delete_agent_config_async(agent_id))
 
     # Abstract methods from fivcplayground.agents.types.repositories.AgentConfigRepository
-    async def update_agent_config_async(self, agent_config: AgentConfig) -> None:
+    async def update_agent_config_async(self, agent_config: AgentConfig, **kwargs) -> None:
         """Create or update an agent configuration."""
         await self._upsert_async(
             models.UserAgent,
@@ -384,18 +388,22 @@ class UserAgentRepositoryImpl(_UserScopedConfigRepository, UserAgentRepository):
             agent_config,
         )
 
-    async def get_agent_config_async(self, agent_id: str) -> AgentConfig | None:
+    async def get_agent_config_async(self, agent_id: str, **kwargs) -> AgentConfig | None:
         """Retrieve an agent configuration by ID."""
         return await self._get_schema_async(models.UserAgent, agent_id)
 
-    async def list_agent_configs_async(self) -> list[AgentConfig]:
+    async def list_agent_configs_async(self, **kwargs) -> list[AgentConfig]:
         """List all agent configurations in the repository."""
         return cast(
             list[AgentConfig],
-            await self._list_schemas_async(models.UserAgent),
+            await self._list_schemas_async(
+                models.UserAgent,
+                skip=kwargs.get("skip", 0),
+                limit=kwargs.get("limit", 100),
+            ),
         )
 
-    async def delete_agent_config_async(self, agent_id: str) -> None:
+    async def delete_agent_config_async(self, agent_id: str, **kwargs) -> None:
         """Delete an agent configuration."""
         await self._delete_async(models.UserAgent, agent_id)
 

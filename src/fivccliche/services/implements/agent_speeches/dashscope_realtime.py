@@ -122,7 +122,7 @@ class _DashScopeRealtimeRecognizer(SpeechRecognizer):
         self._option = options or SpeechRecognizeOption(format="pcm", sample_rate=16000)
         self._entered = False
         self._utt_audio_queue: queue.Queue[bytes | None] | None = None
-        self._utt_event_queue: asyncio.Queue[SpeechRecognizeEvent | None | BaseException] | None = (
+        self._utt_event_queue: asyncio.Queue[SpeechRecognizeEvent | BaseException | None] | None = (
             None
         )
         self._utt_worker: threading.Thread | None = None
@@ -155,7 +155,7 @@ class _DashScopeRealtimeRecognizer(SpeechRecognizer):
             await self.cancel_utterance()
 
         loop = asyncio.get_running_loop()
-        event_queue: asyncio.Queue[SpeechRecognizeEvent | None | BaseException] = asyncio.Queue()
+        event_queue: asyncio.Queue[SpeechRecognizeEvent | BaseException | None] = asyncio.Queue()
         audio_queue: queue.Queue[bytes | None] = queue.Queue()
         opened = threading.Event()
         last_text_box = {"text": ""}
@@ -356,7 +356,7 @@ class _DashScopeRealtimeSynthesizer(SpeechSynthesizer):
             return
 
         loop = asyncio.get_running_loop()
-        audio_queue: asyncio.Queue[bytes | None | BaseException] = asyncio.Queue()
+        audio_queue: asyncio.Queue[bytes | BaseException | None] = asyncio.Queue()
         audio_format = _dashscope_audio_format(self._option.sample_rate)
 
         class _Callback(ResultCallback):

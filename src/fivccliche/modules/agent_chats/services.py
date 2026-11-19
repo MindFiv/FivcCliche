@@ -80,7 +80,7 @@ class UserChatRepositoryImpl(UserChatRepository):
     # Async methods for agent run sessions (chats)
     # ========================================================================
 
-    async def update_agent_run_session_async(self, session: AgentRunSession) -> None:
+    async def update_agent_run_session_async(self, session: AgentRunSession, **kwargs) -> None:
         """Create or update an agent run session (chat)."""
         async with get_db_session_context_async() as db_session:
             existing = await utils.get_chat_async(
@@ -105,7 +105,9 @@ class UserChatRepositoryImpl(UserChatRepository):
                 )
                 await db_session.commit()
 
-    async def get_agent_run_session_async(self, session_id: str) -> AgentRunSession | None:
+    async def get_agent_run_session_async(
+        self, session_id: str, **kwargs
+    ) -> AgentRunSession | None:
         """Retrieve an agent run session (chat) by ID."""
         async with get_db_session_context_async() as db_session:
             chat = await utils.get_chat_async(
@@ -126,7 +128,7 @@ class UserChatRepositoryImpl(UserChatRepository):
             )
             return [chat.to_schema() for chat in chats]
 
-    async def delete_agent_run_session_async(self, session_id: str) -> None:
+    async def delete_agent_run_session_async(self, session_id: str, **kwargs) -> None:
         """Delete an agent run session (chat)."""
         async with get_db_session_context_async() as db_session:
             chat = await utils.get_chat_async(
@@ -136,7 +138,7 @@ class UserChatRepositoryImpl(UserChatRepository):
                 await db_session.delete(chat)
                 await db_session.commit()
 
-    async def update_agent_run_async(self, session_id: str, agent_run: AgentRun) -> None:
+    async def update_agent_run_async(self, session_id: str, agent_run: AgentRun, **kwargs) -> None:
         """Create or update an agent run (chat message)."""
         async with get_db_session_context_async() as db_session:
             chat = await utils.get_chat_async(
@@ -172,7 +174,7 @@ class UserChatRepositoryImpl(UserChatRepository):
                 )
             await db_session.commit()
 
-    async def get_agent_run_async(self, session_id: str, run_id: str) -> AgentRun | None:
+    async def get_agent_run_async(self, session_id: str, run_id: str, **kwargs) -> AgentRun | None:
         """Retrieve an agent run (chat message) by ID."""
         async with get_db_session_context_async() as db_session:
             chat = await utils.get_chat_async(
@@ -185,7 +187,11 @@ class UserChatRepositoryImpl(UserChatRepository):
             return message.to_schema() if message else None
 
     async def list_agent_runs_async(self, session_id: str, **kwargs) -> list[AgentRun]:
-        """List all agent runs (chat messages) for a session."""
+        """List agent runs (chat messages) for a session.
+
+        Documented kwargs: ``skip`` (default 0), ``limit`` (default 30),
+        ``latest`` (default True — newest window for agent context).
+        """
         async with get_db_session_context_async() as db_session:
             chat = await utils.get_chat_async(
                 db_session, session_id, filters=ChatFilterSet(self.user_uuid, is_superuser=False)
@@ -195,13 +201,13 @@ class UserChatRepositoryImpl(UserChatRepository):
 
             skip = kwargs.get("skip", 0)
             limit = kwargs.get("limit", 30)
-            latest = kwargs.get("latest", False)
+            latest = kwargs.get("latest", True)
             messages = await utils.list_chat_messages_async(
                 db_session, session_id, skip=skip, limit=limit, latest=latest
             )
             return [message.to_schema() for message in messages]
 
-    async def delete_agent_run_async(self, session_id: str, run_id: str) -> None:
+    async def delete_agent_run_async(self, session_id: str, run_id: str, **kwargs) -> None:
         """Delete an agent run (chat message)."""
         async with get_db_session_context_async() as db_session:
             chat = await utils.get_chat_async(
