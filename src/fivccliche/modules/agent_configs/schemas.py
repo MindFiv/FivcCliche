@@ -1,11 +1,15 @@
 __all__ = [
+    "UserASRCreateSchema",
     "UserASRProbeRequest",
     "UserASRSchema",
     "UserAgentSchema",
+    "UserEmbeddingCreateSchema",
     "UserEmbeddingSchema",
+    "UserLLMCreateSchema",
     "UserLLMSchema",
     "UserQuestionSchema",
     "UserSkillSchema",
+    "UserTTSCreateSchema",
     "UserTTSSchema",
     "UserToolSchema",
     "UserToolTransport",
@@ -25,6 +29,12 @@ from fivcplayground.tools.types import (
 from fivcplayground.agents.types import AgentConfig
 from fivcplayground.skills.types import SkillConfig
 
+# Column limits of the agent_configs tables (models.py). Declaring them on the
+# request schemas turns oversized values into 422 instead of a database error.
+ID_MAX_LENGTH = 36
+DESCRIPTION_MAX_LENGTH = 1024
+STRING_MAX_LENGTH = 255
+
 # ============================================================================
 # Read/Response Schemas (with uuid field)
 # ============================================================================
@@ -33,7 +43,12 @@ from fivcplayground.skills.types import SkillConfig
 class UserEmbeddingSchema(EmbeddingConfig):
     """Schema for reading embedding config data (response)."""
 
-    api_key: str | None = Field(default=None, exclude=True)
+    id: str = Field(..., max_length=ID_MAX_LENGTH, description="Embedding config ID")
+    description: str | None = Field(default=None, max_length=DESCRIPTION_MAX_LENGTH)
+    provider: str = Field(..., max_length=STRING_MAX_LENGTH, description="Embedding provider")
+    model: str = Field(..., max_length=STRING_MAX_LENGTH, description="Embedding model name")
+    api_key: str | None = Field(default=None, max_length=STRING_MAX_LENGTH, exclude=True)
+    base_url: str | None = Field(default=None, max_length=STRING_MAX_LENGTH)
     uuid: str | None = Field(default=None, description="Embedding config UUID (globally unique)")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
     updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
@@ -47,7 +62,12 @@ class UserEmbeddingSchema(EmbeddingConfig):
 class UserLLMSchema(ModelConfig):
     """Schema for reading LLM config data (response)."""
 
-    api_key: str | None = Field(default=None, exclude=True)
+    id: str = Field(..., max_length=ID_MAX_LENGTH, description="LLM config ID")
+    description: str | None = Field(default=None, max_length=DESCRIPTION_MAX_LENGTH)
+    provider: str = Field(..., max_length=STRING_MAX_LENGTH, description="LLM provider")
+    model: str = Field(..., max_length=STRING_MAX_LENGTH, description="LLM model name")
+    api_key: str | None = Field(default=None, max_length=STRING_MAX_LENGTH, exclude=True)
+    base_url: str | None = Field(default=None, max_length=STRING_MAX_LENGTH)
     uuid: str | None = Field(default=None, description="LLM config UUID (globally unique)")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
     updated_at: datetime | None = Field(default=None, description="Last update time (read-only)")
@@ -61,11 +81,19 @@ class UserLLMSchema(ModelConfig):
 class UserASRSchema(BaseModel):
     """Schema for reading ASR config data (response)."""
 
-    id: str = Field(..., description="ASR config ID (unique within user scope)")
-    description: str | None = Field(default=None, description="ASR description")
-    model: str = Field(..., description="ASR model name")
-    base_url: str | None = Field(default=None, description="ASR base URL")
-    api_key: str | None = Field(default=None, exclude=True)
+    id: str = Field(
+        ...,
+        max_length=ID_MAX_LENGTH,
+        description="ASR config ID (unique within user scope)",
+    )
+    description: str | None = Field(
+        default=None, max_length=DESCRIPTION_MAX_LENGTH, description="ASR description"
+    )
+    model: str = Field(..., max_length=STRING_MAX_LENGTH, description="ASR model name")
+    base_url: str | None = Field(
+        default=None, max_length=STRING_MAX_LENGTH, description="ASR base URL"
+    )
+    api_key: str | None = Field(default=None, max_length=STRING_MAX_LENGTH, exclude=True)
     model_type: Literal["dashscope", "dashscope_realtime"] = Field(
         default="dashscope",
         description="ISpeechProvider name (dashscope or dashscope_realtime)",
@@ -93,11 +121,19 @@ class UserASRProbeRequest(BaseModel):
 class UserTTSSchema(BaseModel):
     """Schema for reading TTS config data (response)."""
 
-    id: str = Field(..., description="TTS config ID (unique within user scope)")
-    description: str | None = Field(default=None, description="TTS description")
-    model: str = Field(..., description="TTS model name")
-    base_url: str | None = Field(default=None, description="TTS base URL")
-    api_key: str | None = Field(default=None, exclude=True)
+    id: str = Field(
+        ...,
+        max_length=ID_MAX_LENGTH,
+        description="TTS config ID (unique within user scope)",
+    )
+    description: str | None = Field(
+        default=None, max_length=DESCRIPTION_MAX_LENGTH, description="TTS description"
+    )
+    model: str = Field(..., max_length=STRING_MAX_LENGTH, description="TTS model name")
+    base_url: str | None = Field(
+        default=None, max_length=STRING_MAX_LENGTH, description="TTS base URL"
+    )
+    api_key: str | None = Field(default=None, max_length=STRING_MAX_LENGTH, exclude=True)
     model_type: Literal["dashscope", "dashscope_realtime"] = Field(
         default="dashscope",
         description="ISpeechProvider name (dashscope or dashscope_realtime)",
@@ -127,6 +163,7 @@ class UserTTSProbeRequest(BaseModel):
 class UserToolSchema(ToolConfig):
     """Schema for reading tool config data (response)."""
 
+    id: str = Field(..., max_length=ID_MAX_LENGTH, description="Tool config ID")
     uuid: str | None = Field(default=None, description="Tool config UUID (globally unique)")
     description: str | None = Field(default=None, description="Tool description")
     is_active: bool = Field(default=True, description="Whether the tool is active")
@@ -148,6 +185,7 @@ class UserToolProbeSchema(BaseModel):
 class UserSkillSchema(SkillConfig):
     """Schema for reading skill config data (response)."""
 
+    id: str = Field(..., max_length=ID_MAX_LENGTH, description="Skill config ID")
     uuid: str | None = Field(default=None, description="Skill config UUID (globally unique)")
     is_active: bool = Field(default=True, description="Whether the skill is active")
     user_uuid: str | None = Field(default=None, description="User UUID (read-only)")
@@ -162,6 +200,7 @@ class UserSkillSchema(SkillConfig):
 class UserAgentSchema(AgentConfig):
     """Schema for reading agent config data (response)."""
 
+    id: str = Field(..., max_length=ID_MAX_LENGTH, description="Agent config ID")
     uuid: str | None = Field(default=None, description="Agent config UUID (globally unique)")
     is_frozen: bool = Field(
         default=False, description="Whether the agent config is frozen (cannot be edited)"
@@ -190,3 +229,35 @@ class UserQuestionSchema(BaseModel):
     )
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================================
+# Create Schemas (POST bodies)
+# ============================================================================
+# user_*.api_key is NOT NULL, so creating a config without one must be a 422,
+# not a database error. Updates keep api_key optional: omitted means "keep".
+# An empty string stays allowed for providers that need no key.
+
+
+class UserEmbeddingCreateSchema(UserEmbeddingSchema):
+    """Request body for creating an embedding config."""
+
+    api_key: str = Field(..., max_length=STRING_MAX_LENGTH, exclude=True)
+
+
+class UserLLMCreateSchema(UserLLMSchema):
+    """Request body for creating an LLM config."""
+
+    api_key: str = Field(..., max_length=STRING_MAX_LENGTH, exclude=True)
+
+
+class UserASRCreateSchema(UserASRSchema):
+    """Request body for creating an ASR config."""
+
+    api_key: str = Field(..., max_length=STRING_MAX_LENGTH, exclude=True)
+
+
+class UserTTSCreateSchema(UserTTSSchema):
+    """Request body for creating a TTS config."""
+
+    api_key: str = Field(..., max_length=STRING_MAX_LENGTH, exclude=True)
