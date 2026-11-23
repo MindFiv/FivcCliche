@@ -64,6 +64,24 @@ async def count_user_scoped_async(
     return result.scalar() or 0
 
 
+async def config_id_exists_async(
+    session: AsyncSession,
+    model: type[TConfig],
+    config_id: str,
+    user_uuid: str | None,
+) -> bool:
+    """Whether ``config_id`` is already used in the same scope (global or one user).
+
+    The ``(id, user_uuid)`` unique index does not catch duplicate global configs
+    because Postgres treats NULLs as distinct, so the create routes check first.
+    """
+    table = cast(Any, model)
+    scope = table.user_uuid.is_(None) if user_uuid is None else table.user_uuid == user_uuid
+    statement = select(func.count(col(table.uuid))).where(table.id == config_id, scope)
+    result = await session.execute(statement)
+    return bool(result.scalar())
+
+
 async def create_embedding_config_async(
     session: AsyncSession,
     user_uuid: str | None,

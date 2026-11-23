@@ -47,6 +47,8 @@ HTTP `GET .../messages/` still uses [`list_chat_messages_async`](../src/fivcclic
 
 Config responses call `config.to_schema()` with no include/exclude arguments. PATCH bodies use `create_partial_model(schema)`. `api_key` is write-only on the schema (`Field(exclude=True)` on `UserEmbeddingSchema` / `UserLLMSchema` / `UserASRSchema` / `UserTTSSchema`).
 
+Config schemas declare the table column limits (`id` 36, `description` 1024, other strings 255), so oversized values return 422 instead of a database error. POST bodies for the four keyed configs use `User{Embedding,LLM,ASR,TTS}CreateSchema`, where `api_key` is required (an empty string is allowed for keyless providers); PATCH keeps it optional, and omitting it keeps the stored key. Every config create route returns 409 when the `id` already exists in the same scope (global or one user), checked with `utils.config_id_exists_async`: the `(id, user_uuid)` unique index does not catch duplicate global rows because Postgres treats NULLs as distinct.
+
 Do not add get/list/count/delete wrappers around `get/list/count_user_scoped_async` or around `session.delete` + `commit`.
 
 Module `utils.py` stages writes (`session.add` / field assignment) and does not `commit`. The caller that opened the session (router, service, job, CLI) commits; refresh after commit when returning DB defaults.

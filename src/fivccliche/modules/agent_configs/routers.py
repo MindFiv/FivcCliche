@@ -81,13 +81,21 @@ router_embeddings = APIRouter(prefix="/configs/embeddings", tags=["embedding_con
     operation_id="create_embedding_config",
 )
 async def create_embedding_config_async(
-    config_create: schemas.UserEmbeddingSchema,
+    config_create: schemas.UserEmbeddingCreateSchema,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    owner_uuid = None if user.is_superuser else user.uuid
+    if await utils.config_id_exists_async(
+        session, models.UserEmbedding, config_create.id, owner_uuid
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Embedding config '{config_create.id}' already exists",
+        )
     config = await utils.create_embedding_config_async(
         session,
-        None if user.is_superuser else user.uuid,
+        owner_uuid,
         config_create,
         updated_user_uuid=user.uuid,
     )
@@ -217,13 +225,19 @@ router_models = APIRouter(prefix="/configs/models", tags=["model_configs"])
     operation_id="create_llm_config",
 )
 async def create_llm_config_async(
-    config_create: schemas.UserLLMSchema,
+    config_create: schemas.UserLLMCreateSchema,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    owner_uuid = None if user.is_superuser else user.uuid
+    if await utils.config_id_exists_async(session, models.UserLLM, config_create.id, owner_uuid):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"LLM config '{config_create.id}' already exists",
+        )
     config = await utils.create_llm_config_async(
         session,
-        None if user.is_superuser else user.uuid,
+        owner_uuid,
         config_create,
         updated_user_uuid=user.uuid,
     )
@@ -345,13 +359,19 @@ router_asrs = APIRouter(prefix="/configs/asrs", tags=["asr_configs"])
     operation_id="create_asr_config",
 )
 async def create_asr_config_async(
-    config_create: schemas.UserASRSchema,
+    config_create: schemas.UserASRCreateSchema,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    owner_uuid = None if user.is_superuser else user.uuid
+    if await utils.config_id_exists_async(session, models.UserASR, config_create.id, owner_uuid):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"ASR config '{config_create.id}' already exists",
+        )
     config = await utils.create_asr_config_async(
         session,
-        None if user.is_superuser else user.uuid,
+        owner_uuid,
         config_create,
         updated_user_uuid=user.uuid,
     )
@@ -763,13 +783,19 @@ router_tts = APIRouter(prefix="/configs/tts", tags=["tts_configs"])
     operation_id="create_tts_config",
 )
 async def create_tts_config_async(
-    config_create: schemas.UserTTSSchema,
+    config_create: schemas.UserTTSCreateSchema,
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    owner_uuid = None if user.is_superuser else user.uuid
+    if await utils.config_id_exists_async(session, models.UserTTS, config_create.id, owner_uuid):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"TTS config '{config_create.id}' already exists",
+        )
     config = await utils.create_tts_config_async(
         session,
-        None if user.is_superuser else user.uuid,
+        owner_uuid,
         config_create,
         updated_user_uuid=user.uuid,
     )
@@ -1063,9 +1089,15 @@ async def create_agent_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    owner_uuid = None if user.is_superuser else user.uuid
+    if await utils.config_id_exists_async(session, models.UserAgent, config_create.id, owner_uuid):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Agent config '{config_create.id}' already exists",
+        )
     config = await utils.create_agent_config_async(
         session,
-        None if user.is_superuser else user.uuid,
+        owner_uuid,
         config_create,
         updated_user_uuid=user.uuid,
     )
@@ -1246,9 +1278,15 @@ async def create_tool_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    owner_uuid = None if user.is_superuser else user.uuid
+    if await utils.config_id_exists_async(session, models.UserTool, config_create.id, owner_uuid):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Tool config '{config_create.id}' already exists",
+        )
     config = await utils.create_tool_config_async(
         session,
-        None if user.is_superuser else user.uuid,
+        owner_uuid,
         config_create,
         updated_user_uuid=user.uuid,
     )
@@ -1374,9 +1412,15 @@ async def create_skill_config_async(
     user: IUser = Depends(get_authenticated_user_async),
     session: AsyncSession = Depends(get_db_session_async),
 ):
+    owner_uuid = None if user.is_superuser else user.uuid
+    if await utils.config_id_exists_async(session, models.UserSkill, config_create.id, owner_uuid):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Skill config '{config_create.id}' already exists",
+        )
     config = await utils.create_skill_config_async(
         session,
-        None if user.is_superuser else user.uuid,
+        owner_uuid,
         config_create,
         updated_user_uuid=user.uuid,
     )
